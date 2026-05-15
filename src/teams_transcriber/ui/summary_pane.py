@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QGuiApplication
+from PySide6.QtGui import QColor, QGuiApplication, QResizeEvent
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -39,7 +39,10 @@ class SummaryPane(QScrollArea):
         self._db = db
         self.setWidgetResizable(True)
         self.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # AsNeeded so a single un-wrappable long token doesn't crash visibility —
+        # user can scroll horizontally if it happens. resizeEvent below also caps
+        # the container width so well-behaved content fits cleanly.
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         self._container = QWidget()
         self._layout = QVBoxLayout(self._container)
@@ -47,6 +50,14 @@ class SummaryPane(QScrollArea):
         self._layout.setSpacing(16)
         self.setWidget(self._container)
         self._current_recording_id: int | None = None
+
+    def resizeEvent(self, e: QResizeEvent) -> None:
+        # Cap the inner container's max width to the viewport so children must
+        # shrink/wrap rather than push past the column edge.
+        super().resizeEvent(e)
+        viewport = self.viewport()
+        if viewport is not None:
+            self._container.setMaximumWidth(viewport.width())
 
     def clear(self) -> None:
         while self._layout.count():
@@ -72,9 +83,12 @@ class SummaryPane(QScrollArea):
             self._layout.addWidget(QLabel("No summary yet for this recording."))
             return
 
+        from PySide6.QtWidgets import QSizePolicy
         title = QLabel(rec.display_title or summary.title or "Untitled meeting")
         title.setProperty("role", "title")
         title.setWordWrap(True)
+        title.setMinimumWidth(0)
+        title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._layout.addWidget(title)
 
         meta = QLabel(
@@ -82,6 +96,8 @@ class SummaryPane(QScrollArea):
         )
         meta.setProperty("role", "muted")
         meta.setWordWrap(True)
+        meta.setMinimumWidth(0)
+        meta.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._layout.addWidget(meta)
 
         if summary.summary:
@@ -200,6 +216,12 @@ def _section_card(title: str, body_widgets: list[QWidget]) -> QFrame:
     for w in body_widgets:
         if isinstance(w, QLabel):
             w.setWordWrap(True)
+            w.setMinimumWidth(0)
+            # QLabel with word wrap reports minSizeHint = longest-word-width by
+            # default, which can push the column wide for long tokens. Telling
+            # the size policy to ignore the natural width lets it shrink.
+            from PySide6.QtWidgets import QSizePolicy
+            w.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout.addWidget(w)
     return card
 
@@ -221,6 +243,8 @@ def _topics_row(topics: list[str]) -> QFrame:
     for t in topics:
         chip = QLabel(t)
         chip.setProperty("role", "chip")
+        chip.setWordWrap(True)
+        chip.setMaximumWidth(280)
         flow.addWidget(chip)
     layout.addWidget(chips_wrapper)
     return card
