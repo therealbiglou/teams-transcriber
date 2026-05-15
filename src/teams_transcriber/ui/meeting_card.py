@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -51,12 +52,13 @@ class MeetingCard(QFrame):
         title_text = recording.display_title or recording.detected_title or "(untitled)"
         title = QLabel(title_text)
         title.setStyleSheet("font-size: 16px; font-weight: 600;")
-        top.addWidget(title)
-        top.addStretch(1)
+        title.setWordWrap(True)
+        title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        top.addWidget(title, 1)
 
         chip = _status_chip(recording.status)
         if chip is not None:
-            top.addWidget(chip)
+            top.addWidget(chip, 0, Qt.AlignmentFlag.AlignTop)
 
         outer.addLayout(top)
 
@@ -64,6 +66,7 @@ class MeetingCard(QFrame):
         dur = _fmt_duration(recording.duration_ms or 0)
         meta = QLabel(f"{when} · {dur}")
         meta.setProperty("role", "muted")
+        meta.setWordWrap(True)
         outer.addWidget(meta)
 
         if one_line:

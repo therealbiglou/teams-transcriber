@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QHBoxLayout,
+    QMessageBox,
     QVBoxLayout,
     QWidget,
 )
@@ -144,6 +145,7 @@ class App:
         self.summary = SummaryPane(self.db)
         self.summary.transcript_requested.connect(self._show_transcript)
         self.summary.export_requested.connect(self._export_summary)
+        self.summary.delete_requested.connect(self._delete_recording)
         body_layout.addWidget(self.history, 1)
         body_layout.addWidget(self.summary, 1)
         layout.addWidget(body, 1)
@@ -248,6 +250,36 @@ class App:
         lines += [f"- {f}" for f in s.follow_ups]
         Path(path).write_text("\n".join(lines), encoding="utf-8")
 
+    def _delete_recording(self, recording_id: int) -> None:
+        """Confirm and delete a recording (DB row + audio file). Cascading delete
+        removes the summary, transcript segments, and todo states."""
+        rec_repo = RecordingRepo(self.db)
+        rec = rec_repo.get(recording_id)
+        if rec is None:
+            return
+        title = rec.display_title or rec.detected_title or "this recording"
+        reply = QMessageBox.question(
+            self.window,
+            "Delete recording?",
+            f"Permanently delete '{title}', its transcript, and its summary?\n\n"
+            "The audio file on disk will also be removed.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        if rec.audio_path:
+            audio = Path(rec.audio_path)
+            if audio.exists():
+                try:
+                    audio.unlink()
+                except OSError:
+                    logger.exception("could not delete audio file %s", audio)
+        rec_repo.delete(recording_id)
+        self.summary.clear()
+        self._refresh_history()
+
     def _on_meeting_detected(self, evt: MeetingDetected) -> None:
         show_toast("Recording started", evt.window_title, fallback_tray=self.tray)
 
@@ -257,6 +289,11 @@ class App:
 
     def _on_recording_finalized(self, _evt: RecordingFinalized) -> None:
         self.tray.set_state(TrayState.PROCESSING)
+        show_toast(
+            "Recording stopped",
+            "Transcribing and summarizing — you'll get a toast when it's ready.",
+            fallback_tray=self.tray,
+        )
         self._refresh_history()
 
     def _on_recording_failed(self, evt: RecordingFailed) -> None:

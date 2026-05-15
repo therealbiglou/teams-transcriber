@@ -62,6 +62,11 @@ def app_stylesheet() -> str:
         background: {c['bg']};
     }}
 
+    /* Text-only widgets inherit visually from their parent (no gray box around labels). */
+    QLabel, QCheckBox, QRadioButton {{
+        background: transparent;
+    }}
+
     QFrame[card="true"] {{
         background: {c['card']};
         border-radius: {r['card']}px;

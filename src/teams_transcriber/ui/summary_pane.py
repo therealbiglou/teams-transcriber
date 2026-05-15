@@ -25,6 +25,7 @@ from teams_transcriber.storage import (
     SummaryRepo,
     TodoStateRepo,
 )
+from teams_transcriber.ui.theme import COLORS
 
 
 class SummaryPane(QScrollArea):
@@ -32,6 +33,7 @@ class SummaryPane(QScrollArea):
 
     transcript_requested = Signal(int)  # recording_id
     export_requested = Signal(int)      # recording_id
+    delete_requested = Signal(int)      # recording_id (caller confirms + deletes)
 
     def __init__(self, db: Database, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -73,12 +75,14 @@ class SummaryPane(QScrollArea):
 
         title = QLabel(rec.display_title or summary.title or "Untitled meeting")
         title.setProperty("role", "title")
+        title.setWordWrap(True)
         self._layout.addWidget(title)
 
         meta = QLabel(
             f"{rec.started_at} · {(rec.duration_ms or 0) / 60000:.0f} min · {summary.model_used}"
         )
         meta.setProperty("role", "muted")
+        meta.setWordWrap(True)
         self._layout.addWidget(meta)
 
         if summary.summary:
@@ -122,6 +126,13 @@ class SummaryPane(QScrollArea):
         buttons.addWidget(export_btn)
 
         buttons.addStretch(1)
+
+        delete_btn = QPushButton("Delete")
+        delete_btn.setProperty("role", "ghost")
+        delete_btn.setStyleSheet(f"color: {COLORS['red']};")
+        delete_btn.clicked.connect(lambda: self.delete_requested.emit(recording_id))
+        buttons.addWidget(delete_btn)
+
         wrapper = QWidget()
         wrapper.setLayout(buttons)
         self._layout.addWidget(wrapper)
