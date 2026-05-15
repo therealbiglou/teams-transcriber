@@ -115,7 +115,9 @@ def test_end_to_end_with_fakes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     time.sleep(0.5)
     bus.publish(MeetingEnded())
 
-    # By the time MeetingEnded returns, synchronous transcribe + summarize have run.
+    # Drain the executor so post-processing completes.
+    pipeline.shutdown()
+
     assert len(summaries_ready) == 1
 
     recs = RecordingRepo(db).list_recent()
@@ -174,5 +176,48 @@ def test_pipeline_releases_recorder_on_failure(tmp_path: Path) -> None:
     rec_repo = RecordingRepo(db)
     recs = rec_repo.list_recent()
     assert len(recs) == 2  # both attempts created rows; both failed
+
+    db.close()
+
+
+def test_pipeline_runs_post_processing_on_executor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The transcribe+summarize chain must run off the publishing thread."""
+    import threading
+
+    paths = AppPaths(root=tmp_path / "TT")
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    bus = EventBus()
+    settings = Settings()
+
+    publisher_thread_id = threading.get_ident()
+    transcribe_thread_ids: list[int] = []
+
+    class _ThreadSpyTranscriber:
+        def transcribe(self, recording_id: int) -> None:
+            transcribe_thread_ids.append(threading.get_ident())
+
+    sources = [_make_source(seconds=0.5)]
+    pipeline = Pipeline(
+        bus=bus, db=db, paths=paths, settings=settings,
+        audio_source_factory=lambda: sources.pop(0),
+        transcriber=_ThreadSpyTranscriber(),  # type: ignore[arg-type]
+        summarizer=Summarizer(
+            bus=bus, db=db, settings=settings,
+            client_factory=lambda _k: _FakeClient(),
+        ),
+    )
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    bus.publish(MeetingDetected(window_title="X | Microsoft Teams"))
+    import time
+    time.sleep(0.5)
+    bus.publish(MeetingEnded())
+
+    pipeline.shutdown()  # drain the executor
+
+    assert len(transcribe_thread_ids) == 1
+    assert transcribe_thread_ids[0] != publisher_thread_id
 
     db.close()
