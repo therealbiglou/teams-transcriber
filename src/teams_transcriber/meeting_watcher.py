@@ -24,6 +24,21 @@ logger = logging.getLogger(__name__)
 
 TEAMS_PROCESS_NAMES: frozenset[str] = frozenset({"ms-teams.exe"})
 
+# Teams main app windows we should NOT treat as meetings. Compared
+# case-insensitive against the *full* title.
+TEAMS_NAV_VIEW_TITLES: frozenset[str] = frozenset({
+    "calendar | calendar | microsoft teams",
+    "activity | microsoft teams",
+    "chats | microsoft teams",
+    "chat | microsoft teams",
+    "teams | microsoft teams",
+    "files | microsoft teams",
+    "calls | microsoft teams",
+    "apps | microsoft teams",
+    "shifts | microsoft teams",
+    "microsoft teams",
+})
+
 
 @dataclass(slots=True, frozen=True)
 class WindowInfo:
@@ -111,11 +126,27 @@ class MeetingWatcher:
     # --- internals ---------------------------------------------------------
 
     def _find_meeting_window(self, windows: list[WindowInfo]) -> WindowInfo | None:
+        """Find an active meeting window.
+
+        Strategy:
+        1. Allowlist: any title that substring-matches a configured `title_patterns` entry.
+        2. Smart fallback: any ms-teams.exe window whose title is NOT in the nav-view
+           denylist AND clearly belongs to Teams (ends with "| Microsoft Teams" or
+           contains "Microsoft Teams Call").
+        """
         for w in windows:
             if w.process_name.lower() not in TEAMS_PROCESS_NAMES:
                 continue
             title_lower = w.title.lower()
+
+            # 1. Configured patterns win.
             if any(p in title_lower for p in self._title_patterns):
+                return w
+
+            # 2. Smart fallback.
+            if title_lower in TEAMS_NAV_VIEW_TITLES:
+                continue
+            if "| microsoft teams" in title_lower or "microsoft teams call" in title_lower:
                 return w
         return None
 

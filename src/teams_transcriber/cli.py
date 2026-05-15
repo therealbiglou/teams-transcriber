@@ -78,6 +78,12 @@ def _cmd_retry_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ui(args: argparse.Namespace) -> int:
+    del args
+    from teams_transcriber.ui.app import main as ui_main
+    return ui_main()
+
+
 def _cmd_list(args: argparse.Namespace) -> int:
     paths = AppPaths()
     db = build_database(paths.db_path)
@@ -108,6 +114,9 @@ def main(argv: list[str] | None = None) -> int:
     p_list = sub.add_parser("list", help="List recent recordings.")
     p_list.add_argument("--limit", type=int, default=20)
     p_list.set_defaults(func=_cmd_list)
+
+    p_ui = sub.add_parser("ui", help="Launch the desktop UI.")
+    p_ui.set_defaults(func=_cmd_ui)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

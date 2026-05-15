@@ -1,3 +1,7 @@
-from teams_transcriber.cli import main
+"""Default entry: launch the UI. Use `cli.py` commands for headless ops."""
 
-raise SystemExit(main())
+import sys
+
+from teams_transcriber.ui.app import main
+
+sys.exit(main())

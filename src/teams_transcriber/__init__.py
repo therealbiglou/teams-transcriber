@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -29,10 +30,8 @@ def _register_nvidia_dll_dirs() -> None:
     for bin_dir in nvidia_root.rglob("bin"):
         if bin_dir.is_dir() and any(bin_dir.glob("*.dll")):
             path_str = str(bin_dir)
-            try:
+            with contextlib.suppress(OSError, AttributeError):
                 os.add_dll_directory(path_str)
-            except (OSError, AttributeError):
-                pass
             added.append(path_str)
     # Belt-and-suspenders: ctranslate2's DLL loader respects PATH on Windows.
     if added:

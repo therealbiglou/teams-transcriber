@@ -35,6 +35,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
             "Meeting in progress | Microsoft Teams",
             "Meeting | Microsoft Teams",
             "| Microsoft Teams Call",
+            "Meeting with ",
         ],
     },
     "transcription": {
