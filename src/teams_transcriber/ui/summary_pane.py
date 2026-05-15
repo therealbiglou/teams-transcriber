@@ -221,22 +221,22 @@ def _section_card(title: str, body_widgets: list[QWidget]) -> QFrame:
 
 
 def _topics_row(topics: list[str]) -> QFrame:
+    from teams_transcriber.ui.flow_layout import FlowLayout
+
     card = QFrame()
     card.setProperty("card", True)
     layout = QVBoxLayout(card)
     layout.setContentsMargins(20, 16, 20, 16)
+    layout.setSpacing(8)
     header = QLabel("Topics")
     header.setStyleSheet("font-size: 14px; font-weight: 600;")
     layout.addWidget(header)
 
-    flow = QHBoxLayout()
-    flow.setSpacing(6)
+    chips_wrapper = QWidget()
+    flow = FlowLayout(chips_wrapper, margin=0, spacing=6)
     for t in topics:
         chip = QLabel(t)
         chip.setProperty("role", "chip")
         flow.addWidget(chip)
-    flow.addStretch(1)
-    wrapper = QWidget()
-    wrapper.setLayout(flow)
-    layout.addWidget(wrapper)
+    layout.addWidget(chips_wrapper)
     return card
