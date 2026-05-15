@@ -6,6 +6,7 @@ from teams_transcriber.events import (
     EventBus,
     MeetingDetected,
     MeetingEnded,
+    RecordingFailed,
     RecordingFinalized,
     RecordingStarted,
     SummaryReady,
@@ -104,5 +105,6 @@ def test_event_dataclasses_carry_expected_fields() -> None:
     MeetingEnded()
     RecordingStarted(recording_id=1, audio_path="C:/a.opus")
     RecordingFinalized(recording_id=1, duration_ms=12345)
+    RecordingFailed(recording_id=1, error_message="boom")
     TranscriptionComplete(recording_id=1, segment_count=10)
     SummaryReady(recording_id=1)

@@ -31,6 +31,15 @@ def _make_source(seconds: float) -> FakeAudioSource:
     return FakeAudioSource(mic_samples=mic, loopback_samples=loop)
 
 
+class _BoomSource:
+    def read_chunk(self, num_frames: int):
+        del num_frames
+        raise RuntimeError("audio device gone")
+
+    def close(self) -> None:
+        pass
+
+
 @dataclass
 class _FakeSeg:
     start: float
@@ -123,3 +132,47 @@ def test_end_to_end_with_fakes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
     # Reference pipeline so it isn't garbage collected mid-run.
     del pipeline
+
+
+def test_pipeline_releases_recorder_on_failure(tmp_path: Path) -> None:
+    from teams_transcriber.events import RecordingFailed
+
+    paths = AppPaths(root=tmp_path / "TT")
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    bus = EventBus()
+    settings = Settings()
+
+    failed: list[RecordingFailed] = []
+    bus.subscribe(RecordingFailed, failed.append)
+
+    pipeline = Pipeline(
+        bus=bus, db=db, paths=paths, settings=settings,
+        audio_source_factory=lambda: _BoomSource(),  # type: ignore[arg-type,return-value]
+    )
+    del pipeline  # not used directly; subscriptions wire it in
+
+    # Trigger the meeting flow. The recorder's _run will explode immediately.
+    bus.publish(MeetingDetected(window_title="X"))
+
+    import time
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and not failed:
+        time.sleep(0.01)
+
+    assert len(failed) == 1
+
+    # After the failure, a second MeetingDetected creates a second recording row
+    # (would not happen if _recorder were still set).
+    bus.publish(MeetingDetected(window_title="Y"))
+
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline and len(failed) < 2:
+        time.sleep(0.01)
+
+    rec_repo = RecordingRepo(db)
+    recs = rec_repo.list_recent()
+    assert len(recs) == 2  # both attempts created rows; both failed
+
+    db.close()

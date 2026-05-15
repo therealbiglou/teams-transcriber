@@ -12,6 +12,7 @@ from teams_transcriber.events import (
     EventBus,
     MeetingDetected,
     MeetingEnded,
+    RecordingFailed,
     RecordingFinalized,
     TranscriptionComplete,
 )
@@ -82,6 +83,7 @@ class Pipeline:
         self._bus.subscribe(MeetingDetected, self._on_meeting_detected)
         self._bus.subscribe(MeetingEnded, self._on_meeting_ended)
         self._bus.subscribe(RecordingFinalized, self._on_recording_finalized)
+        self._bus.subscribe(RecordingFailed, self._on_recording_failed)
         self._bus.subscribe(TranscriptionComplete, self._on_transcription_complete)
 
     def _on_meeting_detected(self, evt: MeetingDetected) -> None:
@@ -100,6 +102,11 @@ class Pipeline:
             self._transcriber.transcribe(evt.recording_id)
         except Exception:
             logger.exception("transcription crashed for %d", evt.recording_id)
+
+    def _on_recording_failed(self, evt: RecordingFailed) -> None:
+        logger.warning("recording %d failed: %s", evt.recording_id, evt.error_message)
+        # Worker thread already updated status; just release the slot.
+        self._recorder = None
 
     def _on_transcription_complete(self, evt: TranscriptionComplete) -> None:
         try:

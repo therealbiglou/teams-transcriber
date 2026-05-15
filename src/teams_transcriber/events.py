@@ -47,6 +47,12 @@ class RecordingFinalized(Event):
 
 
 @dataclass(slots=True, frozen=True)
+class RecordingFailed(Event):
+    recording_id: int
+    error_message: str
+
+
+@dataclass(slots=True, frozen=True)
 class TranscriptionComplete(Event):
     recording_id: int
     segment_count: int

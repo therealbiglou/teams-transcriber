@@ -21,6 +21,7 @@ from teams_transcriber.audio.source import AudioSource
 from teams_transcriber.config import Settings
 from teams_transcriber.events import (
     EventBus,
+    RecordingFailed,
     RecordingFinalized,
     RecordingStarted,
 )
@@ -135,14 +136,18 @@ class Recorder:
                     break
                 self._writer.write_chunk(chunk)
                 self._frames_written += chunk.shape[0]
-        except Exception:
+        except Exception as exc:
             logger.exception("recorder loop failed")
             repo = RecordingRepo(self._db)
             if self._recording_id is not None:
                 repo.update_status(
                     self._recording_id, RecordingStatus.RECORDING_FAILED,
-                    error_message="recording loop exception",
+                    error_message=str(exc),
                 )
+                self._bus.publish(RecordingFailed(
+                    recording_id=self._recording_id,
+                    error_message=str(exc),
+                ))
 
     def _end(self, *, cancel: bool) -> None:
         if self._thread is None:
