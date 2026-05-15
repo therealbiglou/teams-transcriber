@@ -150,3 +150,47 @@ class MeetingWatcher:
         self._consecutive_match = 0
         self._consecutive_miss = 0
         self._bus.publish(MeetingEnded())
+
+
+def enumerate_windows() -> list[WindowInfo]:
+    """Return all visible top-level windows on the current Windows desktop.
+
+    Returns an empty list (and logs a warning) on non-Windows or if pywin32/psutil
+    aren't available, so the rest of the pipeline can still be wired up in tests.
+    """
+    try:
+        import psutil
+        import win32gui
+        import win32process
+    except ImportError:
+        logger.warning("pywin32/psutil not available — enumerate_windows() returns []")
+        return []
+
+    results: list[WindowInfo] = []
+    process_name_cache: dict[int, str] = {}
+
+    def _process_name_for(pid: int) -> str:
+        if pid in process_name_cache:
+            return process_name_cache[pid]
+        try:
+            name = psutil.Process(pid).name().lower()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            name = ""
+        process_name_cache[pid] = name
+        return name
+
+    def _callback(hwnd: int, _: object) -> bool:
+        if not win32gui.IsWindowVisible(hwnd):
+            return True
+        title = win32gui.GetWindowText(hwnd)
+        if not title:
+            return True
+        try:
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        except Exception:
+            return True
+        results.append(WindowInfo(pid=pid, process_name=_process_name_for(pid), title=title))
+        return True
+
+    win32gui.EnumWindows(_callback, None)
+    return results

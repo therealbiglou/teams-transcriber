@@ -182,3 +182,26 @@ def test_resume_after_pause_can_detect() -> None:
     for _ in range(3):
         w.step()
     assert len(detected) == 1
+
+
+def test_enumerate_windows_returns_list_on_windows() -> None:
+    """Smoke: real enumeration returns *some* windows on a real OS.
+
+    We don't assert specific contents — the test just confirms the call doesn't
+    raise and returns the right shape. CI on non-Windows will skip this test.
+    """
+    import sys
+
+    if not sys.platform.startswith("win"):
+        import pytest
+        pytest.skip("Win32 enumeration is Windows-only")
+
+    from teams_transcriber.meeting_watcher import enumerate_windows
+
+    windows = enumerate_windows()
+    assert isinstance(windows, list)
+    if windows:
+        w = windows[0]
+        assert isinstance(w.pid, int)
+        assert isinstance(w.process_name, str)
+        assert isinstance(w.title, str)
