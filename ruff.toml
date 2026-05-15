@@ -12,5 +12,8 @@ select = [
 ]
 ignore = ["E501"]  # line length handled by formatter
 
+[lint.per-file-ignores]
+"__init__.py" = ["F401"]  # re-exports are intentional public surface
+
 [format]
 quote-style = "double"
