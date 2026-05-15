@@ -29,13 +29,14 @@ SUMMARY_TOOL_NAME = "save_meeting_summary"
 SYSTEM_PROMPT = """\
 You summarize meeting transcripts produced by a Teams Transcriber app.
 
-The transcript has two channels: "me" (the user) and "others" (the remote participants).
-Use that distinction to attribute commitments accurately:
-- `my_todos` = things the user committed to doing themselves.
-- `action_items_others` = things other participants committed to doing.
+In Phase 2 of this app, transcripts are not yet split by speaker. Treat the entire
+transcript as a single voice and attribute action items conservatively:
+- `my_todos` = items the speaker(s) clearly committed to taking action on themselves
+  (look for first-person commitments like "I'll do X" or "I can take that").
+- `action_items_others` = items assigned to a named third party (e.g. "Sarah will...").
 
-Always call the save_meeting_summary tool with the full structured summary. Do not
-respond with plain text. Be concise. Keep the one_line under 120 characters.
+When attribution is ambiguous, prefer `follow_ups`. Always call the save_meeting_summary
+tool with the full structured summary. Be concise. Keep the one_line under 120 characters.
 """
 
 TOOL_SCHEMA: dict[str, Any] = {

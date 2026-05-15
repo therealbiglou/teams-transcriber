@@ -3,8 +3,10 @@
 This is the simplest possible shape: take a finalized recording, transcribe the whole
 file in one pass, write segments. Live per-channel transcription is a Phase 2.5 follow-up.
 
-Segments are emitted with `channel='others'` because we transcribe the mixed file;
-proper per-channel labeling will land alongside live mode.
+**Phase 2 limitation:** segments are all labeled `channel='others'` because we transcribe
+the mixed Opus file. Per-channel separation (which mic/loopback channel a segment came
+from) lands in Phase 2.5. The Summarizer is aware of this and uses a single-voice
+attribution prompt until labeling is real.
 """
 
 from __future__ import annotations
