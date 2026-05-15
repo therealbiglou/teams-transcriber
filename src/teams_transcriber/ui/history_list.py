@@ -30,6 +30,8 @@ class HistoryList(QScrollArea):
         self._layout.setSpacing(16)
         self._layout.addStretch(1)
         self.setWidget(self._container)
+        self._cards: dict[int, MeetingCard] = {}
+        self._selected_id: int | None = None
 
     def set_recordings(
         self,
@@ -54,11 +56,34 @@ class HistoryList(QScrollArea):
             header.setStyleSheet("font-weight: 600; padding-top: 4px;")
             self._layout.insertWidget(self._layout.count() - 1, header)
             for rec, one_line, todo_count in items:
+                assert rec.id is not None
                 card = MeetingCard(rec, one_line=one_line, todo_count=todo_count)
-                card.clicked.connect(self.recording_selected.emit)
+                card.clicked.connect(self._on_card_clicked)
+                self._cards[rec.id] = card
                 self._layout.insertWidget(self._layout.count() - 1, card)
 
+        # Re-apply selection (if the previously selected card still exists).
+        if self._selected_id is not None and self._selected_id in self._cards:
+            self._cards[self._selected_id].set_selected(True)
+
+    def select(self, recording_id: int) -> None:
+        """Programmatically select a card and emit the selection signal."""
+        self._apply_selection(recording_id)
+        self.recording_selected.emit(recording_id)
+
+    def _on_card_clicked(self, recording_id: int) -> None:
+        self._apply_selection(recording_id)
+        self.recording_selected.emit(recording_id)
+
+    def _apply_selection(self, recording_id: int) -> None:
+        if self._selected_id is not None and self._selected_id in self._cards:
+            self._cards[self._selected_id].set_selected(False)
+        self._selected_id = recording_id
+        if recording_id in self._cards:
+            self._cards[recording_id].set_selected(True)
+
     def _clear(self) -> None:
+        self._cards.clear()
         while self._layout.count() > 1:
             item = self._layout.takeAt(0)
             if item is None:

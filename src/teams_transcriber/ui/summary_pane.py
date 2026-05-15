@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -25,6 +26,7 @@ from teams_transcriber.storage import (
     SummaryRepo,
     TodoStateRepo,
 )
+from teams_transcriber.ui.icons import IconName, get_icon
 from teams_transcriber.ui.theme import COLORS
 
 
@@ -73,10 +75,28 @@ class SummaryPane(QScrollArea):
             self._layout.addWidget(QLabel("No summary yet for this recording."))
             return
 
+        # Header row: title (wraps) + delete icon button pinned top-right.
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setSpacing(8)
+
         title = QLabel(rec.display_title or summary.title or "Untitled meeting")
         title.setProperty("role", "title")
         title.setWordWrap(True)
-        self._layout.addWidget(title)
+        title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        header.addWidget(title, 1)
+
+        delete_icon_btn = QPushButton()
+        delete_icon_btn.setIcon(get_icon(IconName.CLOSE, color=COLORS["red"]))
+        delete_icon_btn.setToolTip("Delete this recording")
+        delete_icon_btn.setProperty("role", "ghost")
+        delete_icon_btn.setFixedSize(32, 32)
+        delete_icon_btn.clicked.connect(lambda: self.delete_requested.emit(recording_id))
+        header.addWidget(delete_icon_btn, 0, Qt.AlignmentFlag.AlignTop)
+
+        header_wrapper = QWidget()
+        header_wrapper.setLayout(header)
+        self._layout.addWidget(header_wrapper)
 
         meta = QLabel(
             f"{rec.started_at} · {(rec.duration_ms or 0) / 60000:.0f} min · {summary.model_used}"
@@ -110,28 +130,24 @@ class SummaryPane(QScrollArea):
             self._layout.addWidget(_topics_row(summary.topics))
 
         buttons = QHBoxLayout()
-        view_btn = QPushButton("View transcript")
+        buttons.setSpacing(8)
+        view_btn = QPushButton("Transcript")
         view_btn.setProperty("role", "secondary")
         view_btn.clicked.connect(lambda: self.transcript_requested.emit(recording_id))
         buttons.addWidget(view_btn)
 
-        copy_btn = QPushButton("Copy markdown")
+        copy_btn = QPushButton("Copy")
+        copy_btn.setToolTip("Copy summary as markdown")
         copy_btn.setProperty("role", "secondary")
         copy_btn.clicked.connect(lambda: self._copy_markdown(summary, rec))
         buttons.addWidget(copy_btn)
 
-        export_btn = QPushButton("Export…")
+        export_btn = QPushButton("Export")
         export_btn.setProperty("role", "primary")
         export_btn.clicked.connect(lambda: self.export_requested.emit(recording_id))
         buttons.addWidget(export_btn)
 
         buttons.addStretch(1)
-
-        delete_btn = QPushButton("Delete")
-        delete_btn.setProperty("role", "ghost")
-        delete_btn.setStyleSheet(f"color: {COLORS['red']};")
-        delete_btn.clicked.connect(lambda: self.delete_requested.emit(recording_id))
-        buttons.addWidget(delete_btn)
 
         wrapper = QWidget()
         wrapper.setLayout(buttons)

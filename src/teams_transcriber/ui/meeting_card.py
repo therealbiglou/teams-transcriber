@@ -35,13 +35,16 @@ class MeetingCard(QFrame):
         assert recording.id is not None
         self._recording_id = recording.id
         self.setProperty("card", True)
+        self.setProperty("selected", False)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._shadow: QGraphicsDropShadowEffect | None = None
 
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(12)
         shadow.setColor(QColor(0, 0, 0, 18))
         shadow.setOffset(0, 1)
         self.setGraphicsEffect(shadow)
+        self._shadow = shadow
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 16, 20, 16)
@@ -91,6 +94,23 @@ class MeetingCard(QFrame):
     def mousePressEvent(self, e: QMouseEvent) -> None:
         if e.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self._recording_id)
+
+    def set_selected(self, selected: bool) -> None:
+        """Toggle the visual 'selected' state — stronger shadow + colored left edge via QSS."""
+        self.setProperty("selected", selected)
+        style = self.style()
+        if style is not None:
+            style.unpolish(self)
+            style.polish(self)
+        if self._shadow is not None:
+            if selected:
+                self._shadow.setBlurRadius(20)
+                self._shadow.setColor(QColor(16, 185, 129, 64))  # emerald-tinted
+                self._shadow.setOffset(0, 2)
+            else:
+                self._shadow.setBlurRadius(12)
+                self._shadow.setColor(QColor(0, 0, 0, 18))
+                self._shadow.setOffset(0, 1)
 
 
 def _status_chip(status: RecordingStatus) -> QLabel | None:

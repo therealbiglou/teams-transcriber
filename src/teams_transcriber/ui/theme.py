@@ -72,6 +72,9 @@ def app_stylesheet() -> str:
         border-radius: {r['card']}px;
         border: 1px solid {c['border_soft']};
     }}
+    QFrame[card="true"][selected="true"] {{
+        border: 2px solid {c['accent']};
+    }}
 
     QFrame[role="sidebar"] {{
         background: {c['card_alt']};
