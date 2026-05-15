@@ -53,3 +53,31 @@ class TranscriptSegment:
     end_ms: int
     channel: Channel
     text: str
+
+
+@dataclass(slots=True)
+class TodoItem:
+    task: str
+    context: str | None = None
+    due: str | None = None  # ISO date string or None
+
+
+@dataclass(slots=True)
+class ActionItemOther:
+    who: str
+    task: str
+    due: str | None = None
+
+
+@dataclass(slots=True)
+class Summary:
+    recording_id: int
+    one_line: str | None
+    summary: str | None
+    key_decisions: list[str]
+    my_todos: list[TodoItem]
+    action_items_others: list[ActionItemOther]
+    follow_ups: list[str]
+    topics: list[str]
+    generated_at: str
+    model_used: str
