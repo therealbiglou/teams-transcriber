@@ -129,3 +129,52 @@ def test_schema_v1_creates_expected_objects(tmp_path: Path) -> None:
         }
         assert {"ts_ai", "ts_ad", "ts_au"}.issubset(triggers)
     db.close()
+
+
+def test_schema_v1_fts_triggers_sync_index(tmp_path: Path) -> None:
+    """Verifies the AFTER INSERT/DELETE/UPDATE triggers actually keep transcript_fts in sync."""
+    from teams_transcriber.storage.db import Database
+    from teams_transcriber.storage.schema_v1 import SCHEMA_V1
+
+    db = Database(tmp_path / "t.db", migrations=[SCHEMA_V1])
+    db.initialize()
+    try:
+        with db.connect() as conn:
+            conn.execute(
+                "INSERT INTO recordings (started_at, source, status) VALUES (?, 'manual', 'recording')",
+                ("2026-05-14T10:00:00+00:00",),
+            )
+            rid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+            # INSERT trigger
+            conn.execute(
+                "INSERT INTO transcript_segments (recording_id, start_ms, end_ms, channel, text) "
+                "VALUES (?, 0, 1000, 'me', 'hello world')",
+                (rid,),
+            )
+            seg_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            hits = conn.execute(
+                "SELECT rowid FROM transcript_fts WHERE transcript_fts MATCH 'hello'"
+            ).fetchall()
+            assert len(hits) == 1, "AFTER INSERT trigger should have populated FTS"
+
+            # UPDATE trigger — old text should no longer match, new text should
+            conn.execute(
+                "UPDATE transcript_segments SET text = 'goodbye moon' WHERE id = ?",
+                (seg_id,),
+            )
+            assert conn.execute(
+                "SELECT COUNT(*) FROM transcript_fts WHERE transcript_fts MATCH 'hello'"
+            ).fetchone()[0] == 0, "AFTER UPDATE trigger should have removed the old text"
+            assert conn.execute(
+                "SELECT COUNT(*) FROM transcript_fts WHERE transcript_fts MATCH 'goodbye'"
+            ).fetchone()[0] == 1, "AFTER UPDATE trigger should have inserted the new text"
+
+            # DELETE trigger
+            conn.execute("DELETE FROM transcript_segments WHERE id = ?", (seg_id,))
+            assert conn.execute(
+                "SELECT COUNT(*) FROM transcript_fts WHERE transcript_fts MATCH 'goodbye'"
+            ).fetchone()[0] == 0, "AFTER DELETE trigger should have removed the row from FTS"
+            conn.commit()
+    finally:
+        db.close()
