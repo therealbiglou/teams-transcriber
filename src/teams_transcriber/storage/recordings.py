@@ -8,6 +8,8 @@ from teams_transcriber.storage.db import Database
 from teams_transcriber.storage.models import Recording, RecordingSource, RecordingStatus
 
 
+# Module-level row-mapper (not a @staticmethod) so tests and other modules can call
+# without instantiating the repo. The same pattern applies in the other repo modules.
 def _row_to_recording(row: sqlite3.Row) -> Recording:
     return Recording(
         id=row["id"],
@@ -70,6 +72,19 @@ class RecordingRepo:
             ).fetchall()
         return [_row_to_recording(r) for r in rows]
 
+    def list_by_status(self, status: RecordingStatus) -> list[Recording]:
+        """Return all recordings in the given status, newest first.
+
+        Used at startup to find recordings that crashed mid-pipeline so they can be
+        resumed or marked failed.
+        """
+        with self._db.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM recordings WHERE status = ? ORDER BY started_at DESC",
+                (status.value,),
+            ).fetchall()
+        return [_row_to_recording(r) for r in rows]
+
     def update_status(
         self,
         recording_id: int,
@@ -84,6 +99,7 @@ class RecordingRepo:
             conn.commit()
 
     def finalize(self, recording_id: int, ended_at: str, duration_ms: int) -> None:
+        """Set ended_at and duration_ms. Status is updated separately via update_status()."""
         with self._db.connect() as conn:
             conn.execute(
                 "UPDATE recordings SET ended_at = ?, duration_ms = ? WHERE id = ?",
@@ -99,7 +115,8 @@ class RecordingRepo:
             )
             conn.commit()
 
-    def set_audio_path(self, recording_id: int, audio_path: str | None) -> None:
+    def set_audio_path(self, recording_id: int, audio_path: str) -> None:
+        """Set the recording's audio_path. Use mark_audio_deleted() to null it instead."""
         with self._db.connect() as conn:
             conn.execute(
                 "UPDATE recordings SET audio_path = ? WHERE id = ?",

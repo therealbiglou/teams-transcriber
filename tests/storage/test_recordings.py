@@ -158,7 +158,7 @@ def test_list_recent_orders_by_started_desc(db: Database) -> None:
     assert [r.detected_title for r in recents] == ["Meeting 2", "Meeting 1", "Meeting 0"]
 
 
-def test_delete_cascades(db: Database) -> None:
+def test_delete_removes_row(db: Database) -> None:
     repo = RecordingRepo(db)
     created = repo.create(
         Recording(
@@ -188,3 +188,31 @@ def test_create_rejects_invalid_source(db: Database) -> None:
             "INSERT INTO recordings (started_at, source, status) VALUES (?, ?, ?)",
             (_now(), "invalid", "recording"),
         )
+
+
+def test_list_by_status_filters_and_orders(db: Database) -> None:
+    repo = RecordingRepo(db)
+    for i, status in enumerate([
+        RecordingStatus.RECORDING,
+        RecordingStatus.DONE,
+        RecordingStatus.RECORDING,
+        RecordingStatus.SUMMARY_FAILED,
+    ]):
+        repo.create(
+            Recording(
+                id=None,
+                started_at=f"2026-05-1{i}T10:00:00+00:00",
+                ended_at=None,
+                source=RecordingSource.TEAMS,
+                detected_title=f"Meeting {i}",
+                display_title=None,
+                audio_path=None,
+                audio_deleted_at=None,
+                duration_ms=None,
+                status=status,
+                error_message=None,
+            )
+        )
+    recording_only = repo.list_by_status(RecordingStatus.RECORDING)
+    assert [r.detected_title for r in recording_only] == ["Meeting 2", "Meeting 0"]
+    assert repo.list_by_status(RecordingStatus.TRANSCRIBING) == []
