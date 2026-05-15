@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import contextlib
+import logging
+import queue
 import threading
 import time
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
+
+CAPTURE_BLOCK_FRAMES: int = 1024  # ~64 ms at 16 kHz; small enough for tight stop response
+SAMPLE_RATE: int = 16_000
 
 
 class AudioSource(Protocol):
@@ -65,3 +73,102 @@ class FakeAudioSource:
                 if self._cursor >= n:
                     return
             time.sleep(0.01)
+
+
+class RealAudioSource:
+    """Captures mic + loopback as a (frames, 2) float32 stream at 16 kHz.
+
+    Two `soundcard` streams run in a single worker thread, each `.record(N)`-ed in
+    lockstep, then column-stacked into (frames, 2). Chunks accumulate in a bounded
+    queue; the Recorder pulls them via `read_chunk()`. `close()` shuts down cleanly.
+
+    Tests inject fake devices via `mic_device` / `loopback_device`. Production
+    constructs the source via `from_default_devices()`.
+    """
+
+    def __init__(
+        self,
+        *,
+        mic_device: Any,
+        loopback_device: Any,
+        chunk_frames: int = CAPTURE_BLOCK_FRAMES,
+        queue_size: int = 64,
+    ) -> None:
+        self._mic_device = mic_device
+        self._loopback_device = loopback_device
+        self._chunk_frames = chunk_frames
+        self._queue: queue.Queue[np.ndarray | None] = queue.Queue(maxsize=queue_size)
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True, name="audio-capture")
+        self._closed = False
+        self._thread.start()
+
+    @classmethod
+    def from_default_devices(cls) -> RealAudioSource:
+        """Construct using soundcard's default mic and a loopback of the default speaker."""
+        import soundcard
+
+        mic = soundcard.default_microphone()
+        speaker = soundcard.default_speaker()
+        loopback = soundcard.get_microphone(speaker.id, include_loopback=True)
+        return cls(mic_device=mic, loopback_device=loopback)
+
+    def read_chunk(self, num_frames: int) -> np.ndarray:
+        """Pull the next chunk; 0-row array signals end-of-stream."""
+        del num_frames  # We deliver fixed-size chunks; caller-requested size is advisory.
+        item = self._queue.get()
+        if item is None:
+            return np.empty((0, 2), dtype=np.float32)
+        return item
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._stop.set()
+        # Unblock the worker if it's wedged on a full queue.
+        try:
+            while True:
+                self._queue.get_nowait()
+        except queue.Empty:
+            pass
+        self._thread.join(timeout=2.0)
+        # Drain anything the worker put in between (its final sentinel + late chunks)
+        # so the next read_chunk() sees end-of-stream.
+        try:
+            while True:
+                self._queue.get_nowait()
+        except queue.Empty:
+            pass
+        with contextlib.suppress(queue.Full):
+            self._queue.put_nowait(None)
+
+    # --- internals ---------------------------------------------------------
+
+    def _run(self) -> None:
+        try:
+            with self._mic_device.recorder(samplerate=SAMPLE_RATE, channels=1) as mic_stream, \
+                 self._loopback_device.recorder(samplerate=SAMPLE_RATE, channels=1) as loop_stream:
+                while not self._stop.is_set():
+                    try:
+                        mic = mic_stream.record(self._chunk_frames)
+                        loop = loop_stream.record(self._chunk_frames)
+                    except Exception:
+                        logger.exception("audio stream read failed")
+                        break
+
+                    mic = np.asarray(mic, dtype=np.float32).reshape(-1)
+                    loop = np.asarray(loop, dtype=np.float32).reshape(-1)
+
+                    n = min(len(mic), len(loop))
+                    if n == 0:
+                        continue
+                    stacked = np.stack([mic[:n], loop[:n]], axis=1)
+
+                    try:
+                        self._queue.put(stacked, timeout=1.0)
+                    except queue.Full:
+                        logger.warning("audio queue full; dropping a chunk")
+        finally:
+            with contextlib.suppress(queue.Full):
+                self._queue.put_nowait(None)
