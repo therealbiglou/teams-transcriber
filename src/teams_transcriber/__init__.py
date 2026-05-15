@@ -1,3 +1,42 @@
 """Teams Transcriber — auto-record and summarize Teams meetings."""
 
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
 __version__ = "0.1.0"
+
+
+def _register_nvidia_dll_dirs() -> None:
+    """On Windows, add the pip-installed NVIDIA runtime DLL dirs to the loader path.
+
+    `ctranslate2` (used by faster-whisper) links against `cublas64_12.dll`, `cudnn64_9.dll`,
+    and `nvrtc64_*.dll`. The `nvidia-cublas-cu12` / `nvidia-cudnn-cu12` PyPI wheels ship
+    these under `<venv>/Lib/site-packages/nvidia/<lib>/bin/`, but Windows' restricted DLL
+    search doesn't look there. `os.add_dll_directory` adds them explicitly.
+
+    Silently does nothing on non-Windows or when the wheels aren't installed (CPU-only
+    use case, tests with mocked Whisper, etc.).
+    """
+    if not sys.platform.startswith("win"):
+        return
+    nvidia_root = Path(sys.executable).parent.parent / "Lib" / "site-packages" / "nvidia"
+    if not nvidia_root.is_dir():
+        return
+    added: list[str] = []
+    for bin_dir in nvidia_root.rglob("bin"):
+        if bin_dir.is_dir() and any(bin_dir.glob("*.dll")):
+            path_str = str(bin_dir)
+            try:
+                os.add_dll_directory(path_str)
+            except (OSError, AttributeError):
+                pass
+            added.append(path_str)
+    # Belt-and-suspenders: ctranslate2's DLL loader respects PATH on Windows.
+    if added:
+        os.environ["PATH"] = os.pathsep.join([*added, os.environ.get("PATH", "")])
+
+
+_register_nvidia_dll_dirs()
