@@ -27,15 +27,24 @@ def is_enabled() -> bool:
         return False
 
 
-def enable(exe_path: Path | str) -> bool:
+def _build_launch_command() -> str:
+    """Full Windows command-line that launches the UI without a console window."""
+    py = Path(sys.executable)
+    pythonw = py.with_name("pythonw.exe")
+    interpreter = pythonw if pythonw.exists() else py
+    return f'"{interpreter}" -m teams_transcriber'
+
+
+def enable(command: str | None = None) -> bool:
     if not sys.platform.startswith("win"):
         return False
+    value = command if command is not None else _build_launch_command()
     try:
         import winreg
         with winreg.OpenKey(
             winreg.HKEY_CURRENT_USER, REG_KEY_PATH, 0, winreg.KEY_SET_VALUE,
         ) as key:
-            winreg.SetValueEx(key, REG_VALUE_NAME, 0, winreg.REG_SZ, f'"{exe_path}"')
+            winreg.SetValueEx(key, REG_VALUE_NAME, 0, winreg.REG_SZ, value)
         return True
     except OSError:
         logger.exception("could not enable auto-launch")

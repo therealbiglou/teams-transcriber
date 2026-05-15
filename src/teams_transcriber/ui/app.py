@@ -127,7 +127,7 @@ class App:
 
         if self.settings.auto_launch:
             from teams_transcriber import autolaunch
-            autolaunch.enable(Path(sys.executable))
+            autolaunch.enable()
 
         self.pipeline.serve()
         self._refresh_history()
