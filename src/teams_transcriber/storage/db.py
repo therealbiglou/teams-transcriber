@@ -31,16 +31,23 @@ class Database:
 
     def initialize(self) -> None:
         """Open connection, set pragmas, run migrations. Safe to call once."""
-        if self._conn is not None:
-            return
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(self._path, check_same_thread=False)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA journal_mode = WAL")  # better concurrency
-        conn.execute("PRAGMA synchronous = NORMAL")  # WAL-safe durability/speed tradeoff
-        MigrationRunner(self._migrations).run(conn)
-        self._conn = conn
+        with self._lock:
+            if self._conn is not None:
+                return
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(self._path, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")  # better concurrency
+            conn.execute("PRAGMA synchronous = NORMAL")  # WAL-safe durability/speed tradeoff
+            mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+            if mode.lower() != "wal":
+                raise RuntimeError(
+                    f"WAL mode could not be enabled (got {mode!r}). "
+                    "This usually indicates the database file is on an unsupported filesystem."
+                )
+            MigrationRunner(self._migrations).run(conn)
+            self._conn = conn
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:

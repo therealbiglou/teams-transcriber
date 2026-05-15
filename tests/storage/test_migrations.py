@@ -80,3 +80,22 @@ def test_runner_requires_strictly_increasing_versions() -> None:
 def test_runner_rejects_version_zero() -> None:
     with pytest.raises(ValueError, match="must be >= 1"):
         MigrationRunner([Migration(0, "zero", lambda c: None)])
+
+
+def test_runner_rolls_back_partial_ddl_within_a_migration() -> None:
+    """Multiple DDLs inside one migration must be atomic — the explicit BEGIN ensures this."""
+    conn = _make_conn()
+
+    def bad(c: sqlite3.Connection) -> None:
+        c.execute("CREATE TABLE a (id INTEGER)")
+        c.execute("CREATE TABLE b (id INTEGER)")
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        MigrationRunner([Migration(1, "bad", bad)]).run(conn)
+
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
+    leftover = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('a','b')"
+    ).fetchall()
+    assert leftover == []

@@ -83,3 +83,22 @@ def test_connect_before_initialize_raises(tmp_path: Path) -> None:
     db = Database(tmp_path / "t.db", migrations=[])
     with pytest.raises(RuntimeError, match="initialize"), db.connect():
         pass
+
+
+def test_database_journal_mode_is_wal(tmp_path: Path) -> None:
+    db = Database(tmp_path / "t.db", migrations=[])
+    db.initialize()
+    with db.connect() as conn:
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+    db.close()
+    assert mode.lower() == "wal"
+
+
+def test_initialize_is_idempotent(tmp_path: Path) -> None:
+    db = Database(tmp_path / "t.db", migrations=[])
+    db.initialize()
+    first_conn = db._conn  # access the private attr just for the test
+    db.initialize()  # second call must be a no-op
+    second_conn = db._conn
+    assert first_conn is second_conn
+    db.close()
