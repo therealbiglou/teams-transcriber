@@ -184,6 +184,88 @@ def test_resume_after_pause_can_detect() -> None:
     assert len(detected) == 1
 
 
+# --- Smart detection (denylist of nav views) ------------------------------
+
+def test_scheduled_meeting_subject_is_detected() -> None:
+    """A scheduled meeting opens its own window with the meeting subject as title."""
+    bus = EventBus()
+    detected: list[MeetingDetected] = []
+    bus.subscribe(MeetingDetected, detected.append)
+
+    fw = FakeWindows(scripted=[
+        [WindowInfo(pid=1, process_name="ms-teams.exe",
+                    title="Potter // House of Blues - Reception | Microsoft Teams")],
+    ] * 3)
+    w = MeetingWatcher(
+        bus=bus,
+        current_windows=fw,
+        title_patterns=[],
+        debounce_polls=2,
+    )
+    for _ in range(3):
+        w.step()
+    assert len(detected) == 1
+    assert "Potter" in detected[0].window_title
+
+
+def test_calendar_view_is_not_detected() -> None:
+    """The Calendar nav view must NOT trigger detection even with smart matching."""
+    bus = EventBus()
+    detected: list[MeetingDetected] = []
+    bus.subscribe(MeetingDetected, detected.append)
+
+    fw = FakeWindows(scripted=[
+        [WindowInfo(pid=1, process_name="ms-teams.exe",
+                    title="Calendar | Calendar | Microsoft Teams")],
+    ] * 3)
+    w = MeetingWatcher(
+        bus=bus, current_windows=fw,
+        title_patterns=[], debounce_polls=2,
+    )
+    for _ in range(3):
+        w.step()
+    assert detected == []
+
+
+def test_other_nav_views_are_not_detected() -> None:
+    """Activity, Chats, Teams, Files, Calls navigation views must not trigger."""
+    for nav_view in ["Activity", "Chats", "Teams", "Files", "Calls", "Apps"]:
+        bus = EventBus()
+        detected: list[MeetingDetected] = []
+        bus.subscribe(MeetingDetected, detected.append)
+        fw = FakeWindows(scripted=[
+            [WindowInfo(pid=1, process_name="ms-teams.exe",
+                        title=f"{nav_view} | Microsoft Teams")],
+        ] * 3)
+        w = MeetingWatcher(
+            bus=bus, current_windows=fw,
+            title_patterns=[], debounce_polls=2,
+        )
+        for _ in range(3):
+            w.step()
+        assert detected == [], f"falsely detected on nav view {nav_view!r}: {detected}"
+
+
+def test_explicit_pattern_still_works_alongside_smart_detection() -> None:
+    """If a title matches an explicit pattern, that wins over the denylist."""
+    bus = EventBus()
+    detected: list[MeetingDetected] = []
+    bus.subscribe(MeetingDetected, detected.append)
+
+    fw = FakeWindows(scripted=[
+        [WindowInfo(pid=1, process_name="ms-teams.exe",
+                    title="Meeting with Brian | Microsoft Teams")],
+    ] * 3)
+    w = MeetingWatcher(
+        bus=bus, current_windows=fw,
+        title_patterns=["Meeting with "],
+        debounce_polls=2,
+    )
+    for _ in range(3):
+        w.step()
+    assert len(detected) == 1
+
+
 def test_enumerate_windows_returns_list_on_windows() -> None:
     """Smoke: real enumeration returns *some* windows on a real OS.
 

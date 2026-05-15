@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import re
 import threading
+import warnings
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -130,12 +131,18 @@ class Recorder:
     def _run(self) -> None:
         assert self._writer is not None
         try:
-            while not self._stop.is_set():
-                chunk = self._source.read_chunk(CHUNK_FRAMES)
-                if chunk.shape[0] == 0:
-                    break
-                self._writer.write_chunk(chunk)
-                self._frames_written += chunk.shape[0]
+            with warnings.catch_warnings():
+                # soundcard logs benign 'data discontinuity' warnings hundreds of times
+                # per meeting; suppress them at the worker scope only.
+                warnings.filterwarnings(
+                    "ignore", module="soundcard.*", message=".*discontinuity.*",
+                )
+                while not self._stop.is_set():
+                    chunk = self._source.read_chunk(CHUNK_FRAMES)
+                    if chunk.shape[0] == 0:
+                        break
+                    self._writer.write_chunk(chunk)
+                    self._frames_written += chunk.shape[0]
         except Exception as exc:
             logger.exception("recorder loop failed")
             repo = RecordingRepo(self._db)
