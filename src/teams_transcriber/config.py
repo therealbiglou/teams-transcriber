@@ -1,0 +1,190 @@
+"""Application settings loaded from disk, with defaults baked in."""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass, field
+from typing import Any
+
+import keyring
+
+from teams_transcriber.paths import AppPaths
+
+KEYRING_SERVICE = "teams-transcriber"
+KEYRING_USER_ANTHROPIC = "anthropic_api_key"
+
+
+# Default settings — load_settings merges any user-provided file on top of this.
+DEFAULT_SETTINGS: dict[str, Any] = {
+    "general": {
+        "auto_launch": True,
+        "pause_on_startup": False,
+    },
+    "audio": {
+        "mic_device": None,
+        "loopback_device": None,
+        "retention_days": 30,
+        "bitrate_kbps": 24,
+    },
+    "detection": {
+        "poll_interval_ms": 2000,
+        "debounce_polls": 2,
+        "title_patterns": [
+            "Meeting in progress | Microsoft Teams",
+            "Meeting | Microsoft Teams",
+            "| Microsoft Teams Call",
+        ],
+    },
+    "transcription": {
+        "model": "large-v3-turbo",
+        "compute_type": "int8_float16",
+        "language": "en",
+        "live_dual_channel": False,  # Phase 2 ships post-mode only; live is Phase 2.5.
+    },
+    "ai": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-6",
+        "custom_prompt_addendum": "",
+        "max_retries": 3,
+    },
+    "hotkeys": {
+        "toggle_manual_recording": "ctrl+alt+r",
+        "toggle_pause_detection": "ctrl+alt+p",
+    },
+}
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Return `base` with values from `overlay` recursively applied. Mutates a copy."""
+    result = {k: (dict(v) if isinstance(v, dict) else v) for k, v in base.items()}
+    for k, v in overlay.items():
+        if isinstance(v, dict) and isinstance(result.get(k), dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
+@dataclass(slots=True)
+class Settings:
+    """Typed view over the settings dict. New fields go here as the app grows."""
+
+    _raw: dict[str, Any] = field(default_factory=lambda: _deep_merge(DEFAULT_SETTINGS, {}))
+
+    # --- general
+    @property
+    def auto_launch(self) -> bool:
+        return bool(self._raw["general"]["auto_launch"])
+
+    @auto_launch.setter
+    def auto_launch(self, value: bool) -> None:
+        self._raw["general"]["auto_launch"] = bool(value)
+
+    # --- audio
+    @property
+    def mic_device(self) -> str | None:
+        value = self._raw["audio"].get("mic_device")
+        return None if value is None else str(value)
+
+    @property
+    def loopback_device(self) -> str | None:
+        value = self._raw["audio"].get("loopback_device")
+        return None if value is None else str(value)
+
+    @property
+    def audio_retention_days(self) -> int:
+        return int(self._raw["audio"]["retention_days"])
+
+    @audio_retention_days.setter
+    def audio_retention_days(self, value: int) -> None:
+        self._raw["audio"]["retention_days"] = int(value)
+
+    @property
+    def audio_bitrate_kbps(self) -> int:
+        return int(self._raw["audio"]["bitrate_kbps"])
+
+    # --- detection
+    @property
+    def detection_poll_interval_ms(self) -> int:
+        return int(self._raw["detection"]["poll_interval_ms"])
+
+    @property
+    def detection_debounce_polls(self) -> int:
+        return int(self._raw["detection"]["debounce_polls"])
+
+    @property
+    def detection_title_patterns(self) -> list[str]:
+        return list(self._raw["detection"]["title_patterns"])
+
+    # --- transcription
+    @property
+    def transcription_model(self) -> str:
+        return str(self._raw["transcription"]["model"])
+
+    @property
+    def transcription_compute_type(self) -> str:
+        return str(self._raw["transcription"]["compute_type"])
+
+    @property
+    def transcription_language(self) -> str:
+        return str(self._raw["transcription"]["language"])
+
+    @property
+    def transcription_live_dual_channel(self) -> bool:
+        return bool(self._raw["transcription"]["live_dual_channel"])
+
+    # --- ai
+    @property
+    def ai_model(self) -> str:
+        return str(self._raw["ai"]["model"])
+
+    @ai_model.setter
+    def ai_model(self, value: str) -> None:
+        self._raw["ai"]["model"] = value
+
+    @property
+    def ai_custom_prompt_addendum(self) -> str:
+        return str(self._raw["ai"]["custom_prompt_addendum"])
+
+    @property
+    def ai_max_retries(self) -> int:
+        return int(self._raw["ai"]["max_retries"])
+
+    def anthropic_api_key(self) -> str | None:
+        """Resolve the Anthropic API key. Env var wins over keyring (useful for CI/tests)."""
+        env = os.environ.get("ANTHROPIC_API_KEY")
+        if env:
+            return env
+        try:
+            return keyring.get_password(KEYRING_SERVICE, KEYRING_USER_ANTHROPIC)
+        except keyring.errors.KeyringError:
+            return None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _deep_merge(self._raw, {})
+
+
+def load_settings(paths: AppPaths) -> Settings:
+    """Load settings.json from disk; fall back to defaults if missing or malformed."""
+    settings_path = paths.config_dir / "settings.json"
+    raw = _deep_merge(DEFAULT_SETTINGS, {})
+    if settings_path.exists():
+        try:
+            user = json.loads(settings_path.read_text(encoding="utf-8"))
+            if isinstance(user, dict):
+                raw = _deep_merge(raw, user)
+        except (json.JSONDecodeError, OSError):
+            # Malformed file — log and fall back to defaults.
+            pass
+    return Settings(_raw=raw)
+
+
+def save_settings(paths: AppPaths, settings: Settings) -> None:
+    """Persist current settings to settings.json. Creates config_dir if needed."""
+    paths.ensure_dirs()
+    settings_path = paths.config_dir / "settings.json"
+    settings_path.write_text(
+        json.dumps(settings.to_dict(), indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
