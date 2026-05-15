@@ -82,3 +82,13 @@ class Summary:
     topics: list[str]
     generated_at: str
     model_used: str
+
+
+@dataclass(slots=True)
+class TodoState:
+    id: int | None
+    recording_id: int
+    todo_index: int
+    task_text: str
+    done: bool
+    done_at: str | None
