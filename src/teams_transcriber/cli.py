@@ -27,13 +27,9 @@ def _build_pipeline(paths: AppPaths, *, with_watcher: bool) -> Pipeline:
     db.initialize()
     bus = EventBus()
 
-    # Phase 2.5 will provide a real AudioSource factory. For now we fail loud
-    # if anyone tries to actually record without one — see test_pipeline.py
-    # which constructs Pipeline with a stub factory.
-    def _no_audio_factory() -> Any:
-        raise NotImplementedError(
-            "Real audio capture is wired up in Phase 2.5 — see audio/source_real.py"
-        )
+    def _audio_factory() -> Any:
+        from teams_transcriber.audio.source import RealAudioSource
+        return RealAudioSource.from_default_devices()
 
     watcher = None
     if with_watcher:
@@ -47,7 +43,7 @@ def _build_pipeline(paths: AppPaths, *, with_watcher: bool) -> Pipeline:
 
     return Pipeline(
         bus=bus, db=db, paths=paths, settings=settings,
-        audio_source_factory=_no_audio_factory,
+        audio_source_factory=_audio_factory,
         meeting_watcher=watcher,
         transcriber=Transcriber(bus=bus, db=db, settings=settings),
         summarizer=Summarizer(bus=bus, db=db, settings=settings),

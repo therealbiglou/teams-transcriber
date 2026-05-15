@@ -113,3 +113,46 @@ def test_recorder_cancel_deletes_file_and_row(paths, db_and_repo) -> None:
     # No audio file should remain.
     audio_files = list(paths.audio_dir.glob("*.opus"))
     assert audio_files == []
+
+
+class _BoomSource:
+    """An AudioSource whose read_chunk raises immediately."""
+
+    def read_chunk(self, num_frames: int):
+        del num_frames
+        raise RuntimeError("audio device gone")
+
+    def close(self) -> None:
+        pass
+
+
+def test_recorder_publishes_failure_event_on_run_exception(paths, db_and_repo) -> None:
+    from teams_transcriber.events import RecordingFailed
+    db, repo = db_and_repo
+    bus = EventBus()
+    settings = Settings()
+
+    failures: list[RecordingFailed] = []
+    bus.subscribe(RecordingFailed, failures.append)
+
+    recorder = Recorder(
+        bus=bus, db=db, paths=paths, settings=settings,
+        audio_source=_BoomSource(),  # type: ignore[arg-type]
+    )
+    rec_id = recorder.start(source_type="manual", detected_title=None)
+
+    # Wait for the worker to die.
+    import time
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if failures:
+            break
+        time.sleep(0.01)
+
+    assert len(failures) == 1
+    assert failures[0].recording_id == rec_id
+    assert "audio device gone" in failures[0].error_message
+
+    row = repo.get(rec_id)
+    assert row is not None
+    assert row.status == RecordingStatus.RECORDING_FAILED

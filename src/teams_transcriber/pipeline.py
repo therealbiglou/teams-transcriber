@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 
 from teams_transcriber.audio.source import AudioSource
 from teams_transcriber.config import Settings
@@ -12,6 +13,7 @@ from teams_transcriber.events import (
     EventBus,
     MeetingDetected,
     MeetingEnded,
+    RecordingFailed,
     RecordingFinalized,
     TranscriptionComplete,
 )
@@ -46,6 +48,10 @@ class Pipeline:
         self._recorder: Recorder | None = None
         self._transcriber = transcriber or Transcriber(bus=bus, db=db, settings=settings)
         self._summarizer = summarizer or Summarizer(bus=bus, db=db, settings=settings)
+        self._executor: ThreadPoolExecutor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="post-processing",
+        )
+        self._pending_futures: list[Future[None]] = []
         self._meeting_watcher = meeting_watcher  # may be None for manual-only mode
         self._watcher_thread: threading.Thread | None = None
         self._wire()
@@ -75,6 +81,8 @@ class Pipeline:
             self._watcher_thread.join(timeout=3.0)
         if self._recorder is not None:
             self._recorder.stop()
+            self._recorder = None
+        self._executor.shutdown(wait=True)
 
     # --- wiring --------------------------------------------------------
 
@@ -82,6 +90,7 @@ class Pipeline:
         self._bus.subscribe(MeetingDetected, self._on_meeting_detected)
         self._bus.subscribe(MeetingEnded, self._on_meeting_ended)
         self._bus.subscribe(RecordingFinalized, self._on_recording_finalized)
+        self._bus.subscribe(RecordingFailed, self._on_recording_failed)
         self._bus.subscribe(TranscriptionComplete, self._on_transcription_complete)
 
     def _on_meeting_detected(self, evt: MeetingDetected) -> None:
@@ -91,15 +100,19 @@ class Pipeline:
             logger.exception("failed to start recorder for %r", evt.window_title)
 
     def _on_meeting_ended(self, _evt: MeetingEnded) -> None:
-        if self._recorder is not None:
-            self._recorder.stop()
-            self._recorder = None
+        rec = self._recorder
+        self._recorder = None
+        if rec is not None:
+            rec.stop()
 
     def _on_recording_finalized(self, evt: RecordingFinalized) -> None:
-        try:
-            self._transcriber.transcribe(evt.recording_id)
-        except Exception:
-            logger.exception("transcription crashed for %d", evt.recording_id)
+        future = self._executor.submit(self._run_post_processing, evt.recording_id)
+        self._pending_futures.append(future)
+
+    def _on_recording_failed(self, evt: RecordingFailed) -> None:
+        logger.warning("recording %d failed: %s", evt.recording_id, evt.error_message)
+        # Worker thread already updated status; just release the slot.
+        self._recorder = None
 
     def _on_transcription_complete(self, evt: TranscriptionComplete) -> None:
         try:
@@ -108,6 +121,14 @@ class Pipeline:
             )
         except Exception:
             logger.exception("summarization crashed for %d", evt.recording_id)
+
+    def _run_post_processing(self, recording_id: int) -> None:
+        try:
+            self._transcriber.transcribe(recording_id)
+        except Exception:
+            logger.exception("transcription crashed for %d", recording_id)
+        # transcribe() publishes TranscriptionComplete synchronously inside its body;
+        # _on_transcription_complete runs on this same worker thread.
 
     def _start_recorder(self, *, source_type: str, detected_title: str | None) -> int:
         if self._recorder is not None:

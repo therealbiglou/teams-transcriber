@@ -5,8 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
+from teams_transcriber.audio.opus_writer import SAMPLE_RATE, OpusWriter
 from teams_transcriber.config import Settings
 from teams_transcriber.events import EventBus, TranscriptionComplete
 from teams_transcriber.paths import AppPaths
@@ -72,7 +74,18 @@ def db_with_recording(paths: AppPaths):
     db = build_database(paths.db_path)
     db.initialize()
     audio = paths.audio_dir / "fake.opus"
-    audio.write_bytes(b"not-real-opus-but-fine-for-mocked-test")
+
+    # Write a tiny real 2-channel Opus so the splitter has something to work with.
+    n = int(0.5 * SAMPLE_RATE)
+    t = np.linspace(0, 0.5, n, endpoint=False, dtype=np.float32)
+    pcm = np.stack([
+        (0.1 * np.sin(2 * np.pi * 440 * t)).astype(np.float32),
+        (0.1 * np.sin(2 * np.pi * 880 * t)).astype(np.float32),
+    ], axis=1)
+    w = OpusWriter(audio, channels=2, bitrate_kbps=24)
+    w.write_chunk(pcm)
+    w.close()
+
     rec = RecordingRepo(db).create(Recording(
         id=None,
         started_at="2026-05-14T10:00:00+00:00",
@@ -104,14 +117,16 @@ def test_transcribe_writes_segments_and_emits_event(db_with_recording, paths) ->
     transcriber.transcribe(rec_id)
 
     segments = TranscriptRepo(db).list_for_recording(rec_id)
-    assert len(segments) == 3
-    assert segments[0].text == "Hello there"
-    assert segments[0].start_ms == 0
-    assert segments[0].end_ms == 1500
-    assert all(s.channel == Channel.OTHERS for s in segments)  # whole-file → "others"
+    # We transcribe TWO channels with the same fake model, so 6 segments total.
+    assert len(segments) == 6
+    me_segs = [s for s in segments if s.channel == Channel.ME]
+    other_segs = [s for s in segments if s.channel == Channel.OTHERS]
+    assert len(me_segs) == 3
+    assert len(other_segs) == 3
+    assert me_segs[0].text == "Hello there"
 
     assert len(received) == 1
-    assert received[0].segment_count == 3
+    assert received[0].segment_count == 6
 
     repo = RecordingRepo(db)
     rec = repo.get(rec_id)

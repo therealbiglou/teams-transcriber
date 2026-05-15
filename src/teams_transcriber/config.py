@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from dataclasses import dataclass, field
@@ -70,7 +71,9 @@ def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]
 class Settings:
     """Typed view over the settings dict. New fields go here as the app grows."""
 
-    _raw: dict[str, Any] = field(default_factory=lambda: _deep_merge(DEFAULT_SETTINGS, {}))
+    _raw: dict[str, Any] = field(
+        default_factory=lambda: copy.deepcopy(DEFAULT_SETTINGS),
+    )
 
     # --- general
     @property
@@ -168,7 +171,7 @@ class Settings:
 def load_settings(paths: AppPaths) -> Settings:
     """Load settings.json from disk; fall back to defaults if missing or malformed."""
     settings_path = paths.config_dir / "settings.json"
-    raw = _deep_merge(DEFAULT_SETTINGS, {})
+    raw = copy.deepcopy(DEFAULT_SETTINGS)
     if settings_path.exists():
         try:
             user = json.loads(settings_path.read_text(encoding="utf-8"))

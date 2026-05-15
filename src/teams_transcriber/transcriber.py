@@ -1,12 +1,12 @@
-"""Post-recording transcription using faster-whisper.
+"""Per-channel transcription using faster-whisper.
 
-This is the simplest possible shape: take a finalized recording, transcribe the whole
-file in one pass, write segments. Live per-channel transcription is a Phase 2.5 follow-up.
+The recorder writes a 2-channel Opus file (mic + loopback). The Transcriber splits
+that file into two mono WAVs via PyAV, runs faster-whisper on each, and persists
+segments tagged with `Channel.ME` (mic) or `Channel.OTHERS` (loopback). Segments
+from both channels are interleaved by start_ms when written to storage.
 
-**Phase 2 limitation:** segments are all labeled `channel='others'` because we transcribe
-the mixed Opus file. Per-channel separation (which mic/loopback channel a segment came
-from) lands in Phase 2.5. The Summarizer is aware of this and uses a single-voice
-attribution prompt until labeling is real.
+Live transcription (streaming results as the meeting progresses) is a future
+enhancement; today this runs once at end-of-meeting.
 """
 
 from __future__ import annotations
@@ -53,7 +53,8 @@ class Transcriber:
         self._model: Any = None
 
     def transcribe(self, recording_id: int) -> None:
-        """Synchronous: transcribe and write segments, then update status + emit event."""
+        """Per-channel transcription: split the 2-channel Opus, transcribe each,
+        merge segments by start time, persist with channel labels."""
         rec_repo = RecordingRepo(self._db)
         rec = rec_repo.get(recording_id)
         if rec is None:
@@ -68,39 +69,40 @@ class Transcriber:
             return
 
         try:
-            if self._model is None:
-                self._model = self._model_factory(
-                    self._settings.transcription_model,
-                    compute_type=self._settings.transcription_compute_type,
-                )
-            segments_iter, _info = self._model.transcribe(
-                rec.audio_path,
-                language=self._settings.transcription_language,
-                vad_filter=True,
-            )
-            ts_repo = TranscriptRepo(self._db)
-            count = 0
-            batch: list[TranscriptSegment] = []
-            for seg in segments_iter:
-                batch.append(TranscriptSegment(
-                    id=None,
-                    recording_id=recording_id,
-                    start_ms=int(seg.start * 1000),
-                    end_ms=int(seg.end * 1000),
-                    channel=Channel.OTHERS,
-                    text=seg.text.strip(),
-                ))
-                count += 1
-                if len(batch) >= 32:
-                    ts_repo.append_many(batch)
-                    batch.clear()
-            if batch:
-                ts_repo.append_many(batch)
+            from teams_transcriber.audio.splitter import split_channels_to_wav
 
-            rec_repo.update_status(recording_id, RecordingStatus.SUMMARIZING)
-            self._bus.publish(TranscriptionComplete(
-                recording_id=recording_id, segment_count=count,
-            ))
+            opus_path = Path(rec.audio_path)
+            mic_wav = opus_path.with_suffix(".mic.wav")
+            loop_wav = opus_path.with_suffix(".loop.wav")
+            try:
+                split_channels_to_wav(opus_path, ch0_out=mic_wav, ch1_out=loop_wav)
+
+                if self._model is None:
+                    self._model = self._model_factory(
+                        self._settings.transcription_model,
+                        compute_type=self._settings.transcription_compute_type,
+                    )
+
+                me_segments = self._run_whisper(mic_wav, recording_id, Channel.ME)
+                others_segments = self._run_whisper(loop_wav, recording_id, Channel.OTHERS)
+
+                all_segments = sorted(
+                    me_segments + others_segments, key=lambda s: s.start_ms,
+                )
+                if all_segments:
+                    TranscriptRepo(self._db).append_many(all_segments)
+
+                rec_repo.update_status(recording_id, RecordingStatus.SUMMARIZING)
+                self._bus.publish(TranscriptionComplete(
+                    recording_id=recording_id, segment_count=len(all_segments),
+                ))
+            finally:
+                for p in (mic_wav, loop_wav):
+                    try:
+                        if p.exists():
+                            p.unlink()
+                    except OSError:
+                        logger.warning("could not delete temp wav %s", p)
         except Exception as exc:
             logger.exception("transcription failed for recording %d", recording_id)
             rec_repo.update_status(
@@ -108,3 +110,25 @@ class Transcriber:
                 RecordingStatus.TRANSCRIPTION_FAILED,
                 error_message=str(exc),
             )
+
+    def _run_whisper(
+        self, wav_path: Path, recording_id: int, channel: Channel,
+    ) -> list[TranscriptSegment]:
+        """Transcribe one mono WAV and return segments tagged with channel."""
+        assert self._model is not None
+        segments_iter, _info = self._model.transcribe(
+            str(wav_path),
+            language=self._settings.transcription_language,
+            vad_filter=True,
+        )
+        result: list[TranscriptSegment] = []
+        for seg in segments_iter:
+            result.append(TranscriptSegment(
+                id=None,
+                recording_id=recording_id,
+                start_ms=int(seg.start * 1000),
+                end_ms=int(seg.end * 1000),
+                channel=channel,
+                text=seg.text.strip(),
+            ))
+        return result
