@@ -1,4 +1,5 @@
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -99,3 +100,32 @@ def test_runner_rolls_back_partial_ddl_within_a_migration() -> None:
         "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('a','b')"
     ).fetchall()
     assert leftover == []
+
+
+def test_schema_v1_creates_expected_objects(tmp_path: Path) -> None:
+    from teams_transcriber.storage.db import Database
+    from teams_transcriber.storage.schema_v1 import SCHEMA_V1
+
+    db = Database(tmp_path / "t.db", migrations=[SCHEMA_V1])
+    db.initialize()
+    expected_tables = {
+        "recordings",
+        "transcript_segments",
+        "transcript_fts",
+        "summaries",
+        "todo_state",
+    }
+    with db.connect() as conn:
+        names = {
+            r[0]
+            for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
+            ).fetchall()
+        }
+        assert expected_tables.issubset(names)
+        # Triggers must exist for FTS sync.
+        triggers = {
+            r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='trigger'")
+        }
+        assert {"ts_ai", "ts_ad", "ts_au"}.issubset(triggers)
+    db.close()
