@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# IDE / editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Local user / runtime state
+.env
+.env.local
+*.log
+logs/
+
+# App-local data (never committed)
+local_data/
+test_audio/
+test_models/
+
+# PyInstaller / Inno Setup output
+*.spec.bak
+Output/
