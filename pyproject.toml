@@ -17,12 +17,16 @@ dependencies = [
     "keyring>=24",
     "nvidia-cublas-cu12>=12.0",
     "nvidia-cudnn-cu12>=9.0",
+    "PySide6>=6.8",
+    "keyboard>=0.13.5",
+    "winsdk>=1.0.0b10; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=4.1",
+    "pytest-qt>=4.4",
     "ruff>=0.5",
     "mypy>=1.10",
     "types-pywin32",
@@ -47,5 +51,13 @@ strict = true
 files = ["src/teams_transcriber"]
 
 [[tool.mypy.overrides]]
-module = ["soundcard.*", "av.*", "faster_whisper.*"]
+module = [
+    "soundcard.*",
+    "av.*",
+    "faster_whisper.*",
+    "keyboard.*",
+    "winsdk.*",
+    "PySide6.*",
+    "pytestqt.*",
+]
 ignore_missing_imports = true

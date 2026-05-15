@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import os
+
+# Run all Qt-aware tests offscreen so they don't spawn real windows.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 from collections.abc import Iterator
 from pathlib import Path
 
