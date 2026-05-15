@@ -45,5 +45,5 @@ strict = true
 files = ["src/teams_transcriber"]
 
 [[tool.mypy.overrides]]
-module = ["soundcard.*", "av.*"]
+module = ["soundcard.*", "av.*", "faster_whisper.*"]
 ignore_missing_imports = true
