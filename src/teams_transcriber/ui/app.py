@@ -39,13 +39,14 @@ from teams_transcriber.ui.history_list import HistoryList, filter_for_bucket
 from teams_transcriber.ui.hotkeys import HotkeyManager
 from teams_transcriber.ui.icons import TrayState
 from teams_transcriber.ui.main_window import MainWindow
+from teams_transcriber.ui.notes_window import NotesWindow
 from teams_transcriber.ui.qt_bridge import QtEventBridge
 from teams_transcriber.ui.search_bar import SearchBar
 from teams_transcriber.ui.settings_dialog import SettingsDialog
 from teams_transcriber.ui.sidebar import SidebarBucket
 from teams_transcriber.ui.summary_pane import SummaryPane
 from teams_transcriber.ui.theme import app_stylesheet
-from teams_transcriber.ui.toasts import show_toast
+from teams_transcriber.ui.toast_banner import show_in_app_toast
 from teams_transcriber.ui.transcript_view import TranscriptView
 from teams_transcriber.ui.tray import AppTray
 
@@ -103,8 +104,13 @@ class App:
         self.tray.start_manual_requested.connect(self._start_manual)
         self.tray.stop_manual_requested.connect(self._stop_manual)
         self.tray.pause_detection_toggled.connect(self._on_pause_toggled)
+        self.tray.notes_requested.connect(self._open_notes_for_active)
         self.tray.quit_requested.connect(self._quit)
         self.tray.settings_action.triggered.connect(self._open_settings)
+
+        # Tracks the currently-recording recording id so the tray notes action
+        # and the toast "Add notes" button can find it.
+        self._active_recording_id: int | None = None
 
         self.bridge.meeting_detected.connect(self._on_meeting_detected)
         self.bridge.recording_started.connect(self._on_recording_started)
@@ -146,6 +152,7 @@ class App:
         self.summary.transcript_requested.connect(self._show_transcript)
         self.summary.export_requested.connect(self._export_summary)
         self.summary.delete_requested.connect(self._delete_recording)
+        self.summary.notes_requested.connect(self._open_notes)
         body_layout.addWidget(self.history, 1)
         body_layout.addWidget(self.summary, 1)
         layout.addWidget(body, 1)
@@ -281,24 +288,34 @@ class App:
         self._refresh_history()
 
     def _on_meeting_detected(self, evt: MeetingDetected) -> None:
-        show_toast("Recording started", evt.window_title, fallback_tray=self.tray)
+        # Toast appears when the recorder actually starts (we have the recording_id then).
+        # No-op here — _on_recording_started handles the toast.
+        del evt
 
     def _on_recording_started(self, evt: RecordingStarted) -> None:
         self.tray.set_state(TrayState.RECORDING, label=Path(evt.audio_path).stem)
+        recording_id = evt.recording_id
+        self._active_recording_id = recording_id
+        show_in_app_toast(
+            "Recording started",
+            "Click 'Add notes' to add context the AI will include in the summary.",
+            action_label="Add notes",
+            action_callback=lambda: self._open_notes(recording_id),
+        )
         self._refresh_history()
 
     def _on_recording_finalized(self, _evt: RecordingFinalized) -> None:
         self.tray.set_state(TrayState.PROCESSING)
-        show_toast(
+        self._active_recording_id = None
+        show_in_app_toast(
             "Recording stopped",
-            "Transcribing and summarizing — you'll get a toast when it's ready.",
-            fallback_tray=self.tray,
+            "Transcribing and summarizing — you'll get a notification when it's ready.",
         )
         self._refresh_history()
 
     def _on_recording_failed(self, evt: RecordingFailed) -> None:
         self.tray.set_state(TrayState.ERROR)
-        show_toast("Recording failed", evt.error_message, fallback_tray=self.tray)
+        show_in_app_toast("Recording failed", evt.error_message)
         self._refresh_history()
 
     def _on_transcription_complete(self, _evt: TranscriptionComplete) -> None:
@@ -310,12 +327,35 @@ class App:
         rec = RecordingRepo(self.db).get(evt.recording_id)
         title = (rec.display_title if rec else None) or "Meeting"
         recording_id = evt.recording_id
-        show_toast(
+        show_in_app_toast(
             "Summary ready", title,
-            on_click=lambda: self._show_summary(recording_id),
-            fallback_tray=self.tray,
+            action_label="Open",
+            action_callback=lambda: self._show_summary(recording_id),
         )
         self._refresh_history()
+
+    def _open_notes_for_active(self) -> None:
+        """Tray menu handler — open notes for the currently-recording recording."""
+        if self._active_recording_id is None:
+            return
+        self._open_notes(self._active_recording_id)
+
+    def _open_notes(self, recording_id: int) -> None:
+        """Open the rich-text notes editor for a recording.
+
+        Used from the recording-started toast and the tray menu.
+        """
+        rec = RecordingRepo(self.db).get(recording_id)
+        title = rec.display_title or rec.detected_title if rec else None
+        dlg = NotesWindow(self.db, recording_id, recording_title=title, parent=self.window)
+        dlg.saved.connect(lambda _rid: self._refresh_history())
+        # Also refresh the summary pane if it's currently showing this recording.
+        dlg.saved.connect(
+            lambda rid: self.summary.show_recording(rid)
+            if self.summary._current_recording_id == rid else None
+        )
+        dlg.show()
+        self._notes_window = dlg  # keep a ref so it doesn't get garbage-collected
 
     def _quit(self) -> None:
         self.hotkeys.stop()

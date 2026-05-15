@@ -43,6 +43,7 @@ class Recording:
     duration_ms: int | None
     status: RecordingStatus
     error_message: str | None
+    manual_notes: str | None = None  # HTML-formatted user notes, included in AI prompt
 
 
 @dataclass(slots=True)

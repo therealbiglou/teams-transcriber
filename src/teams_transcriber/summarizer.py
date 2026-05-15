@@ -130,7 +130,11 @@ class Summarizer:
             return
 
         client = self._client_factory(api_key)
-        result = self._call_with_retry(client, transcript, max_attempts=self._settings.ai_max_retries)
+        user_notes = rec.manual_notes if rec is not None else None
+        result = self._call_with_retry(
+            client, transcript, max_attempts=self._settings.ai_max_retries,
+            user_notes=user_notes,
+        )
         if isinstance(result, Exception):
             rec_repo.update_status(
                 recording_id, RecordingStatus.SUMMARY_FAILED, error_message=str(result),
@@ -153,10 +157,23 @@ class Summarizer:
 
     def _call_with_retry(
         self, client: Any, transcript: str, max_attempts: int,
+        *, user_notes: str | None = None,
     ) -> dict[str, Any] | Exception:
         """Returns the parsed tool payload on success, or the last Exception on failure."""
         addendum = self._settings.ai_custom_prompt_addendum
         sys_prompt = SYSTEM_PROMPT + ("\n\n" + addendum if addendum else "")
+
+        notes_block = ""
+        if user_notes and user_notes.strip():
+            # Notes are stored as HTML; pass them through as-is so the model
+            # sees structure (lists, bold etc.) as well as the prose.
+            notes_block = (
+                "\n\nThe user provided the following notes during the meeting. "
+                "Treat them as authoritative context — they may name people, decisions, "
+                "or action items the transcript doesn't capture cleanly:\n\n"
+                f"{user_notes}\n"
+            )
+
         last_err: Exception = RuntimeError("no attempts ran")
         for attempt in range(max_attempts):
             try:
@@ -168,7 +185,7 @@ class Summarizer:
                     tool_choice={"type": "tool", "name": SUMMARY_TOOL_NAME},
                     messages=[{
                         "role": "user",
-                        "content": f"Summarize this meeting:\n\n{transcript}",
+                        "content": f"Summarize this meeting:\n\n{transcript}{notes_block}",
                     }],
                 )
                 payload = self._extract_tool_input(response)

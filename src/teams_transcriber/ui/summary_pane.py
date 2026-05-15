@@ -33,6 +33,7 @@ class SummaryPane(QScrollArea):
     transcript_requested = Signal(int)  # recording_id
     export_requested = Signal(int)      # recording_id
     delete_requested = Signal(int)      # recording_id (caller confirms + deletes)
+    notes_requested = Signal(int)       # recording_id — open notes editor
 
     def __init__(self, db: Database, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -103,6 +104,12 @@ class SummaryPane(QScrollArea):
         if summary.summary:
             self._layout.addWidget(_section_card("Summary", [QLabel(summary.summary)]))
 
+        if rec.manual_notes:
+            notes_label = QLabel()
+            notes_label.setTextFormat(Qt.TextFormat.RichText)
+            notes_label.setText(rec.manual_notes)
+            self._layout.addWidget(_section_card("My notes", [notes_label]))
+
         if summary.my_todos:
             self._layout.addWidget(self._build_todos_card(summary))
 
@@ -130,6 +137,11 @@ class SummaryPane(QScrollArea):
         view_btn.setProperty("role", "secondary")
         view_btn.clicked.connect(lambda: self.transcript_requested.emit(recording_id))
         buttons.addWidget(view_btn)
+
+        notes_btn = QPushButton("Edit notes" if rec.manual_notes else "Add notes")
+        notes_btn.setProperty("role", "secondary")
+        notes_btn.clicked.connect(lambda: self.notes_requested.emit(recording_id))
+        buttons.addWidget(notes_btn)
 
         copy_btn = QPushButton("Copy")
         copy_btn.setToolTip("Copy summary as markdown")

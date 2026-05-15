@@ -11,6 +11,8 @@ from teams_transcriber.storage.models import Recording, RecordingSource, Recordi
 # Module-level row-mapper (not a @staticmethod) so tests and other modules can call
 # without instantiating the repo. The same pattern applies in the other repo modules.
 def _row_to_recording(row: sqlite3.Row) -> Recording:
+    # row.keys() lets us tolerate older test DBs without the manual_notes column.
+    keys = set(row.keys())
     return Recording(
         id=row["id"],
         started_at=row["started_at"],
@@ -23,6 +25,7 @@ def _row_to_recording(row: sqlite3.Row) -> Recording:
         duration_ms=row["duration_ms"],
         status=RecordingStatus(row["status"]),
         error_message=row["error_message"],
+        manual_notes=row["manual_notes"] if "manual_notes" in keys else None,
     )
 
 
@@ -135,4 +138,13 @@ class RecordingRepo:
     def delete(self, recording_id: int) -> None:
         with self._db.connect() as conn:
             conn.execute("DELETE FROM recordings WHERE id = ?", (recording_id,))
+            conn.commit()
+
+    def set_manual_notes(self, recording_id: int, notes: str | None) -> None:
+        """Update the user's manual notes (HTML)."""
+        with self._db.connect() as conn:
+            conn.execute(
+                "UPDATE recordings SET manual_notes = ? WHERE id = ?",
+                (notes, recording_id),
+            )
             conn.commit()

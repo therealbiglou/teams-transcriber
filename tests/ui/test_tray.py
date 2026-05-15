@@ -23,18 +23,25 @@ def test_set_state_updates_tooltip(qapp, qtbot) -> None:
 
 def test_menu_actions_emit_signals(qapp, qtbot) -> None:
     tray = AppTray()
+    # Force into recording state so the notes action is enabled and triggerable.
+    tray.set_state(TrayState.RECORDING, label="x")
 
     received: list[str] = []
     tray.start_manual_requested.connect(lambda: received.append("start"))
     tray.stop_manual_requested.connect(lambda: received.append("stop"))
     tray.open_window_requested.connect(lambda: received.append("open"))
     tray.pause_detection_toggled.connect(lambda v: received.append(f"pause={v}"))
+    tray.notes_requested.connect(lambda: received.append("notes"))
     tray.quit_requested.connect(lambda: received.append("quit"))
 
+    # start is disabled while recording, so trigger it after flipping state back.
+    tray.set_state(TrayState.IDLE)
     tray.start_action.trigger()
+    tray.set_state(TrayState.RECORDING, label="x")
     tray.stop_action.trigger()
+    tray.notes_action.trigger()
     tray.open_action.trigger()
     tray.pause_action.trigger()  # toggles
     tray.quit_action.trigger()
 
-    assert received == ["start", "stop", "open", "pause=True", "quit"]
+    assert received == ["start", "stop", "notes", "open", "pause=True", "quit"]
