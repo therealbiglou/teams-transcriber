@@ -95,3 +95,15 @@ def test_api_key_returns_none_when_unset(paths: AppPaths, monkeypatch: pytest.Mo
     keyring.set_keyring(keyring.backends.fail.Keyring())  # type: ignore[attr-defined]
     s = load_settings(paths)
     assert s.anthropic_api_key() is None
+
+
+def test_default_settings_immune_to_settings_mutation(paths: AppPaths) -> None:
+    """Mutating loaded settings must not affect DEFAULT_SETTINGS."""
+    from teams_transcriber.config import DEFAULT_SETTINGS
+
+    s1 = load_settings(paths)
+    s1._raw["detection"]["title_patterns"].append("new pattern injected by s1")
+
+    s2 = load_settings(paths)
+    assert "new pattern injected by s1" not in s2.detection_title_patterns
+    assert "new pattern injected by s1" not in DEFAULT_SETTINGS["detection"]["title_patterns"]
