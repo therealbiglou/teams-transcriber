@@ -129,6 +129,20 @@ def app_stylesheet() -> str:
         color: {c['text_primary']};
     }}
 
+    QPushButton[role="danger"] {{
+        background: {c['red_soft']};
+        color: {c['red']};
+        border-radius: {r['button']}px;
+        padding: {s['sm']}px {s['lg']}px;
+        font-weight: 500;
+        border: 1px solid {c['red_soft']};
+    }}
+    QPushButton[role="danger"]:hover {{
+        background: {c['red']};
+        color: {c['text_on_accent']};
+        border-color: {c['red']};
+    }}
+
     QLineEdit, QTextEdit, QPlainTextEdit {{
         background: {c['card']};
         color: {c['text_primary']};
