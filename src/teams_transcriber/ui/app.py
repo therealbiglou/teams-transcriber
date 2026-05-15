@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
     QHBoxLayout,
-    QMessageBox,
     QVBoxLayout,
     QWidget,
 )
@@ -35,6 +34,7 @@ from teams_transcriber.storage import RecordingRepo, SummaryRepo, build_database
 from teams_transcriber.storage.models import Recording
 from teams_transcriber.summarizer import Summarizer
 from teams_transcriber.transcriber import Transcriber
+from teams_transcriber.ui.confirm_dialog import ConfirmDialog
 from teams_transcriber.ui.history_list import HistoryList, filter_for_bucket
 from teams_transcriber.ui.hotkeys import HotkeyManager
 from teams_transcriber.ui.icons import TrayState
@@ -265,15 +265,18 @@ class App:
         if rec is None:
             return
         title = rec.display_title or rec.detected_title or "this recording"
-        reply = QMessageBox.question(
+        confirmed = ConfirmDialog.ask(
             self.window,
-            "Delete recording?",
-            f"Permanently delete '{title}', its transcript, and its summary?\n\n"
-            "The audio file on disk will also be removed.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
+            title="Delete recording?",
+            body=(
+                f"Permanently delete “{title}”, its transcript, summary, "
+                "and notes? The audio file on disk will also be removed."
+            ),
+            confirm_label="Delete",
+            cancel_label="Cancel",
+            danger=True,
         )
-        if reply != QMessageBox.StandardButton.Yes:
+        if not confirmed:
             return
 
         if rec.audio_path:
