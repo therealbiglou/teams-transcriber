@@ -77,6 +77,7 @@ _STATEMENTS: tuple[str, ...] = (
     CREATE TABLE summaries (
         recording_id            INTEGER PRIMARY KEY
                                 REFERENCES recordings(id) ON DELETE CASCADE,
+        title                   TEXT,
         one_line                TEXT,
         summary                 TEXT,
         key_decisions_json      TEXT NOT NULL DEFAULT '[]',

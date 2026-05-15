@@ -43,6 +43,7 @@ def recording_id(db: Database) -> int:
 def _sample_summary(recording_id: int) -> Summary:
     return Summary(
         recording_id=recording_id,
+        title="Billing rewrite alignment",
         one_line="Aligned on billing rewrite.",
         summary="We discussed the billing rewrite and agreed on a July release.",
         key_decisions=["Billing rewrite scheduled for July release"],
@@ -103,5 +104,118 @@ def test_empty_lists_round_trip(db: Database, recording_id: int) -> None:
     got = repo.get(recording_id)
     assert got is not None
     assert got.key_decisions == []
+    assert got.my_todos == []
+    assert got.topics == []
+
+
+def test_title_round_trips(db: Database, recording_id: int) -> None:
+    repo = SummaryRepo(db)
+    s = _sample_summary(recording_id)
+    s.title = "Q2 roadmap sync"
+    repo.upsert(s)
+    got = repo.get(recording_id)
+    assert got is not None
+    assert got.title == "Q2 roadmap sync"
+
+
+def test_null_title_one_line_summary_round_trip(db: Database, recording_id: int) -> None:
+    """Summary rows for failed-but-partial summaries may have NULL text fields."""
+    repo = SummaryRepo(db)
+    s = _sample_summary(recording_id)
+    s.title = None
+    s.one_line = None
+    s.summary = None
+    repo.upsert(s)
+    got = repo.get(recording_id)
+    assert got is not None
+    assert got.title is None
+    assert got.one_line is None
+    assert got.summary is None
+
+
+def test_model_used_and_generated_at_round_trip(db: Database, recording_id: int) -> None:
+    repo = SummaryRepo(db)
+    s = _sample_summary(recording_id)
+    s.generated_at = "2026-05-14T12:00:00+00:00"
+    s.model_used = "claude-opus-4-7"
+    repo.upsert(s)
+    got = repo.get(recording_id)
+    assert got is not None
+    assert got.generated_at == "2026-05-14T12:00:00+00:00"
+    assert got.model_used == "claude-opus-4-7"
+
+
+def test_upsert_replaces_list_not_append(db: Database, recording_id: int) -> None:
+    """Replacing a summary with fewer items must shrink the list, not concatenate."""
+    repo = SummaryRepo(db)
+    first = _sample_summary(recording_id)
+    first.my_todos = [
+        TodoItem(task="A"),
+        TodoItem(task="B"),
+        TodoItem(task="C"),
+    ]
+    repo.upsert(first)
+
+    second = _sample_summary(recording_id)
+    second.my_todos = [TodoItem(task="X")]
+    repo.upsert(second)
+
+    got = repo.get(recording_id)
+    assert got is not None
+    assert len(got.my_todos) == 1
+    assert got.my_todos[0].task == "X"
+
+
+def test_delete_removes_summary(db: Database, recording_id: int) -> None:
+    repo = SummaryRepo(db)
+    repo.upsert(_sample_summary(recording_id))
+    assert repo.get(recording_id) is not None
+    repo.delete(recording_id)
+    assert repo.get(recording_id) is None
+
+
+def test_delete_is_idempotent(db: Database) -> None:
+    repo = SummaryRepo(db)
+    # No row exists; delete must not raise.
+    repo.delete(999)
+
+
+def test_load_tolerates_unknown_json_keys(db: Database, recording_id: int) -> None:
+    """If a future Summarizer writes extra keys, deserialization should drop them, not crash."""
+    import json
+    repo = SummaryRepo(db)
+    repo.upsert(_sample_summary(recording_id))
+    # Sneak around the repo to write a my_todos entry with an unknown field.
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE summaries SET my_todos_json = ? WHERE recording_id = ?",
+            (json.dumps([{"task": "Hi", "due": None, "context": None, "priority": "high"}]),
+             recording_id),
+        )
+        conn.commit()
+    got = repo.get(recording_id)
+    assert got is not None
+    assert len(got.my_todos) == 1
+    assert got.my_todos[0].task == "Hi"
+
+
+def test_load_tolerates_malformed_json(db: Database, recording_id: int) -> None:
+    """If a JSON blob is malformed or wrong-shape, the list is treated as empty."""
+    repo = SummaryRepo(db)
+    repo.upsert(_sample_summary(recording_id))
+    with db.connect() as conn:
+        # Wrong shape — dict instead of list.
+        conn.execute(
+            "UPDATE summaries SET my_todos_json = '{}' WHERE recording_id = ?",
+            (recording_id,),
+        )
+        # Malformed JSON.
+        conn.execute(
+            "UPDATE summaries SET topics_json = 'not valid json' WHERE recording_id = ?",
+            (recording_id,),
+        )
+        conn.commit()
+    got = repo.get(recording_id)
+    assert got is not None
     assert got.my_todos == []
     assert got.topics == []

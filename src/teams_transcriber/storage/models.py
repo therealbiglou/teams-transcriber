@@ -72,6 +72,7 @@ class ActionItemOther:
 @dataclass(slots=True)
 class Summary:
     recording_id: int
+    title: str | None
     one_line: str | None
     summary: str | None
     key_decisions: list[str]
