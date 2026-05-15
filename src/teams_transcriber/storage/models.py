@@ -43,3 +43,13 @@ class Recording:
     duration_ms: int | None
     status: RecordingStatus
     error_message: str | None
+
+
+@dataclass(slots=True)
+class TranscriptSegment:
+    id: int | None
+    recording_id: int
+    start_ms: int
+    end_ms: int
+    channel: Channel
+    text: str
