@@ -43,3 +43,7 @@ filterwarnings = ["error"]
 python_version = "3.11"
 strict = true
 files = ["src/teams_transcriber"]
+
+[[tool.mypy.overrides]]
+module = ["soundcard.*"]
+ignore_missing_imports = true
