@@ -39,6 +39,19 @@ TEAMS_NAV_VIEW_TITLES: frozenset[str] = frozenset({
     "microsoft teams",
 })
 
+# Prefixes (case-insensitive) that indicate a Teams sub-page / conversation, not a meeting.
+# E.g. "Chat | Blake Tyler | Microsoft Teams" is a chat conversation;
+# "Calendar | My Schedule | Microsoft Teams" is a calendar sub-view.
+TEAMS_NAV_VIEW_PREFIXES: tuple[str, ...] = (
+    "chat | ",
+    "calendar | ",
+    "activity | ",
+    "files | ",
+    "apps | ",
+    "teams | ",
+    "shifts | ",
+)
+
 
 @dataclass(slots=True, frozen=True)
 class WindowInfo:
@@ -143,8 +156,12 @@ class MeetingWatcher:
             if any(p in title_lower for p in self._title_patterns):
                 return w
 
-            # 2. Smart fallback.
+            # 2. Smart fallback: exclude exact-match nav views, exclude nav prefixes
+            # (so "Chat | Blake Tyler | Microsoft Teams" doesn't count as a meeting),
+            # then accept any other Teams-app window.
             if title_lower in TEAMS_NAV_VIEW_TITLES:
+                continue
+            if any(title_lower.startswith(p) for p in TEAMS_NAV_VIEW_PREFIXES):
                 continue
             if "| microsoft teams" in title_lower or "microsoft teams call" in title_lower:
                 return w

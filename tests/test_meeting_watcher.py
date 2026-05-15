@@ -246,6 +246,42 @@ def test_other_nav_views_are_not_detected() -> None:
         assert detected == [], f"falsely detected on nav view {nav_view!r}: {detected}"
 
 
+def test_chat_conversation_is_not_detected() -> None:
+    """A chat conversation window (e.g. 'Chat | Alice, Bob | Microsoft Teams') must NOT trigger."""
+    bus = EventBus()
+    detected: list[MeetingDetected] = []
+    bus.subscribe(MeetingDetected, detected.append)
+    fw = FakeWindows(scripted=[
+        [WindowInfo(pid=1, process_name="ms-teams.exe",
+                    title="Chat | Blake Tyler, Whitney Porto | Microsoft Teams")],
+    ] * 3)
+    w = MeetingWatcher(
+        bus=bus, current_windows=fw,
+        title_patterns=[], debounce_polls=2,
+    )
+    for _ in range(3):
+        w.step()
+    assert detected == []
+
+
+def test_calendar_subpage_is_not_detected() -> None:
+    """A calendar sub-page (e.g. 'Calendar | My Schedule | Microsoft Teams') must NOT trigger."""
+    bus = EventBus()
+    detected: list[MeetingDetected] = []
+    bus.subscribe(MeetingDetected, detected.append)
+    fw = FakeWindows(scripted=[
+        [WindowInfo(pid=1, process_name="ms-teams.exe",
+                    title="Calendar | My schedule | Microsoft Teams")],
+    ] * 3)
+    w = MeetingWatcher(
+        bus=bus, current_windows=fw,
+        title_patterns=[], debounce_polls=2,
+    )
+    for _ in range(3):
+        w.step()
+    assert detected == []
+
+
 def test_explicit_pattern_still_works_alongside_smart_detection() -> None:
     """If a title matches an explicit pattern, that wins over the denylist."""
     bus = EventBus()
