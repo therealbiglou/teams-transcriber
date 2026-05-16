@@ -166,6 +166,11 @@ class Recorder:
         except Exception:
             logger.exception("source.close() raised")
         self._thread.join(timeout=5.0)
+        if self._thread.is_alive():
+            logger.warning(
+                "recorder thread did not exit within 5s; abandoning "
+                "(audio source may be blocked)",
+            )
         self._thread = None
 
         if self._writer is not None:
