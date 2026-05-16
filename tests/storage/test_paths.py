@@ -37,3 +37,8 @@ def test_ensure_dirs_is_idempotent(tmp_path: Path) -> None:
     paths = AppPaths(root=tmp_path / "TT")
     paths.ensure_dirs()
     paths.ensure_dirs()  # second call must not raise
+
+
+def test_first_run_marker_path_lives_under_config(tmp_path: Path) -> None:
+    paths = AppPaths(root=tmp_path / "TT")
+    assert paths.first_run_marker_path == tmp_path / "TT" / "config" / ".first-run-complete"
