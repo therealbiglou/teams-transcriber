@@ -10,6 +10,21 @@ from pathlib import Path
 __version__ = "0.1.0"
 
 
+def _nvidia_root() -> Path | None:
+    """Return the directory containing pip-installed NVIDIA runtime wheels.
+
+    Source mode: `<venv>/Lib/site-packages/nvidia/`.
+    Frozen mode: `<_MEIPASS>/nvidia/` (PyInstaller-bundled wheels).
+    Returns None if the directory doesn't exist (CPU-only use, tests, etc.).
+    """
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        candidate = base / "nvidia"
+    else:
+        candidate = Path(sys.executable).parent.parent / "Lib" / "site-packages" / "nvidia"
+    return candidate if candidate.is_dir() else None
+
+
 def _register_nvidia_dll_dirs() -> None:
     """On Windows, add the pip-installed NVIDIA runtime DLL dirs to the loader path.
 
@@ -23,8 +38,8 @@ def _register_nvidia_dll_dirs() -> None:
     """
     if not sys.platform.startswith("win"):
         return
-    nvidia_root = Path(sys.executable).parent.parent / "Lib" / "site-packages" / "nvidia"
-    if not nvidia_root.is_dir():
+    nvidia_root = _nvidia_root()
+    if nvidia_root is None:
         return
     added: list[str] = []
     for bin_dir in nvidia_root.rglob("bin"):
