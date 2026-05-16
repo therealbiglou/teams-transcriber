@@ -125,6 +125,15 @@ class App:
             self._toggle_manual,
         )
 
+        if not self.paths.first_run_marker_path.exists():
+            from teams_transcriber.ui.first_run_wizard import FirstRunWizard
+            wizard = FirstRunWizard(
+                settings=self.settings, paths=self.paths, parent=self.window,
+            )
+            wizard.exec()
+            # Wizard wrote to disk and synced the registry; reload settings.
+            self.settings = load_settings(self.paths)
+
         if self.settings.auto_launch:
             from teams_transcriber import autolaunch
             autolaunch.enable()
