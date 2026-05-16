@@ -1,11 +1,39 @@
 from __future__ import annotations
 
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
 
 from teams_transcriber import autolaunch
+
+
+@pytest.fixture(autouse=True)
+def _isolate_registry(monkeypatch: pytest.MonkeyPatch):
+    """Route autolaunch tests to a per-test HKCU subkey so they never touch
+    the real Run key (which would clobber the user's actual autolaunch entry)."""
+    if not sys.platform.startswith("win"):
+        yield
+        return
+    import winreg
+    test_key_path = rf"Software\TeamsTranscriberTests\{uuid.uuid4().hex}"
+    winreg.CreateKey(winreg.HKEY_CURRENT_USER, test_key_path)
+    monkeypatch.setattr(autolaunch, "REG_KEY_PATH", test_key_path)
+    try:
+        yield
+    finally:
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER, test_key_path, 0, winreg.KEY_SET_VALUE,
+            ) as k:
+                try:
+                    winreg.DeleteValue(k, autolaunch.REG_VALUE_NAME)
+                except FileNotFoundError:
+                    pass
+            winreg.DeleteKey(winreg.HKEY_CURRENT_USER, test_key_path)
+        except OSError:
+            pass
 
 
 @pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows-only")
