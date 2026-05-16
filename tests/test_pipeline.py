@@ -180,6 +180,81 @@ def test_pipeline_releases_recorder_on_failure(tmp_path: Path) -> None:
     db.close()
 
 
+def test_pipeline_recovers_stuck_recordings_on_init(tmp_path: Path) -> None:
+    """Recordings left in TRANSCRIBING/SUMMARIZING at startup must be marked
+    failed so the UI can offer retry."""
+    from teams_transcriber.storage import Recording, RecordingRepo, RecordingSource
+
+    paths = AppPaths(root=tmp_path / "TT")
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    repo = RecordingRepo(db)
+
+    stuck_t = repo.create(Recording(
+        id=None, started_at="2026-05-15T10:00:00+00:00",
+        ended_at="2026-05-15T10:05:00+00:00",
+        source=RecordingSource.TEAMS,
+        detected_title="stuck-transcribing", display_title=None,
+        audio_path=None, audio_deleted_at=None,
+        duration_ms=300_000, status=RecordingStatus.TRANSCRIBING,
+        error_message=None,
+    ))
+    stuck_s = repo.create(Recording(
+        id=None, started_at="2026-05-15T11:00:00+00:00",
+        ended_at="2026-05-15T11:05:00+00:00",
+        source=RecordingSource.TEAMS,
+        detected_title="stuck-summarizing", display_title=None,
+        audio_path=None, audio_deleted_at=None,
+        duration_ms=300_000, status=RecordingStatus.SUMMARIZING,
+        error_message=None,
+    ))
+    healthy = repo.create(Recording(
+        id=None, started_at="2026-05-15T12:00:00+00:00",
+        ended_at="2026-05-15T12:05:00+00:00",
+        source=RecordingSource.TEAMS,
+        detected_title="already-done", display_title=None,
+        audio_path=None, audio_deleted_at=None,
+        duration_ms=300_000, status=RecordingStatus.DONE,
+        error_message=None,
+    ))
+
+    Pipeline(
+        bus=EventBus(), db=db, paths=paths, settings=Settings(),
+        audio_source_factory=lambda: _make_source(0.1),
+    )
+
+    assert repo.get(stuck_t.id).status == RecordingStatus.TRANSCRIPTION_FAILED
+    assert "interrupted" in (repo.get(stuck_t.id).error_message or "").lower()
+    assert repo.get(stuck_s.id).status == RecordingStatus.SUMMARY_FAILED
+    assert "interrupted" in (repo.get(stuck_s.id).error_message or "").lower()
+    assert repo.get(healthy.id).status == RecordingStatus.DONE
+
+    db.close()
+
+
+def test_pipeline_retry_summary_dispatches_to_summarizer(tmp_path: Path) -> None:
+    paths = AppPaths(root=tmp_path / "TT")
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+
+    calls: list[tuple[int, str | None]] = []
+
+    class _SummSpy:
+        def summarize(self, recording_id: int, *, api_key: str | None) -> None:
+            calls.append((recording_id, api_key))
+
+    pipeline = Pipeline(
+        bus=EventBus(), db=db, paths=paths, settings=Settings(),
+        audio_source_factory=lambda: _make_source(0.1),
+        summarizer=_SummSpy(),  # type: ignore[arg-type]
+    )
+    pipeline.retry_summary(42, api_key="sk-test")
+    assert calls == [(42, "sk-test")]
+    db.close()
+
+
 def test_pipeline_runs_post_processing_on_executor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The transcribe+summarize chain must run off the publishing thread."""
     import threading

@@ -72,7 +72,7 @@ def _cmd_retry_summary(args: argparse.Namespace) -> int:
     paths = AppPaths()
     pipeline = _build_pipeline(paths, with_watcher=False)
     api_key = load_settings(paths).anthropic_api_key()
-    pipeline._summarizer.summarize(args.recording_id, api_key=api_key)
+    pipeline.retry_summary(args.recording_id, api_key=api_key)
     return 0
 
 

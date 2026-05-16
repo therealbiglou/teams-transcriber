@@ -20,7 +20,7 @@ from teams_transcriber.events import (
 from teams_transcriber.meeting_watcher import MeetingWatcher
 from teams_transcriber.paths import AppPaths
 from teams_transcriber.recorder import Recorder
-from teams_transcriber.storage import Database
+from teams_transcriber.storage import Database, RecordingRepo, RecordingStatus
 from teams_transcriber.summarizer import Summarizer
 from teams_transcriber.transcriber import Transcriber
 
@@ -55,6 +55,7 @@ class Pipeline:
         self._meeting_watcher = meeting_watcher  # may be None for manual-only mode
         self._watcher_thread: threading.Thread | None = None
         self._wire()
+        self._recover_stuck_recordings()
 
     # --- public lifecycle ----------------------------------------------
 
@@ -65,6 +66,10 @@ class Pipeline:
         if self._recorder is not None:
             self._recorder.stop()
             self._recorder = None
+
+    def retry_summary(self, recording_id: int, *, api_key: str | None) -> None:
+        """Public entry point for re-running summarization on an existing recording."""
+        self._summarizer.summarize(recording_id, api_key=api_key)
 
     def serve(self) -> None:
         if self._meeting_watcher is None:
@@ -129,6 +134,32 @@ class Pipeline:
             logger.exception("transcription crashed for %d", recording_id)
         # transcribe() publishes TranscriptionComplete synchronously inside its body;
         # _on_transcription_complete runs on this same worker thread.
+
+    def _recover_stuck_recordings(self) -> None:
+        """At startup, transition any TRANSCRIBING/SUMMARIZING rows to *_FAILED.
+
+        These are recordings whose post-processing was interrupted (app crash,
+        forced exit). Leaving them in an in-progress state confuses the UI
+        and prevents the user from triggering retry. Mark them failed with a
+        clear message so the existing retry path can pick them back up.
+        """
+        rec_repo = RecordingRepo(self._db)
+        for rec in rec_repo.list_by_status(RecordingStatus.TRANSCRIBING):
+            if rec.id is None:
+                continue
+            logger.warning("recovering stuck TRANSCRIBING recording %d", rec.id)
+            rec_repo.update_status(
+                rec.id, RecordingStatus.TRANSCRIPTION_FAILED,
+                error_message="transcription was interrupted (app exited mid-process)",
+            )
+        for rec in rec_repo.list_by_status(RecordingStatus.SUMMARIZING):
+            if rec.id is None:
+                continue
+            logger.warning("recovering stuck SUMMARIZING recording %d", rec.id)
+            rec_repo.update_status(
+                rec.id, RecordingStatus.SUMMARY_FAILED,
+                error_message="summary was interrupted (app exited mid-process)",
+            )
 
     def _start_recorder(self, *, source_type: str, detected_title: str | None) -> int:
         if self._recorder is not None:
