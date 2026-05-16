@@ -6,7 +6,7 @@ import argparse
 import logging
 import signal
 import sys
-import time
+import threading
 from typing import Any
 
 from teams_transcriber.config import load_settings
@@ -56,16 +56,14 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     pipeline = _build_pipeline(paths, with_watcher=True)
     pipeline.serve()
 
-    stopping = False
+    stop_event = threading.Event()
 
     def _handle_signal(_sig: int, _frame: object) -> None:
-        nonlocal stopping
-        stopping = True
+        stop_event.set()
 
     signal.signal(signal.SIGINT, _handle_signal)
     print("Watching for Teams meetings. Ctrl-C to stop.", file=sys.stderr)
-    while not stopping:
-        time.sleep(0.5)
+    stop_event.wait()
     pipeline.shutdown()
     return 0
 
