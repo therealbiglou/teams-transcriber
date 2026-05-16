@@ -67,3 +67,19 @@ def test_enable_default_command_uses_module_invocation() -> None:
 def test_disable_noop_when_not_present() -> None:
     """Whether or not we're on Windows, disable should not raise."""
     autolaunch.disable()
+
+
+def test_build_launch_command_frozen_uses_sys_executable_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When PyInstaller-frozen, the Run-key value is the exe path with no -m flag."""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", r"C:\Apps\TeamsTranscriber\TeamsTranscriber.exe")
+    cmd = autolaunch._build_launch_command()
+    assert cmd == r'"C:\Apps\TeamsTranscriber\TeamsTranscriber.exe"'
+    assert "-m teams_transcriber" not in cmd
+
+
+def test_build_launch_command_source_uses_module_invocation(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Source mode keeps the pythonw -m teams_transcriber form."""
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    cmd = autolaunch._build_launch_command()
+    assert "-m teams_transcriber" in cmd

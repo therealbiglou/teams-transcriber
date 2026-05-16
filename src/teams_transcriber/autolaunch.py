@@ -29,6 +29,9 @@ def is_enabled() -> bool:
 
 def _build_launch_command() -> str:
     """Full Windows command-line that launches the UI without a console window."""
+    if getattr(sys, "frozen", False):
+        # PyInstaller-frozen: sys.executable IS the launcher .exe; no -m flag.
+        return f'"{sys.executable}"'
     py = Path(sys.executable)
     pythonw = py.with_name("pythonw.exe")
     interpreter = pythonw if pythonw.exists() else py
