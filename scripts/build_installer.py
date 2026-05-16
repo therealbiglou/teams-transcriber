@@ -30,6 +30,7 @@ def app_version() -> str:
 
 def find_iscc() -> Path:
     candidates = [
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Inno Setup 6" / "ISCC.exe",
         Path(os.environ.get("ProgramFiles(x86)", "")) / "Inno Setup 6" / "ISCC.exe",
         Path(os.environ.get("ProgramFiles", "")) / "Inno Setup 6" / "ISCC.exe",
     ]
@@ -38,7 +39,8 @@ def find_iscc() -> Path:
             return c
     raise FileNotFoundError(
         "ISCC.exe not found. Install Inno Setup 6 from "
-        "https://jrsoftware.org/isdl.php (free, MIT licensed)."
+        "https://jrsoftware.org/isdl.php (free, MIT licensed). "
+        "Per-user install (no UAC) supported via the /CURRENTUSER flag."
     )
 
 
