@@ -179,6 +179,12 @@ class SettingsDialog(QDialog):
 
         save_settings(self._paths, s)
 
+        from teams_transcriber import autolaunch
+        if self.auto_launch_cb.isChecked():
+            autolaunch.enable()
+        else:
+            autolaunch.disable()
+
         new_key = self.api_key_input.text().strip()
         if new_key:
             keyring.set_password(KEYRING_SERVICE, KEYRING_USER_ANTHROPIC, new_key)
