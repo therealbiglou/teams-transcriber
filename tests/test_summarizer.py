@@ -180,6 +180,46 @@ def test_summarize_skips_when_no_api_key(setup_recording) -> None:
     assert "api key" in (rec.error_message or "").lower()
 
 
+def test_summarize_marks_failed_for_oversize_transcript(setup_recording, monkeypatch) -> None:
+    """Transcripts beyond the char-limit guard must fail-loud, not silently
+    overflow Claude's context window."""
+    from teams_transcriber import summarizer as summarizer_module
+
+    db, rec_id = setup_recording
+    monkeypatch.setattr(summarizer_module, "_TRANSCRIPT_CHAR_LIMIT", 50)
+    client = FakeAnthropic(scripted=[])  # should never be called
+    s = Summarizer(
+        bus=EventBus(), db=db, settings=Settings(),
+        client_factory=lambda _k: client,
+    )
+    s.summarize(rec_id, api_key="sk-test")
+
+    rec = RecordingRepo(db).get(rec_id)
+    assert rec is not None
+    assert rec.status == RecordingStatus.SUMMARY_FAILED
+    assert "too long" in (rec.error_message or "").lower()
+    assert len(client.calls) == 0
+
+
+def test_summarize_sends_cache_control_on_system_and_tools(setup_recording) -> None:
+    """Prompt caching reduces cost; ensure cache_control is applied."""
+    db, rec_id = setup_recording
+    client = FakeAnthropic(scripted=[_canned_ok()])
+    s = Summarizer(
+        bus=EventBus(), db=db, settings=Settings(),
+        client_factory=lambda _k: client,
+    )
+    s.summarize(rec_id, api_key="sk-test")
+
+    assert len(client.calls) == 1
+    call = client.calls[0]
+    # System is a content-blocks list with cache_control on the prompt block.
+    assert isinstance(call["system"], list)
+    assert call["system"][0]["cache_control"] == {"type": "ephemeral"}
+    # Tool definition carries cache_control too.
+    assert call["tools"][0]["cache_control"] == {"type": "ephemeral"}
+
+
 def test_summarize_marks_failed_when_tool_input_is_malformed(setup_recording) -> None:
     db, rec_id = setup_recording
     bad_block = _FakeToolUseBlock(

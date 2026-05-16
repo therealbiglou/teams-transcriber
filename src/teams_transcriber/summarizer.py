@@ -26,6 +26,12 @@ logger = logging.getLogger(__name__)
 
 SUMMARY_TOOL_NAME = "save_meeting_summary"
 
+# Sonnet 4.6 has a 200k-token context. At ~4 chars/token a 600k-char transcript
+# is ~150k tokens, leaving headroom for the system prompt, manual notes, and
+# the model's response. Transcripts beyond this need chunking (not yet done);
+# fail loudly until that lands so the user knows to split the recording.
+_TRANSCRIPT_CHAR_LIMIT = 600_000
+
 SYSTEM_PROMPT = """\
 You summarize meeting transcripts produced by a Teams Transcriber app.
 
@@ -128,6 +134,16 @@ class Summarizer:
                 error_message="transcript is empty",
             )
             return
+        if len(transcript) > _TRANSCRIPT_CHAR_LIMIT:
+            rec_repo.update_status(
+                recording_id, RecordingStatus.SUMMARY_FAILED,
+                error_message=(
+                    f"transcript too long for single-shot summarization "
+                    f"({len(transcript):,} chars; limit {_TRANSCRIPT_CHAR_LIMIT:,}). "
+                    "Chunking is not yet implemented."
+                ),
+            )
+            return
 
         client = self._client_factory(api_key)
         user_notes = rec.manual_notes if rec is not None else None
@@ -180,8 +196,12 @@ class Summarizer:
                 response = client.messages.create(
                     model=self._settings.ai_model,
                     max_tokens=4096,
-                    system=sys_prompt,
-                    tools=[TOOL_SCHEMA],
+                    system=[{
+                        "type": "text",
+                        "text": sys_prompt,
+                        "cache_control": {"type": "ephemeral"},
+                    }],
+                    tools=[{**TOOL_SCHEMA, "cache_control": {"type": "ephemeral"}}],
                     tool_choice={"type": "tool", "name": SUMMARY_TOOL_NAME},
                     messages=[{
                         "role": "user",
