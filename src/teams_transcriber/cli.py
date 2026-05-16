@@ -82,6 +82,24 @@ def _cmd_ui(args: argparse.Namespace) -> int:
     return ui_main()
 
 
+def _cmd_smoke_test(_args: argparse.Namespace) -> int:
+    """Import the full pipeline stack and exit 0.
+
+    Used by the build script to verify the frozen .exe loads all native
+    dependencies (PyAV, ctranslate2, soundcard, CUDA wheels, Qt) without
+    actually launching the UI.
+    """
+    from teams_transcriber.audio.opus_writer import OpusWriter  # noqa: F401
+    from teams_transcriber.audio.splitter import split_channels_to_wav  # noqa: F401
+    from teams_transcriber.pipeline import Pipeline  # noqa: F401
+    from teams_transcriber.summarizer import Summarizer  # noqa: F401
+    from teams_transcriber.transcriber import Transcriber  # noqa: F401
+    from teams_transcriber.ui.app import App  # noqa: F401
+
+    print("smoke-test ok", file=sys.stderr)
+    return 0
+
+
 def _cmd_list(args: argparse.Namespace) -> int:
     paths = AppPaths()
     db = build_database(paths.db_path)
@@ -115,6 +133,9 @@ def main(argv: list[str] | None = None) -> int:
 
     p_ui = sub.add_parser("ui", help="Launch the desktop UI.")
     p_ui.set_defaults(func=_cmd_ui)
+
+    p_smoke = sub.add_parser("smoke-test", help="Boot all imports and exit 0 (build verification).")
+    p_smoke.set_defaults(func=_cmd_smoke_test)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

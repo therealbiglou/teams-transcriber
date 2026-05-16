@@ -20,3 +20,10 @@ def test_cli_list_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     rc = main(["list"])
     assert rc == 0
+
+
+def test_cli_smoke_test_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Smoke-test exits 0 once all top-level package imports succeed."""
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    rc = main(["smoke-test"])
+    assert rc == 0
