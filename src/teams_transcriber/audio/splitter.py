@@ -10,6 +10,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import av
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -23,8 +24,6 @@ def split_channels_to_wav(
     output_rate: int = 16_000,
 ) -> None:
     """Decode `opus_path` (expected 2-channel) and write two mono 16-bit WAV files."""
-    import av
-
     in_container = av.open(str(opus_path))
     try:
         in_stream = in_container.streams.audio[0]
@@ -92,8 +91,6 @@ def split_channels_to_wav(
 
 def _make_mono_frame(samples: np.ndarray, sample_rate: int, fmt_name: str) -> Any:
     """Build a PyAV AudioFrame from a 1-D sample array, matching the source format."""
-    import av
-
     samples = np.ascontiguousarray(samples)
     if samples.ndim == 1:
         samples = samples.reshape(1, -1)

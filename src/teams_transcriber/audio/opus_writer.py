@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import av
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -24,8 +25,6 @@ ENCODE_RATE: int = 48_000  # Opus's native rate; PyAV resamples internally.
 
 class OpusWriter:
     def __init__(self, path: Path, *, channels: int = 2, bitrate_kbps: int = 24) -> None:
-        import av
-
         self._path = path
         self._channels = channels
         self._closed = False
@@ -53,8 +52,6 @@ class OpusWriter:
             )
         if pcm.dtype != np.float32:
             pcm = pcm.astype(np.float32, copy=False)
-
-        import av
 
         layout = "stereo" if self._channels == 2 else "mono"
         frame = av.AudioFrame.from_ndarray(
