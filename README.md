@@ -28,7 +28,19 @@ Prerequisites:
   fallback (slower; switch `compute_type` to `int8` in Settings).
 - An Anthropic API key from https://console.anthropic.com/.
 
-Then:
+**Automated path:** run [`scripts/setup_new_machine.ps1`](scripts/setup_new_machine.ps1).
+It installs prerequisites (Python 3.11, uv, Git, GitHub CLI) via winget,
+authenticates GitHub, clones the repo (if not already present), sets
+repo-local git identity, optionally restores Claude Code memory from a zip
+on the Desktop, runs `uv sync`, and launches the first-run wizard.
+Safe to re-run; uses per-user installs (no admin/UAC needed).
+
+```powershell
+# Grab the script (or copy it across from a working machine), then:
+powershell -ExecutionPolicy Bypass -File .\setup_new_machine.ps1
+```
+
+**Manual path:**
 
 ```powershell
 git clone <repo-url> teams-transcriber
