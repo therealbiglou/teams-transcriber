@@ -119,10 +119,7 @@ class App:
         self.bridge.summary_ready.connect(self._on_summary_ready)
 
         self.hotkeys = HotkeyManager()
-        self.hotkeys.register(
-            self.settings._raw["hotkeys"]["toggle_manual_recording"],
-            self._toggle_manual,
-        )
+        self._apply_hotkeys(self.settings.hotkeys)
 
         if not self.paths.first_run_marker_path.exists():
             from teams_transcriber.ui.first_run_wizard import FirstRunWizard
@@ -212,15 +209,46 @@ class App:
         else:
             self._start_manual()
 
+    def _apply_hotkeys(self, hotkey_map: dict[str, str]) -> None:
+        self.hotkeys.reload([
+            (hotkey_map.get("toggle_manual_recording", "ctrl+alt+r"),
+             self._toggle_manual),
+            (hotkey_map.get("open_workspace", "ctrl+alt+n"),
+             self._open_workspace_for_active),
+            (hotkey_map.get("toggle_pause_detection", "ctrl+alt+p"),
+             self._toggle_pause_detection),
+        ])
+
+    def _toggle_pause_detection(self) -> None:
+        watcher = self.pipeline._meeting_watcher  # noqa: SLF001
+        if watcher is None:
+            return
+        new_paused = not getattr(watcher, "_paused", False)
+        watcher.set_paused(new_paused)
+        show_in_app_toast(
+            "Detection paused" if new_paused else "Detection resumed",
+            ("Teams meeting auto-recording is " +
+             ("disabled until you resume." if new_paused else "active again.")),
+        )
+
     def _on_pause_toggled(self, paused: bool) -> None:
         watcher = self.pipeline._meeting_watcher
         if watcher is not None:
             watcher.set_paused(paused)
 
     def _open_settings(self) -> None:
-        dlg = SettingsDialog(self.settings, self.paths, parent=self.window)
+        dlg = SettingsDialog(
+            self.settings, self.paths,
+            hotkey_reload_callback=self._on_hotkey_reload,
+            parent=self.window,
+        )
         dlg.saved.connect(self._refresh_history)
         dlg.exec()
+
+    def _on_hotkey_reload(self, new_hotkeys: dict[str, str]) -> None:
+        # Reload settings from disk (the dialog already persisted) and re-register.
+        self.settings = load_settings(self.paths)
+        self._apply_hotkeys(new_hotkeys)
 
     def _show_summary(self, recording_id: int) -> None:
         self._show_window()
