@@ -86,10 +86,6 @@ class LiveTranscriber:
             Channel.OTHERS: 0.0,
         }
         self._next_channel: Channel = Channel.ME
-        # Incremented each time a pass completes; feed() can wait on this to
-        # let the worker drain the current next-in-line channel before the
-        # caller queues data for the other channel.
-        self._pass_count: int = 0
 
     # --- public API --------------------------------------------------------
 
@@ -101,7 +97,6 @@ class LiveTranscriber:
         now_ms = time.monotonic() * 1000.0
         with self._cond:
             self._last_pass_ms = {Channel.ME: now_ms, Channel.OTHERS: now_ms}
-            self._pass_count = 0
         self._thread = threading.Thread(
             target=self._run, daemon=True, name="live-transcriber",
         )
@@ -134,7 +129,7 @@ class LiveTranscriber:
         try:
             while True:
                 with self._cond:
-                    channel = self._next_channel
+                    channel = self._next_channel  # snapshot under lock; only the worker writes _next_channel
                     should = self._should_process_locked(channel)
                 if should:
                     audio = self._consume_buffer(channel)
@@ -145,7 +140,6 @@ class LiveTranscriber:
                         self._next_channel = (
                             Channel.OTHERS if channel == Channel.ME else Channel.ME
                         )
-                        self._pass_count += 1
                         self._cond.notify_all()
                 elif self._stop.is_set():
                     # Final drain: process current channel then the other.
@@ -160,7 +154,9 @@ class LiveTranscriber:
                         self._process_pass(other, audio)
                     break
                 else:
-                    # Wait for new audio or for max_wait_ms / 4 to elapse.
+                    # Idle wait: poll every max_wait_ms/4 so we stay responsive to _stop
+                    # notifications and to accumulating audio. notify_all() from feed() or
+                    # flush_and_stop() will wake us sooner.
                     wait_s = max(0.005, self._max_wait_ms / 4 / 1000.0)
                     with self._cond:
                         self._cond.wait(timeout=wait_s)
@@ -171,12 +167,6 @@ class LiveTranscriber:
                     recording_id=self._recording_id,
                     reason="worker thread crashed",
                 ))
-
-    def _threshold_met(self, channel: Channel) -> bool:
-        """Check if buffered samples cross flush_interval_ms. MUST be called under self._cond."""
-        buffered_samples = sum(arr.shape[0] for arr in self._buffers[channel])
-        buffered_ms = (buffered_samples / SAMPLE_RATE) * 1000.0
-        return buffered_ms >= self._flush_interval_ms
 
     def _should_process_locked(self, channel: Channel) -> bool:
         """Check all trigger conditions. MUST be called under self._cond."""
