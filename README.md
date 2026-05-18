@@ -2,7 +2,7 @@
 
 A background Windows application that automatically records and transcribes Microsoft Teams meetings, then produces a structured summary with action items, to-dos, and follow-ups using Claude.
 
-**Status:** Phases 1-3 shipped. Phase 4 (packaging) on `feature/phase-4-packaging`. Design specs in `docs/superpowers/specs/`; implementation plans in `docs/superpowers/plans/`.
+**Status:** Phases 1-4 shipped on `main`. Design specs in `docs/superpowers/specs/`; implementation plans in `docs/superpowers/plans/`; per-phase manual verification checklists in `docs/superpowers/checklists/`.
 
 ## Design
 
@@ -16,6 +16,38 @@ See [`docs/superpowers/specs/2026-05-14-teams-transcriber-design.md`](docs/super
 - Structured summarization via Claude API (summary, key decisions, my to-dos, action items for others, follow-ups, topics).
 - Searchable history with full-text search across transcripts.
 - Manual recording mode for non-Teams meetings.
+
+## Setting up on a new machine
+
+Prerequisites:
+
+- Windows 10/11.
+- Python 3.11 (`winget install Python.Python.3.11` or download from python.org).
+- [uv](https://github.com/astral-sh/uv): `winget install --id astral-sh.uv -e`.
+- NVIDIA GPU + recent driver if you want GPU transcription. CPU works as a
+  fallback (slower; switch `compute_type` to `int8` in Settings).
+- An Anthropic API key from https://console.anthropic.com/.
+
+Then:
+
+```powershell
+git clone <repo-url> teams-transcriber
+cd teams-transcriber
+uv sync --all-extras
+uv run python -m teams_transcriber
+```
+
+The first launch shows the wizard — paste your Anthropic key, leave auto-launch
+on, click through. The Whisper model (~3 GB) downloads once into
+`%USERPROFILE%\.cache\huggingface\` and is reused across launches.
+
+Recordings, database, and settings live in `%LOCALAPPDATA%\TeamsTranscriber\`
+and are **per-machine** — moving between machines means each has its own
+history. The API key is stored in Windows Credential Manager (service
+`teams-transcriber`, user `anthropic_api_key`), also per-machine.
+
+To build a redistributable installer from source, see "Building the installer"
+below.
 
 ## Building the installer
 
