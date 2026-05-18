@@ -20,7 +20,11 @@
 
 .PARAMETER MemoryZip
   Path to the Claude memory zip exported from the source PC.
-  Default: <Desktop>\teams-transcriber-claude-memory.zip.
+  Default: <Desktop>\teams-transcriber-claude-memory.zip, where <Desktop>
+  is resolved via the Windows shell folder API so OneDrive Known Folder
+  Move (Desktop redirected to OneDrive\Desktop) is handled automatically.
+  If the file isn't at the default, the script also checks the literal
+  USERPROFILE\Desktop and USERPROFILE\OneDrive\Desktop paths.
 
 .PARAMETER SkipAppLaunch
   Don't launch the app at the end (skip the first-run wizard). Useful
@@ -41,7 +45,7 @@
 [CmdletBinding()]
 param(
     [string]$RepoPath = "C:\dev\teams-transcriber",
-    [string]$MemoryZip = "$env:USERPROFILE\Desktop\teams-transcriber-claude-memory.zip",
+    [string]$MemoryZip = (Join-Path ([Environment]::GetFolderPath('Desktop')) "teams-transcriber-claude-memory.zip"),
     [switch]$SkipAppLaunch
 )
 
@@ -148,16 +152,36 @@ try {
 # ---------------------------------------------------------------------
 Write-Step "Restoring Claude Code memory"
 
-if (-not (Test-Path $MemoryZip)) {
-    Write-Warn "Memory zip not found at: $MemoryZip"
-    Write-Warn "Skipping. Copy the zip there and re-run if you want memory continuity."
+# If the explicit path doesn't have the zip, search common Desktop locations
+# (handles OneDrive Known Folder Move where Desktop is C:\Users\<u>\OneDrive\Desktop).
+$zipPath = $MemoryZip
+if (-not (Test-Path $zipPath)) {
+    $candidates = @(
+        (Join-Path ([Environment]::GetFolderPath('Desktop')) "teams-transcriber-claude-memory.zip"),
+        (Join-Path $env:USERPROFILE "Desktop\teams-transcriber-claude-memory.zip"),
+        (Join-Path $env:USERPROFILE "OneDrive\Desktop\teams-transcriber-claude-memory.zip")
+    ) | Select-Object -Unique
+    $found = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($found) {
+        Write-Host "    Found zip at fallback location: $found"
+        $zipPath = $found
+    }
+}
+
+if (-not (Test-Path $zipPath)) {
+    Write-Warn "Memory zip not found. Searched:"
+    Write-Warn "  - $MemoryZip"
+    Write-Warn "  - $(Join-Path ([Environment]::GetFolderPath('Desktop')) 'teams-transcriber-claude-memory.zip')"
+    Write-Warn "  - $env:USERPROFILE\Desktop\teams-transcriber-claude-memory.zip"
+    Write-Warn "  - $env:USERPROFILE\OneDrive\Desktop\teams-transcriber-claude-memory.zip"
+    Write-Warn "Skipping. Place the zip at one of those paths (or pass -MemoryZip <path>) and re-run."
 } else {
     # Derive Claude Code project slug from the literal repo path.
     # e.g. C:\dev\teams-transcriber  ->  C--dev-teams-transcriber
     $slug = $RepoPath -replace ":\\", "--" -replace "\\", "-"
     $memDest = Join-Path $env:USERPROFILE ".claude\projects\$slug\memory"
     New-Item -ItemType Directory -Force $memDest | Out-Null
-    Expand-Archive -Path $MemoryZip -DestinationPath $memDest -Force
+    Expand-Archive -Path $zipPath -DestinationPath $memDest -Force
     $count = (Get-ChildItem $memDest -File).Count
     Write-OK "Restored $count memory files to $memDest"
 }
