@@ -145,7 +145,7 @@ def test_live_transcription_settings_defaults(tmp_path) -> None:
     from teams_transcriber.config import load_settings
     from teams_transcriber.paths import AppPaths
 
-    paths = AppPaths(base_dir=tmp_path)
+    paths = AppPaths(root=tmp_path)
     paths.ensure_dirs()
     s = load_settings(paths)
     assert s.live_flush_interval_ms == 10_000
@@ -156,7 +156,7 @@ def test_open_workspace_hotkey_default(tmp_path) -> None:
     from teams_transcriber.config import load_settings
     from teams_transcriber.paths import AppPaths
 
-    paths = AppPaths(base_dir=tmp_path)
+    paths = AppPaths(root=tmp_path)
     paths.ensure_dirs()
     s = load_settings(paths)
     assert s.hotkeys["open_workspace"] == "ctrl+alt+n"
@@ -256,7 +256,7 @@ def test_recorder_invokes_audio_chunk_callback(tmp_path, fresh_db) -> None:
     from teams_transcriber.paths import AppPaths
     from teams_transcriber.recorder import Recorder
 
-    paths = AppPaths(base_dir=tmp_path)
+    paths = AppPaths(root=tmp_path)
     paths.ensure_dirs()
     settings = load_settings(paths)
     mic = np.zeros(48_000, dtype=np.float32)
@@ -288,7 +288,7 @@ def test_recorder_swallows_callback_exceptions(tmp_path, fresh_db) -> None:
     from teams_transcriber.paths import AppPaths
     from teams_transcriber.recorder import Recorder
 
-    paths = AppPaths(base_dir=tmp_path)
+    paths = AppPaths(root=tmp_path)
     paths.ensure_dirs()
     settings = load_settings(paths)
     mic = np.zeros(48_000, dtype=np.float32)
@@ -483,7 +483,7 @@ def fresh_db(tmp_path):
 
 @pytest.fixture
 def app_paths(tmp_path):
-    paths = AppPaths(base_dir=tmp_path)
+    paths = AppPaths(root=tmp_path)
     paths.ensure_dirs()
     return paths
 
@@ -931,7 +931,7 @@ def test_pipeline_starts_and_stops_live_transcriber(tmp_path, monkeypatch) -> No
     from teams_transcriber.pipeline import Pipeline
     from teams_transcriber.storage import build_database
 
-    paths = AppPaths(base_dir=tmp_path)
+    paths = AppPaths(root=tmp_path)
     paths.ensure_dirs()
     db = build_database(paths.db_path)
     db.initialize()
@@ -1135,7 +1135,7 @@ from teams_transcriber.transcriber import Transcriber
 
 @pytest.fixture
 def env(tmp_path):
-    paths = AppPaths(base_dir=tmp_path)
+    paths = AppPaths(root=tmp_path)
     paths.ensure_dirs()
     db = build_database(paths.db_path)
     db.initialize()
@@ -1378,7 +1378,7 @@ from teams_transcriber.ui.notes_editor import NotesEditor
 
 @pytest.fixture
 def env(tmp_path, qapp):
-    paths = AppPaths(base_dir=tmp_path)
+    paths = AppPaths(root=tmp_path)
     paths.ensure_dirs()
     db = build_database(paths.db_path)
     db.initialize()
@@ -1879,7 +1879,7 @@ from teams_transcriber.ui.workspace_window import WorkspaceWindow
 
 @pytest.fixture
 def env(tmp_path, qapp):
-    paths = AppPaths(base_dir=tmp_path)
+    paths = AppPaths(root=tmp_path)
     paths.ensure_dirs()
     db = build_database(paths.db_path)
     db.initialize()
@@ -2549,7 +2549,7 @@ def test_summary_pane_renders_inline_transcript_section(tmp_path, qapp) -> None:
     )
     from teams_transcriber.ui.summary_pane import SummaryPane
 
-    paths = AppPaths(base_dir=tmp_path)
+    paths = AppPaths(root=tmp_path)
     paths.ensure_dirs()
     db = build_database(paths.db_path)
     db.initialize()
@@ -2814,7 +2814,7 @@ def test_settings_dialog_persists_hotkeys(tmp_path, qapp) -> None:
     from teams_transcriber.paths import AppPaths
     from teams_transcriber.ui.settings_dialog import SettingsDialog
 
-    paths = AppPaths(base_dir=tmp_path)
+    paths = AppPaths(root=tmp_path)
     paths.ensure_dirs()
     settings = load_settings(paths)
     dlg = SettingsDialog(settings, paths)
@@ -2830,7 +2830,7 @@ def test_settings_dialog_blank_hotkey_rejected(tmp_path, qapp) -> None:
     from teams_transcriber.paths import AppPaths
     from teams_transcriber.ui.settings_dialog import SettingsDialog
 
-    paths = AppPaths(base_dir=tmp_path)
+    paths = AppPaths(root=tmp_path)
     paths.ensure_dirs()
     settings = load_settings(paths)
     dlg = SettingsDialog(settings, paths)
