@@ -59,3 +59,36 @@ def test_cross_thread_publish_arrives_on_main_thread(qapp, qtbot) -> None:
     t.join()
 
     assert received_on == [main_tid]
+
+
+def test_bridge_emits_live_segment_available(qapp) -> None:
+    from teams_transcriber.events import EventBus, LiveSegmentAvailable
+    from teams_transcriber.storage.models import Channel, TranscriptSegment
+    from teams_transcriber.ui.qt_bridge import QtEventBridge
+
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    received: list[LiveSegmentAvailable] = []
+    bridge.live_segment_available.connect(received.append)
+
+    seg = TranscriptSegment(
+        id=None, recording_id=1, start_ms=0, end_ms=1500,
+        channel=Channel.ME, text="bridge me",
+    )
+    bus.publish(LiveSegmentAvailable(recording_id=1, segment=seg))
+    qapp.processEvents()
+    assert received and received[0].segment.text == "bridge me"
+
+
+def test_bridge_emits_live_transcription_degraded(qapp) -> None:
+    from teams_transcriber.events import EventBus, LiveTranscriptionDegraded
+    from teams_transcriber.ui.qt_bridge import QtEventBridge
+
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    received: list[LiveTranscriptionDegraded] = []
+    bridge.live_transcription_degraded.connect(received.append)
+
+    bus.publish(LiveTranscriptionDegraded(recording_id=5, reason="ouch"))
+    qapp.processEvents()
+    assert received and received[0].reason == "ouch"
