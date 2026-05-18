@@ -43,6 +43,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "compute_type": "int8_float16",
         "language": "en",
         "live_dual_channel": False,  # Phase 2 ships post-mode only; live is Phase 2.5.
+        "live_flush_interval_ms": 10_000,
+        "live_max_wait_ms": 15_000,
     },
     "ai": {
         "provider": "anthropic",
@@ -52,6 +54,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "hotkeys": {
         "toggle_manual_recording": "ctrl+alt+r",
+        "open_workspace": "ctrl+alt+n",
         "toggle_pause_detection": "ctrl+alt+p",
     },
 }
@@ -138,6 +141,14 @@ class Settings:
     def transcription_live_dual_channel(self) -> bool:
         return bool(self._raw["transcription"]["live_dual_channel"])
 
+    @property
+    def live_flush_interval_ms(self) -> int:
+        return int(self._raw["transcription"]["live_flush_interval_ms"])
+
+    @property
+    def live_max_wait_ms(self) -> int:
+        return int(self._raw["transcription"]["live_max_wait_ms"])
+
     # --- ai
     @property
     def ai_model(self) -> str:
@@ -154,6 +165,11 @@ class Settings:
     @property
     def ai_max_retries(self) -> int:
         return int(self._raw["ai"]["max_retries"])
+
+    # --- hotkeys
+    @property
+    def hotkeys(self) -> dict[str, str]:
+        return dict(self._raw["hotkeys"])
 
     def anthropic_api_key(self) -> str | None:
         """Resolve the Anthropic API key. Env var wins over keyring (useful for CI/tests)."""
