@@ -28,14 +28,20 @@ class _StubSegment:
 
 
 class _StubModel:
-    """Records each `transcribe(...)` call and returns scripted segments."""
+    """Records each `transcribe(...)` call and returns scripted segments.
+
+    Per-call FIFO queue: each `queue(segs)` enqueues a batch; each
+    `transcribe(...)` call pops the next batch. This decouples test setup
+    from worker timing — the test queues all its scripted batches upfront,
+    and the worker consumes them in the order they were queued.
+    """
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, np.ndarray]] = []
-        self._next_segments: list[_StubSegment] = []
+        self._queued_batches: list[list[_StubSegment]] = []
 
     def queue(self, segments: list[_StubSegment]) -> None:
-        self._next_segments = list(segments)
+        self._queued_batches.append(list(segments))
 
     def transcribe(
         self,
@@ -44,7 +50,10 @@ class _StubModel:
         vad_filter: bool = True,
     ) -> tuple[Any, dict[str, Any]]:
         self.calls.append(("transcribe", np.asarray(audio).copy()))
-        out, self._next_segments = self._next_segments, []
+        if self._queued_batches:
+            out = self._queued_batches.pop(0)
+        else:
+            out = []
         return iter(out), {}
 
 

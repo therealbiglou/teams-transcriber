@@ -108,38 +108,14 @@ class LiveTranscriber:
         self._thread.start()
 
     def feed(self, channel: Channel, pcm_mono: np.ndarray) -> None:
-        """Append mono float32 PCM @ 16 kHz to the channel's buffer.
-
-        Non-blocking in normal operation. When this feed crosses the flush
-        threshold for the next-in-line channel, waits briefly (up to
-        flush_interval_ms / 10 ms) for the worker to complete that pass before
-        returning — this allows callers that serialise queue-then-feed pairs to
-        feed the second channel AFTER the first has been transcribed.
-        """
+        """Append mono float32 PCM @ 16 kHz to the channel's buffer. Non-blocking."""
         if self._thread is None or self._stop.is_set():
             return
         if pcm_mono.dtype != np.float32:
             pcm_mono = pcm_mono.astype(np.float32, copy=False)
         with self._cond:
             self._buffers[channel].append(pcm_mono)
-            # If this feed makes the next-in-line channel ready, wake the
-            # worker and wait briefly for it to complete the pass.
-            if channel == self._next_channel and self._threshold_met(channel):
-                self._cond.notify_all()
-                pass_before = self._pass_count
-                # Wait up to flush_interval_ms / 10 for the worker to finish.
-                deadline = time.monotonic() + self._flush_interval_ms / 10 / 1000.0
-                while (
-                    self._pass_count == pass_before
-                    and not self._stop.is_set()
-                    and time.monotonic() < deadline
-                ):
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0:
-                        break
-                    self._cond.wait(timeout=min(remaining, 0.01))
-            else:
-                self._cond.notify_all()
+            self._cond.notify_all()
 
     def flush_and_stop(self) -> None:
         if self._thread is None:
