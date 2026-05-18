@@ -65,3 +65,33 @@ def test_accept_syncs_autolaunch_registry(qapp, qtbot, paths, monkeypatch) -> No
     dialog2.auto_launch_cb.setChecked(False)
     dialog2._on_accept()
     assert calls == ["disable"]
+
+
+def test_settings_dialog_persists_hotkeys(tmp_path, qapp) -> None:
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.ui.settings_dialog import SettingsDialog
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    settings = load_settings(paths)
+    dlg = SettingsDialog(settings, paths)
+    dlg._hotkey_inputs["open_workspace"].setText("ctrl+shift+w")
+    dlg._on_accept()
+    reloaded = load_settings(paths)
+    assert reloaded.hotkeys["open_workspace"] == "ctrl+shift+w"
+
+
+def test_settings_dialog_blank_hotkey_rejected(tmp_path, qapp) -> None:
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.ui.settings_dialog import SettingsDialog
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    settings = load_settings(paths)
+    dlg = SettingsDialog(settings, paths)
+    dlg._hotkey_inputs["toggle_manual_recording"].setText("")
+    dlg._on_accept()
+    reloaded = load_settings(paths)
+    assert reloaded.hotkeys["toggle_manual_recording"] == "ctrl+alt+r"

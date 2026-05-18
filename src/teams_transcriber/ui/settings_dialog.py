@@ -1,6 +1,8 @@
-"""Settings dialog with sections: General, Audio, Detection, Transcription, AI."""
+"""Settings dialog with sections: General, Audio, Detection, Transcription, AI, Shortcuts."""
 
 from __future__ import annotations
+
+from collections.abc import Callable
 
 import keyring
 from PySide6.QtCore import Signal
@@ -10,6 +12,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -41,6 +44,8 @@ class SettingsDialog(QDialog):
         self,
         settings: Settings,
         paths: AppPaths,
+        *,
+        hotkey_reload_callback: Callable[[dict[str, str]], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -48,6 +53,7 @@ class SettingsDialog(QDialog):
         self.resize(700, 540)
         self._settings = settings
         self._paths = paths
+        self._hotkey_reload_callback = hotkey_reload_callback
 
         outer = QVBoxLayout(self)
         self._tabs = QTabWidget()
@@ -56,6 +62,7 @@ class SettingsDialog(QDialog):
         self._tabs.addTab(self._build_detection_tab(), "Detection")
         self._tabs.addTab(self._build_transcription_tab(), "Transcription")
         self._tabs.addTab(self._build_ai_tab(), "AI")
+        self._tabs.addTab(self._build_shortcuts_tab(), "Shortcuts")
         outer.addWidget(self._tabs)
 
         buttons = QDialogButtonBox(
@@ -151,6 +158,34 @@ class SettingsDialog(QDialog):
         form.addRow("Custom prompt addendum:", self.addendum_input)
         return w
 
+    def _build_shortcuts_tab(self) -> QWidget:
+        w = QWidget()
+        outer = QVBoxLayout(w)
+        shortcuts_group = QGroupBox("Shortcuts")
+        shortcuts_form = QFormLayout(shortcuts_group)
+        self._hotkey_inputs: dict[str, QLineEdit] = {}
+        for key, label, default in [
+            ("toggle_manual_recording", "Toggle recording",        "ctrl+alt+r"),
+            ("open_workspace",          "Open workspace",          "ctrl+alt+n"),
+            ("toggle_pause_detection",  "Pause/unpause detection", "ctrl+alt+p"),
+        ]:
+            row = QHBoxLayout()
+            line = QLineEdit(self._settings.hotkeys.get(key, default))
+            line.setPlaceholderText(default)
+            row.addWidget(line, 1)
+            reset = QPushButton("Reset")
+            reset.setProperty("role", "ghost")
+            reset.setFixedWidth(60)
+            reset.clicked.connect(lambda _checked=False, ln=line, d=default: ln.setText(d))
+            row.addWidget(reset)
+            wrapper = QWidget()
+            wrapper.setLayout(row)
+            shortcuts_form.addRow(label, wrapper)
+            self._hotkey_inputs[key] = line
+        outer.addWidget(shortcuts_group)
+        outer.addStretch(1)
+        return w
+
     def _add_pattern(self) -> None:
         text = self.pattern_input.text().strip()
         if not text:
@@ -177,6 +212,16 @@ class SettingsDialog(QDialog):
         s._raw["ai"]["model"] = self.ai_model_combo.currentText()
         s._raw["ai"]["custom_prompt_addendum"] = self.addendum_input.toPlainText()
 
+        # Hotkeys — Phase 5.
+        s._raw["hotkeys"] = dict(s._raw.get("hotkeys", {}))
+        new_hotkeys: dict[str, str] = {}
+        for key, line in self._hotkey_inputs.items():
+            value = line.text().strip()
+            if not value:
+                value = s._raw["hotkeys"].get(key, "")
+            new_hotkeys[key] = value
+            s._raw["hotkeys"][key] = value
+
         save_settings(self._paths, s)
 
         from teams_transcriber import autolaunch
@@ -191,3 +236,6 @@ class SettingsDialog(QDialog):
 
         self.saved.emit()
         self.accept()
+
+        if self._hotkey_reload_callback is not None:
+            self._hotkey_reload_callback(new_hotkeys)
