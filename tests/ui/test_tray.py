@@ -31,7 +31,7 @@ def test_menu_actions_emit_signals(qapp, qtbot) -> None:
     tray.stop_manual_requested.connect(lambda: received.append("stop"))
     tray.open_window_requested.connect(lambda: received.append("open"))
     tray.pause_detection_toggled.connect(lambda v: received.append(f"pause={v}"))
-    tray.notes_requested.connect(lambda: received.append("notes"))
+    tray.open_workspace_requested.connect(lambda: received.append("notes"))
     tray.quit_requested.connect(lambda: received.append("quit"))
 
     # start is disabled while recording, so trigger it after flipping state back.

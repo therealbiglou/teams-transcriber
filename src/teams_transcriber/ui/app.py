@@ -30,7 +30,7 @@ from teams_transcriber.events import (
 from teams_transcriber.meeting_watcher import MeetingWatcher, enumerate_windows
 from teams_transcriber.paths import AppPaths
 from teams_transcriber.pipeline import Pipeline
-from teams_transcriber.storage import RecordingRepo, SummaryRepo, build_database
+from teams_transcriber.storage import RecordingRepo, RecordingSource, RecordingStatus, SummaryRepo, build_database
 from teams_transcriber.storage.models import Recording
 from teams_transcriber.summarizer import Summarizer
 from teams_transcriber.transcriber import Transcriber
@@ -39,8 +39,8 @@ from teams_transcriber.ui.history_list import HistoryList, filter_for_bucket
 from teams_transcriber.ui.hotkeys import HotkeyManager
 from teams_transcriber.ui.icons import TrayState
 from teams_transcriber.ui.main_window import MainWindow
-from teams_transcriber.ui.notes_window import NotesWindow
 from teams_transcriber.ui.qt_bridge import QtEventBridge
+from teams_transcriber.ui.workspace_window import WorkspaceWindow
 from teams_transcriber.ui.search_bar import SearchBar
 from teams_transcriber.ui.settings_dialog import SettingsDialog
 from teams_transcriber.ui.sidebar import SidebarBucket
@@ -104,7 +104,7 @@ class App:
         self.tray.start_manual_requested.connect(self._start_manual)
         self.tray.stop_manual_requested.connect(self._stop_manual)
         self.tray.pause_detection_toggled.connect(self._on_pause_toggled)
-        self.tray.notes_requested.connect(self._open_notes_for_active)
+        self.tray.open_workspace_requested.connect(self._open_workspace_for_active)
         self.tray.quit_requested.connect(self._quit)
         self.tray.settings_action.triggered.connect(self._open_settings)
 
@@ -161,7 +161,7 @@ class App:
         self.summary.transcript_requested.connect(self._show_transcript)
         self.summary.export_requested.connect(self._export_summary)
         self.summary.delete_requested.connect(self._delete_recording)
-        self.summary.notes_requested.connect(self._open_notes)
+        self.summary.notes_requested.connect(self._open_workspace)
         body_layout.addWidget(self.history, 1)
         body_layout.addWidget(self.summary, 1)
         layout.addWidget(body, 1)
@@ -308,21 +308,31 @@ class App:
         self.tray.set_state(TrayState.RECORDING, label=Path(evt.audio_path).stem)
         recording_id = evt.recording_id
         self._active_recording_id = recording_id
+        rec = RecordingRepo(self.db).get(recording_id)
+        is_manual = rec is not None and rec.source == RecordingSource.MANUAL
+        if is_manual:
+            self._open_workspace(recording_id)
         show_in_app_toast(
             "Recording started",
-            "Click 'Add notes' to add context the AI will include in the summary.",
-            action_label="Add notes",
-            action_callback=lambda: self._open_notes(recording_id),
+            "Open workspace to take notes and watch live transcription.",
+            action_label="Open workspace",
+            action_callback=lambda: self._open_workspace(recording_id),
         )
         self._refresh_history()
 
     def _on_recording_finalized(self, _evt: RecordingFinalized) -> None:
         self.tray.set_state(TrayState.PROCESSING)
+        rid = self._active_recording_id
         self._active_recording_id = None
         show_in_app_toast(
             "Recording stopped",
             "Transcribing and summarizing — you'll get a notification when it's ready.",
         )
+        if rid is not None:
+            workspaces = getattr(self, "_workspace_windows", {})
+            ws = workspaces.get(rid)
+            if ws is not None:
+                ws.set_recording_finished()
         self._refresh_history()
 
     def _on_recording_failed(self, evt: RecordingFailed) -> None:
@@ -346,28 +356,48 @@ class App:
         )
         self._refresh_history()
 
-    def _open_notes_for_active(self) -> None:
-        """Tray menu handler — open notes for the currently-recording recording."""
-        if self._active_recording_id is None:
+    def _open_workspace_for_active(self) -> None:
+        if self._active_recording_id is not None:
+            self._open_workspace(self._active_recording_id)
             return
-        self._open_notes(self._active_recording_id)
+        recents = RecordingRepo(self.db).list_recent(limit=1)
+        if recents and recents[0].id is not None:
+            self._open_workspace(recents[0].id)
+        else:
+            show_in_app_toast(
+                "Nothing to show yet",
+                "Start a recording to open the workspace.",
+            )
 
-    def _open_notes(self, recording_id: int) -> None:
-        """Open the rich-text notes editor for a recording.
+    def _open_workspace(self, recording_id: int) -> None:
+        """Open (or raise) the workspace window for a recording.
 
-        Used from the recording-started toast and the tray menu.
+        Live mode if the recording is still recording, past mode otherwise.
         """
+        existing = getattr(self, "_workspace_windows", {}).get(recording_id)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return
+
         rec = RecordingRepo(self.db).get(recording_id)
-        title = rec.display_title or rec.detected_title if rec else None
-        dlg = NotesWindow(self.db, recording_id, recording_title=title, parent=self.window)
-        dlg.saved.connect(lambda _rid: self._refresh_history())
-        # Also refresh the summary pane if it's currently showing this recording.
-        dlg.saved.connect(
-            lambda rid: self.summary.show_recording(rid)
-            if self.summary._current_recording_id == rid else None
+        live = (rec is not None and rec.status == RecordingStatus.RECORDING)
+        win = WorkspaceWindow(
+            db=self.db,
+            recording_id=recording_id,
+            bridge=self.bridge,
+            live=live,
         )
-        dlg.show()
-        self._notes_window = dlg  # keep a ref so it doesn't get garbage-collected
+        win.stop_recording_requested.connect(lambda _rid: self._stop_manual())
+        win.closed.connect(self._on_workspace_closed)
+        self._workspace_windows = getattr(self, "_workspace_windows", {})
+        self._workspace_windows[recording_id] = win
+        win.show()
+
+    def _on_workspace_closed(self, recording_id: int) -> None:
+        windows = getattr(self, "_workspace_windows", {})
+        windows.pop(recording_id, None)
+        self._refresh_history()
 
     def _quit(self) -> None:
         self.hotkeys.stop()
