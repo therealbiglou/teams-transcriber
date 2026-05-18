@@ -148,8 +148,8 @@ def test_live_transcription_settings_defaults(tmp_path) -> None:
     paths = AppPaths(root=tmp_path)
     paths.ensure_dirs()
     s = load_settings(paths)
-    assert s.live_flush_interval_ms == 10_000
-    assert s.live_max_wait_ms == 15_000
+    assert s.transcription_live_flush_interval_ms == 10_000
+    assert s.transcription_live_max_wait_ms == 15_000
 
 
 def test_open_workspace_hotkey_default(tmp_path) -> None:
@@ -170,7 +170,7 @@ def test_open_workspace_hotkey_default(tmp_path) -> None:
 uv run pytest tests/test_config.py -k "live_transcription_settings or open_workspace" -v
 ```
 
-Expected: `AttributeError: 'Settings' object has no attribute 'live_flush_interval_ms'` (or similar).
+Expected: `AttributeError: 'Settings' object has no attribute 'transcription_live_flush_interval_ms'` (or similar).
 
 - [ ] **Step 2.3: Implement the new defaults and accessors**
 
@@ -205,11 +205,11 @@ Then add accessors on the `Settings` class (alongside `transcription_model`, etc
 
 ```python
 @property
-def live_flush_interval_ms(self) -> int:
+def transcription_live_flush_interval_ms(self) -> int:
     return int(self._raw["transcription"]["live_flush_interval_ms"])
 
 @property
-def live_max_wait_ms(self) -> int:
+def transcription_live_max_wait_ms(self) -> int:
     return int(self._raw["transcription"]["live_max_wait_ms"])
 
 @property
@@ -710,11 +710,11 @@ class LiveTranscriber:
         self._model_factory = model_factory
         self._flush_interval_ms = (
             flush_interval_ms if flush_interval_ms is not None
-            else settings.live_flush_interval_ms
+            else settings.transcription_live_flush_interval_ms
         )
         self._max_wait_ms = (
             max_wait_ms if max_wait_ms is not None
-            else settings.live_max_wait_ms
+            else settings.transcription_live_max_wait_ms
         )
         self._recording_id: int | None = None
         self._model: Any = None
