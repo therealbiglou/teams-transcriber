@@ -47,7 +47,6 @@ from teams_transcriber.ui.sidebar import SidebarBucket
 from teams_transcriber.ui.summary_pane import SummaryPane
 from teams_transcriber.ui.theme import app_stylesheet
 from teams_transcriber.ui.toast_banner import show_in_app_toast
-from teams_transcriber.ui.transcript_view import TranscriptView
 from teams_transcriber.ui.tray import AppTray
 
 logger = logging.getLogger(__name__)
@@ -158,7 +157,6 @@ class App:
         self.history = HistoryList()
         self.history.recording_selected.connect(self._show_summary)
         self.summary = SummaryPane(self.db)
-        self.summary.transcript_requested.connect(self._show_transcript)
         self.summary.export_requested.connect(self._export_summary)
         self.summary.delete_requested.connect(self._delete_recording)
         self.summary.notes_requested.connect(self._open_workspace)
@@ -227,16 +225,6 @@ class App:
     def _show_summary(self, recording_id: int) -> None:
         self._show_window()
         self.summary.show_recording(recording_id)
-
-    def _show_transcript(self, recording_id: int) -> None:
-        view = TranscriptView(self.db)
-        view.setWindowFlags(Qt.WindowType.Dialog)
-        view.setWindowTitle("Transcript")
-        view.resize(700, 600)
-        view.show_recording(recording_id)
-        view.show()
-        # Keep a reference so it isn't garbage-collected immediately.
-        self._transcript_window = view
 
     def _export_summary(self, recording_id: int) -> None:
         path, _ = QFileDialog.getSaveFileName(
