@@ -7,6 +7,8 @@ import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 
+import numpy as np
+
 from teams_transcriber.audio.source import AudioSource
 from teams_transcriber.config import Settings
 from teams_transcriber.events import (
@@ -17,10 +19,11 @@ from teams_transcriber.events import (
     RecordingFinalized,
     TranscriptionComplete,
 )
+from teams_transcriber.live_transcriber import LiveTranscriber
 from teams_transcriber.meeting_watcher import MeetingWatcher
 from teams_transcriber.paths import AppPaths
 from teams_transcriber.recorder import Recorder
-from teams_transcriber.storage import Database, RecordingRepo, RecordingStatus
+from teams_transcriber.storage import Channel, Database, RecordingRepo, RecordingStatus
 from teams_transcriber.summarizer import Summarizer
 from teams_transcriber.transcriber import Transcriber
 
@@ -46,6 +49,7 @@ class Pipeline:
         self._settings = settings
         self._audio_source_factory = audio_source_factory
         self._recorder: Recorder | None = None
+        self._live_transcriber: LiveTranscriber | None = None
         self._transcriber = transcriber or Transcriber(bus=bus, db=db, settings=settings)
         self._summarizer = summarizer or Summarizer(bus=bus, db=db, settings=settings)
         self._executor: ThreadPoolExecutor = ThreadPoolExecutor(
@@ -66,6 +70,9 @@ class Pipeline:
         if self._recorder is not None:
             self._recorder.stop()
             self._recorder = None
+        if self._live_transcriber is not None:
+            self._live_transcriber.flush_and_stop()
+            self._live_transcriber = None
 
     def retry_summary(self, recording_id: int, *, api_key: str | None) -> None:
         """Public entry point for re-running summarization on an existing recording."""
@@ -87,6 +94,9 @@ class Pipeline:
         if self._recorder is not None:
             self._recorder.stop()
             self._recorder = None
+        if self._live_transcriber is not None:
+            self._live_transcriber.flush_and_stop()
+            self._live_transcriber = None
         self._executor.shutdown(wait=True)
 
     # --- wiring --------------------------------------------------------
@@ -109,6 +119,9 @@ class Pipeline:
         self._recorder = None
         if rec is not None:
             rec.stop()
+        if self._live_transcriber is not None:
+            self._live_transcriber.flush_and_stop()
+            self._live_transcriber = None
 
     def _on_recording_finalized(self, evt: RecordingFinalized) -> None:
         future = self._executor.submit(self._run_post_processing, evt.recording_id)
@@ -166,8 +179,25 @@ class Pipeline:
             logger.warning("recorder already running; ignoring duplicate start")
             return -1
         source = self._audio_source_factory()
+
+        live = LiveTranscriber(
+            bus=self._bus, db=self._db, settings=self._settings,
+        )
+        self._live_transcriber = live
+
+        def _on_audio_chunk(chunk: np.ndarray) -> None:
+            # chunk shape: (frames, 2) float32. col 0 = mic (ME); col 1 = loopback (OTHERS).
+            mic = chunk[:, 0]
+            loop = chunk[:, 1]
+            live.feed(Channel.ME, mic)
+            live.feed(Channel.OTHERS, loop)
+
         self._recorder = Recorder(
             bus=self._bus, db=self._db, paths=self._paths,
             settings=self._settings, audio_source=source,
+            audio_chunk_callback=_on_audio_chunk,
         )
-        return self._recorder.start(source_type=source_type, detected_title=detected_title)
+        rec_id = self._recorder.start(source_type=source_type, detected_title=detected_title)
+        if rec_id > 0:
+            live.start(rec_id)
+        return rec_id

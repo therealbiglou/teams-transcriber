@@ -296,3 +296,68 @@ def test_pipeline_runs_post_processing_on_executor(tmp_path: Path, monkeypatch: 
     assert transcribe_thread_ids[0] != publisher_thread_id
 
     db.close()
+
+
+def test_pipeline_starts_and_stops_live_transcriber(tmp_path, monkeypatch) -> None:
+    """When a recording starts, the pipeline starts the LiveTranscriber and
+    forwards captured chunks to its feed(). When the recording ends, it
+    flushes + stops it."""
+    import numpy as np
+    from teams_transcriber.audio.source import FakeAudioSource
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.events import EventBus
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.pipeline import Pipeline
+    from teams_transcriber.storage import build_database
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    settings = load_settings(paths)
+    bus = EventBus()
+
+    mic = np.zeros(48_000, dtype=np.float32)
+    loop = np.zeros(48_000, dtype=np.float32)
+    source = FakeAudioSource(mic, loop)
+
+    feed_calls: list[tuple[str, int]] = []
+
+    class _SpyLive:
+        def __init__(self, *_a, **_kw): pass
+        def start(self, recording_id: int) -> None:
+            feed_calls.append(("start", recording_id))
+        def feed(self, channel, pcm) -> None:
+            feed_calls.append(("feed", pcm.shape[0]))
+        def flush_and_stop(self) -> None:
+            feed_calls.append(("stop", -1))
+
+    monkeypatch.setattr(
+        "teams_transcriber.pipeline.LiveTranscriber", _SpyLive,
+    )
+
+    class _NoopTranscriber:
+        def transcribe(self, rid: int) -> None: pass
+
+    class _NoopSummarizer:
+        def summarize(self, rid: int, *, api_key) -> None: pass
+
+    p = Pipeline(
+        bus=bus, db=db, paths=paths, settings=settings,
+        audio_source_factory=lambda: source,
+        meeting_watcher=None,
+        transcriber=_NoopTranscriber(),
+        summarizer=_NoopSummarizer(),
+    )
+    rid = p.start_manual(detected_title="t")
+    source.run_until_exhausted()
+    p.stop_manual()
+    p.shutdown()
+    db.close()
+
+    starts = [c for c in feed_calls if c[0] == "start"]
+    feeds = [c for c in feed_calls if c[0] == "feed"]
+    stops = [c for c in feed_calls if c[0] == "stop"]
+    assert len(starts) == 1 and starts[0][1] == rid
+    assert len(feeds) > 0
+    assert len(stops) == 1
