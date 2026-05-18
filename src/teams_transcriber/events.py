@@ -12,9 +12,12 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from teams_transcriber.storage.models import TranscriptSegment
 
 # --- Event dataclasses ----------------------------------------------------
 
@@ -61,6 +64,18 @@ class TranscriptionComplete(Event):
 @dataclass(slots=True, frozen=True)
 class SummaryReady(Event):
     recording_id: int
+
+
+@dataclass(slots=True, frozen=True)
+class LiveSegmentAvailable(Event):
+    recording_id: int
+    segment: "TranscriptSegment"
+
+
+@dataclass(slots=True, frozen=True)
+class LiveTranscriptionDegraded(Event):
+    recording_id: int
+    reason: str
 
 
 # --- EventBus -------------------------------------------------------------

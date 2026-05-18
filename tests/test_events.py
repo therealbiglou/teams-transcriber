@@ -108,3 +108,24 @@ def test_event_dataclasses_carry_expected_fields() -> None:
     RecordingFailed(recording_id=1, error_message="boom")
     TranscriptionComplete(recording_id=1, segment_count=10)
     SummaryReady(recording_id=1)
+
+
+def test_live_segment_available_event_round_trip() -> None:
+    from teams_transcriber.events import LiveSegmentAvailable
+    from teams_transcriber.storage.models import Channel, TranscriptSegment
+
+    seg = TranscriptSegment(
+        id=1, recording_id=42, start_ms=1000, end_ms=2000,
+        channel=Channel.ME, text="hello",
+    )
+    evt = LiveSegmentAvailable(recording_id=42, segment=seg)
+    assert evt.recording_id == 42
+    assert evt.segment.text == "hello"
+
+
+def test_live_transcription_degraded_event_round_trip() -> None:
+    from teams_transcriber.events import LiveTranscriptionDegraded
+
+    evt = LiveTranscriptionDegraded(recording_id=7, reason="cuda oom")
+    assert evt.recording_id == 7
+    assert evt.reason == "cuda oom"
