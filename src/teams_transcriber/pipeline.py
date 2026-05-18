@@ -131,6 +131,9 @@ class Pipeline:
         logger.warning("recording %d failed: %s", evt.recording_id, evt.error_message)
         # Worker thread already updated status; just release the slot.
         self._recorder = None
+        if self._live_transcriber is not None:
+            self._live_transcriber.flush_and_stop()
+            self._live_transcriber = None
 
     def _on_transcription_complete(self, evt: TranscriptionComplete) -> None:
         try:

@@ -361,3 +361,60 @@ def test_pipeline_starts_and_stops_live_transcriber(tmp_path, monkeypatch) -> No
     assert len(starts) == 1 and starts[0][1] == rid
     assert len(feeds) > 0
     assert len(stops) == 1
+
+
+def test_pipeline_stops_live_transcriber_on_recording_failure(tmp_path, monkeypatch) -> None:
+    """When the recorder publishes RecordingFailed, the pipeline must
+    flush + stop the live transcriber to avoid a leaked worker thread."""
+    import numpy as np
+    from teams_transcriber.audio.source import FakeAudioSource
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.events import EventBus, RecordingFailed
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.pipeline import Pipeline
+    from teams_transcriber.storage import build_database
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    settings = load_settings(paths)
+    bus = EventBus()
+
+    mic = np.zeros(48_000, dtype=np.float32)
+    loop = np.zeros(48_000, dtype=np.float32)
+    source = FakeAudioSource(mic, loop)
+
+    stop_calls: list[str] = []
+
+    class _SpyLive:
+        def __init__(self, *_a, **_kw): pass
+        def start(self, recording_id: int) -> None: pass
+        def feed(self, channel, pcm) -> None: pass
+        def flush_and_stop(self) -> None:
+            stop_calls.append("stop")
+
+    monkeypatch.setattr("teams_transcriber.pipeline.LiveTranscriber", _SpyLive)
+
+    class _NoopTranscriber:
+        def transcribe(self, rid: int) -> None: pass
+
+    class _NoopSummarizer:
+        def summarize(self, rid: int, *, api_key) -> None: pass
+
+    p = Pipeline(
+        bus=bus, db=db, paths=paths, settings=settings,
+        audio_source_factory=lambda: source,
+        meeting_watcher=None,
+        transcriber=_NoopTranscriber(),
+        summarizer=_NoopSummarizer(),
+    )
+    rid = p.start_manual(detected_title="t")
+    # Simulate the recorder publishing RecordingFailed.
+    bus.publish(RecordingFailed(recording_id=rid, error_message="simulated"))
+    p.shutdown()
+    db.close()
+
+    # The live transcriber should have been stopped via the failure path,
+    # not via shutdown. Exactly one stop call.
+    assert stop_calls == ["stop"]
