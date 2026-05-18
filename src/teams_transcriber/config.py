@@ -142,11 +142,11 @@ class Settings:
         return bool(self._raw["transcription"]["live_dual_channel"])
 
     @property
-    def live_flush_interval_ms(self) -> int:
+    def transcription_live_flush_interval_ms(self) -> int:
         return int(self._raw["transcription"]["live_flush_interval_ms"])
 
     @property
-    def live_max_wait_ms(self) -> int:
+    def transcription_live_max_wait_ms(self) -> int:
         return int(self._raw["transcription"]["live_max_wait_ms"])
 
     # --- ai

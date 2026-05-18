@@ -111,8 +111,8 @@ def test_default_settings_immune_to_settings_mutation(paths: AppPaths) -> None:
 
 def test_live_transcription_settings_defaults(paths: AppPaths) -> None:
     s = load_settings(paths)
-    assert s.live_flush_interval_ms == 10_000
-    assert s.live_max_wait_ms == 15_000
+    assert s.transcription_live_flush_interval_ms == 10_000
+    assert s.transcription_live_max_wait_ms == 15_000
 
 
 def test_open_workspace_hotkey_default(paths: AppPaths) -> None:
