@@ -95,3 +95,66 @@ def test_settings_dialog_blank_hotkey_rejected(tmp_path, qapp) -> None:
     dlg._on_accept()
     reloaded = load_settings(paths)
     assert reloaded.hotkeys["toggle_manual_recording"] == "ctrl+alt+r"
+
+
+def test_settings_dialog_audio_tab_round_trip(tmp_path, qapp, monkeypatch) -> None:
+    """Selecting a mic + loopback in the Audio tab persists as {id, name} dicts."""
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.ui.settings_dialog import SettingsDialog
+
+    class _Dev:
+        def __init__(self, id_, name): self.id = id_; self.name = name
+
+    fake_mics = [_Dev("{mic-a}", "Mic A"), _Dev("{mic-b}", "Mic B")]
+    fake_speakers = [_Dev("{spk-a}", "Spk A")]
+
+    monkeypatch.setattr(
+        "teams_transcriber.ui.settings_dialog._enumerate_microphones",
+        lambda: fake_mics,
+    )
+    monkeypatch.setattr(
+        "teams_transcriber.ui.settings_dialog._enumerate_speakers",
+        lambda: fake_speakers,
+    )
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    settings = load_settings(paths)
+    dlg = SettingsDialog(settings, paths)
+    dlg._mic_combo.setCurrentIndex(2)  # 0 = Default, 1 = Mic A, 2 = Mic B
+    dlg._loopback_combo.setCurrentIndex(1)  # 0 = Default, 1 = Spk A
+    dlg._on_accept()
+    reloaded = load_settings(paths)
+    assert reloaded.audio_mic_device == {"id": "{mic-b}", "name": "Mic B"}
+    assert reloaded.audio_loopback_device == {"id": "{spk-a}", "name": "Spk A"}
+
+
+def test_settings_dialog_audio_default_round_trips(tmp_path, qapp, monkeypatch) -> None:
+    """Choosing 'Use Windows default' persists as None."""
+    from teams_transcriber.config import load_settings, save_settings
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.ui.settings_dialog import SettingsDialog
+
+    monkeypatch.setattr(
+        "teams_transcriber.ui.settings_dialog._enumerate_microphones",
+        lambda: [],
+    )
+    monkeypatch.setattr(
+        "teams_transcriber.ui.settings_dialog._enumerate_speakers",
+        lambda: [],
+    )
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    settings = load_settings(paths)
+    settings._raw["audio"]["mic_device"] = {"id": "{old}", "name": "Old Mic"}
+    save_settings(paths, settings)
+
+    settings = load_settings(paths)
+    dlg = SettingsDialog(settings, paths)
+    dlg._mic_combo.setCurrentIndex(0)
+    dlg._on_accept()
+
+    reloaded = load_settings(paths)
+    assert reloaded.audio_mic_device is None

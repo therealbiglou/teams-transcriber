@@ -5,6 +5,22 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import keyring
+
+
+def _enumerate_microphones() -> list:
+    try:
+        import soundcard
+        return list(soundcard.all_microphones(exclude_monitors=True))
+    except Exception:
+        return []
+
+
+def _enumerate_speakers() -> list:
+    try:
+        import soundcard
+        return list(soundcard.all_speakers())
+    except Exception:
+        return []
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -83,6 +99,36 @@ class SettingsDialog(QDialog):
     def _build_audio_tab(self) -> QWidget:
         w = QWidget()
         form = QFormLayout(w)
+
+        self._mic_combo = QComboBox()
+        self._mic_combo.addItem("Use Windows default", userData=None)
+        for mic in _enumerate_microphones():
+            self._mic_combo.addItem(mic.name, userData={"id": mic.id, "name": mic.name})
+
+        self._loopback_combo = QComboBox()
+        self._loopback_combo.addItem("Use Windows default", userData=None)
+        for spk in _enumerate_speakers():
+            self._loopback_combo.addItem(spk.name, userData={"id": spk.id, "name": spk.name})
+
+        # Preselect from settings.
+        saved_mic = self._settings.audio_mic_device
+        if saved_mic is not None:
+            for i in range(self._mic_combo.count()):
+                d = self._mic_combo.itemData(i)
+                if d and d.get("id") == saved_mic.get("id"):
+                    self._mic_combo.setCurrentIndex(i)
+                    break
+        saved_loop = self._settings.audio_loopback_device
+        if saved_loop is not None:
+            for i in range(self._loopback_combo.count()):
+                d = self._loopback_combo.itemData(i)
+                if d and d.get("id") == saved_loop.get("id"):
+                    self._loopback_combo.setCurrentIndex(i)
+                    break
+
+        form.addRow("Microphone:", self._mic_combo)
+        form.addRow("System audio source:", self._loopback_combo)
+
         self.retention_spin = QSpinBox()
         self.retention_spin.setRange(0, 3650)
         self.retention_spin.setSuffix(" days")
@@ -201,6 +247,9 @@ class SettingsDialog(QDialog):
         s = self._settings
         s._raw["general"]["auto_launch"] = self.auto_launch_cb.isChecked()
         s._raw["audio"]["retention_days"] = self.retention_spin.value()
+        # Audio device selections — Phase 6.
+        s._raw["audio"]["mic_device"] = self._mic_combo.currentData()
+        s._raw["audio"]["loopback_device"] = self._loopback_combo.currentData()
         patterns: list[str] = []
         for i in range(self.pattern_list.count()):
             item = self.pattern_list.item(i)
