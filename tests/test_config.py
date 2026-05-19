@@ -120,3 +120,11 @@ def test_open_workspace_hotkey_default(paths: AppPaths) -> None:
     assert s.hotkeys["open_workspace"] == "ctrl+alt+n"
     assert s.hotkeys["toggle_manual_recording"] == "ctrl+alt+r"
     assert s.hotkeys["toggle_pause_detection"] == "ctrl+alt+p"
+
+
+def test_live_enabled_default_is_false(paths: AppPaths) -> None:
+    """Phase 6 makes live transcription opt-in — default off."""
+    from teams_transcriber.config import load_settings
+
+    s = load_settings(paths)
+    assert s.transcription_live_enabled is False

@@ -42,6 +42,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "model": "large-v3-turbo",
         "compute_type": "int8_float16",
         "language": "en",
+        "live_enabled": False,  # Phase 6: live transcription is opt-in.
         "live_dual_channel": False,  # Phase 2 ships post-mode only; live is Phase 2.5.
         "live_flush_interval_ms": 10_000,
         "live_max_wait_ms": 15_000,
@@ -136,6 +137,10 @@ class Settings:
     @property
     def transcription_language(self) -> str:
         return str(self._raw["transcription"]["language"])
+
+    @property
+    def transcription_live_enabled(self) -> bool:
+        return bool(self._raw["transcription"].get("live_enabled", False))
 
     @property
     def transcription_live_dual_channel(self) -> bool:
