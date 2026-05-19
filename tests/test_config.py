@@ -128,3 +128,46 @@ def test_live_enabled_default_is_false(paths: AppPaths) -> None:
 
     s = load_settings(paths)
     assert s.transcription_live_enabled is False
+
+
+def test_audio_device_dict_round_trip() -> None:
+    """audio_mic_device and audio_loopback_device round-trip through settings.json."""
+    import tempfile
+    from pathlib import Path
+    from teams_transcriber.config import load_settings, save_settings
+    from teams_transcriber.paths import AppPaths
+
+    with tempfile.TemporaryDirectory() as tmp_path:
+        paths = AppPaths(root=Path(tmp_path))
+        paths.ensure_dirs()
+        s = load_settings(paths)
+        assert s.audio_mic_device is None
+        assert s.audio_loopback_device is None
+
+        s._raw["audio"]["mic_device"] = {"id": "{mic-id-1}", "name": "Realtek Mic"}
+        s._raw["audio"]["loopback_device"] = {"id": "{spk-id-1}", "name": "Realtek Speakers"}
+        save_settings(paths, s)
+
+        s2 = load_settings(paths)
+        assert s2.audio_mic_device == {"id": "{mic-id-1}", "name": "Realtek Mic"}
+        assert s2.audio_loopback_device == {"id": "{spk-id-1}", "name": "Realtek Speakers"}
+
+
+def test_audio_device_legacy_string_loads_as_none() -> None:
+    """Old settings.json files that stored mic_device as a bare string load gracefully."""
+    import json
+    import tempfile
+    from pathlib import Path
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.paths import AppPaths
+
+    with tempfile.TemporaryDirectory() as tmp_path:
+        paths = AppPaths(root=Path(tmp_path))
+        paths.ensure_dirs()
+        settings_path = paths.config_dir / "settings.json"
+        settings_path.write_text(
+            json.dumps({"audio": {"mic_device": "{old-string-id}"}}),
+            encoding="utf-8",
+        )
+        s = load_settings(paths)
+        assert s.audio_mic_device is None

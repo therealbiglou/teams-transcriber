@@ -91,14 +91,27 @@ class Settings:
 
     # --- audio
     @property
-    def mic_device(self) -> str | None:
+    def audio_mic_device(self) -> dict | None:
+        """Saved microphone selection as {id, name} or None for Windows default."""
         value = self._raw["audio"].get("mic_device")
-        return None if value is None else str(value)
+        return value if isinstance(value, dict) else None
+
+    @property
+    def audio_loopback_device(self) -> dict | None:
+        """Saved system audio (loopback) source as {id, name} or None for default."""
+        value = self._raw["audio"].get("loopback_device")
+        return value if isinstance(value, dict) else None
+
+    # Backwards-compatible legacy accessors — return the id from the dict, or None.
+    @property
+    def mic_device(self) -> str | None:
+        d = self.audio_mic_device
+        return d["id"] if d is not None else None
 
     @property
     def loopback_device(self) -> str | None:
-        value = self._raw["audio"].get("loopback_device")
-        return None if value is None else str(value)
+        d = self.audio_loopback_device
+        return d["id"] if d is not None else None
 
     @property
     def audio_retention_days(self) -> int:
