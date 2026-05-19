@@ -31,14 +31,16 @@ def _bootstrap_gpu_runtime() -> bool:
         register_runtime(runtime_base)
         return True
 
-    if len(sys.argv) > 1 and sys.argv[1] in {"serve", "retry-summary", "smoke-test"}:
+    # smoke-test is a build-time verification — it must succeed without the
+    # GPU runtime (the build machine doesn't necessarily have one cached).
+    if len(sys.argv) > 1 and sys.argv[1] in {"serve", "retry-summary"}:
         print(
             "GPU runtime not installed. Launch the GUI once to set it up "
             "(it'll download ~700 MB of NVIDIA libraries).",
             file=sys.stderr,
         )
         return False
-    return True  # UI mode falls through; wizard handles missing runtime.
+    return True  # UI mode + smoke-test fall through.
 
 
 def main() -> int:
