@@ -7,6 +7,8 @@ import logging
 import queue
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import numpy as np
@@ -15,6 +17,13 @@ logger = logging.getLogger(__name__)
 
 CAPTURE_BLOCK_FRAMES: int = 1024  # ~64 ms at 16 kHz; small enough for tight stop response
 SAMPLE_RATE: int = 16_000
+
+
+@dataclass(slots=True)
+class _DeviceResolution:
+    mic: Any
+    loopback: Any
+    fallbacks: list[tuple[str, str]] = field(default_factory=list)
 
 
 class NoAudioDevicesError(RuntimeError):
@@ -47,6 +56,7 @@ class FakeAudioSource:
         self._cursor = 0
         self._lock = threading.Lock()
         self._exhausted = threading.Event()
+        self.device_fallbacks: list[tuple[str, str]] = []
 
     def read_chunk(self, num_frames: int) -> np.ndarray:
         with self._lock:
@@ -105,17 +115,76 @@ class RealAudioSource:
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True, name="audio-capture")
         self._closed = False
+        self.device_fallbacks: list[tuple[str, str]] = []
         self._thread.start()
 
     @classmethod
-    def from_default_devices(cls) -> RealAudioSource:
-        """Construct using soundcard's default mic and a loopback of the default speaker."""
+    def from_settings(cls, settings) -> "RealAudioSource":
+        """Construct using the user's saved device choices, with the
+        saved-id → saved-name → Windows-default ladder. Raises
+        NoAudioDevicesError if no usable device is available."""
         import soundcard
 
-        mic = soundcard.default_microphone()
-        speaker = soundcard.default_speaker()
-        loopback = soundcard.get_microphone(speaker.id, include_loopback=True)
-        return cls(mic_device=mic, loopback_device=loopback)
+        all_mics = soundcard.all_microphones(exclude_monitors=True)
+        all_speakers = soundcard.all_speakers()
+        default_mic = soundcard.default_microphone() if all_mics else None
+        default_speaker = soundcard.default_speaker() if all_speakers else None
+
+        resolution = cls._resolve_devices(
+            settings,
+            all_mics=all_mics,
+            all_speakers=all_speakers,
+            get_microphone=soundcard.get_microphone,
+            default_mic=default_mic,
+            default_speaker=default_speaker,
+        )
+        loopback = soundcard.get_microphone(resolution.loopback.id, include_loopback=True)
+        instance = cls(mic_device=resolution.mic, loopback_device=loopback)
+        instance.device_fallbacks = resolution.fallbacks
+        return instance
+
+    @classmethod
+    def from_default_devices(cls) -> "RealAudioSource":
+        """Backwards-compat shim — equivalent to from_settings with no saved devices."""
+        class _NoneSettings:
+            audio_mic_device = None
+            audio_loopback_device = None
+        return cls.from_settings(_NoneSettings())
+
+    @staticmethod
+    def _resolve_devices(
+        settings,
+        *,
+        all_mics: list,
+        all_speakers: list,
+        get_microphone: Callable[..., Any],
+        default_mic: Any,
+        default_speaker: Any,
+    ) -> _DeviceResolution:
+        fallbacks: list[tuple[str, str]] = []
+
+        def _pick(saved: dict | None, all_devs: list, default_dev, channel_label: str):
+            if saved is not None:
+                saved_id = saved.get("id")
+                saved_name = saved.get("name")
+                if saved_id:
+                    by_id = next((d for d in all_devs if d.id == saved_id), None)
+                    if by_id is not None:
+                        return by_id
+                if saved_name:
+                    by_name = next((d for d in all_devs if d.name == saved_name), None)
+                    if by_name is not None:
+                        return by_name
+                fallbacks.append((channel_label, saved_name or saved_id or "<unknown>"))
+            return default_dev
+
+        mic = _pick(settings.audio_mic_device, all_mics, default_mic, "microphone")
+        loop = _pick(settings.audio_loopback_device, all_speakers, default_speaker, "system audio")
+        if mic is None or loop is None:
+            raise NoAudioDevicesError(
+                "No audio devices available — check Settings → Audio.",
+            )
+        return _DeviceResolution(mic=mic, loopback=loop, fallbacks=fallbacks)
 
     def read_chunk(self, num_frames: int) -> np.ndarray:
         """Pull the next chunk; 0-row array signals end-of-stream."""
