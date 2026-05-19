@@ -36,6 +36,7 @@ from teams_transcriber.config import (
     save_settings,
 )
 from teams_transcriber.paths import AppPaths
+from teams_transcriber.runtime import gpu_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ class FirstRunWizard(QDialog):
         self._stack = QStackedWidget()
         self._stack.addWidget(self._build_welcome())
         self._stack.addWidget(self._build_setup())
+        self._stack.addWidget(self._build_gpu_runtime())
         self._stack.addWidget(self._build_model_download())
 
         layout = QVBoxLayout(self)
@@ -134,6 +136,24 @@ class FirstRunWizard(QDialog):
         v.addStretch()
         return w
 
+    def _build_gpu_runtime(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.addWidget(QLabel("<h3>Download GPU runtime</h3>"))
+        v.addWidget(QLabel(
+            "Teams Transcriber uses NVIDIA's CUDA libraries for "
+            "GPU-accelerated transcription (~700 MB). This is a "
+            "one-time download."
+        ))
+        self.gpu_progress_bar = QProgressBar()
+        self.gpu_progress_bar.setRange(0, 100)
+        v.addWidget(self.gpu_progress_bar)
+        self.gpu_progress_label = QLabel("Click Next to start the download.")
+        self.gpu_progress_label.setWordWrap(True)
+        v.addWidget(self.gpu_progress_label)
+        v.addStretch()
+        return w
+
     def _build_model_download(self) -> QWidget:
         w = QWidget()
         v = QVBoxLayout(w)
@@ -165,7 +185,10 @@ class FirstRunWizard(QDialog):
             return
         self._stack.setCurrentIndex(idx + 1)
         self._update_nav()
-        if self._stack.currentIndex() == 2:
+        new_idx = self._stack.currentIndex()
+        if new_idx == 2:
+            self._kick_gpu_runtime_download()
+        elif new_idx == 3:
             self._kick_model_download()
 
     def _back(self) -> None:
@@ -183,6 +206,36 @@ class FirstRunWizard(QDialog):
             self.progress_label.setText(
                 f"Model download failed: {exc}. You can retry later from Settings."
             )
+
+    def _kick_gpu_runtime_download(self) -> None:
+        runtime_base = self._paths.runtime_dir / "nvidia"
+        if gpu_runtime.is_runtime_installed(runtime_base):
+            self.gpu_progress_label.setText("GPU runtime already installed.")
+            self.gpu_progress_bar.setValue(100)
+            return
+        self.gpu_progress_label.setText("Downloading GPU runtime...")
+        try:
+            self._download_gpu_runtime(runtime_base)
+            self.gpu_progress_label.setText("GPU runtime ready.")
+            self.gpu_progress_bar.setValue(100)
+        except Exception as exc:
+            logger.exception("GPU runtime download failed")
+            self.gpu_progress_label.setText(
+                f"GPU runtime download failed: {exc}. "
+                "You can retry on next launch."
+            )
+
+    def _download_gpu_runtime(self, runtime_base) -> None:
+        seen_packages: list[str] = []
+
+        def progress(name: str, done: int, total: int) -> None:
+            if name not in seen_packages:
+                seen_packages.append(name)
+            pct = int(100 * len(seen_packages) / max(1, len(gpu_runtime.REQUIRED_PACKAGES)))
+            self.gpu_progress_bar.setValue(min(99, pct))
+            self.gpu_progress_label.setText(f"Downloading {name}...")
+
+        gpu_runtime.download_runtime(runtime_base, progress_callback=progress)
 
     def _on_progress(self, pct: int) -> None:
         self.progress_bar.setValue(pct)
