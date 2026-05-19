@@ -9,12 +9,13 @@ from concurrent.futures import Future, ThreadPoolExecutor
 
 import numpy as np
 
-from teams_transcriber.audio.source import AudioSource
+from teams_transcriber.audio.source import AudioSource, NoAudioDevicesError
 from teams_transcriber.config import Settings
 from teams_transcriber.events import (
     EventBus,
     MeetingDetected,
     MeetingEnded,
+    RecordingDeviceFallback,
     RecordingFailed,
     RecordingFinalized,
     TranscriptionComplete,
@@ -181,26 +182,56 @@ class Pipeline:
         if self._recorder is not None:
             logger.warning("recorder already running; ignoring duplicate start")
             return -1
-        source = self._audio_source_factory()
 
-        live = LiveTranscriber(
-            bus=self._bus, db=self._db, settings=self._settings,
-        )
-        self._live_transcriber = live
+        try:
+            source = self._audio_source_factory()
+        except NoAudioDevicesError as exc:
+            logger.warning("recording start failed: %s", exc)
+            self._bus.publish(RecordingFailed(
+                recording_id=-1,
+                error_message=str(exc),
+            ))
+            return -1
+        except Exception as exc:
+            logger.exception("audio source factory failed")
+            self._bus.publish(RecordingFailed(
+                recording_id=-1,
+                error_message=f"Audio capture could not start: {exc}",
+            ))
+            return -1
 
-        def _on_audio_chunk(chunk: np.ndarray) -> None:
-            # chunk shape: (frames, 2) float32. col 0 = mic (ME); col 1 = loopback (OTHERS).
-            mic = chunk[:, 0]
-            loop = chunk[:, 1]
-            live.feed(Channel.ME, mic)
-            live.feed(Channel.OTHERS, loop)
+        live = None
+        audio_chunk_callback = None
+        if self._settings.transcription_live_enabled:
+            live = LiveTranscriber(
+                bus=self._bus, db=self._db, settings=self._settings,
+            )
+            self._live_transcriber = live
+
+            def _on_audio_chunk(chunk: np.ndarray) -> None:
+                mic = chunk[:, 0]
+                loop = chunk[:, 1]
+                live.feed(Channel.ME, mic)
+                live.feed(Channel.OTHERS, loop)
+            audio_chunk_callback = _on_audio_chunk
 
         self._recorder = Recorder(
             bus=self._bus, db=self._db, paths=self._paths,
             settings=self._settings, audio_source=source,
-            audio_chunk_callback=_on_audio_chunk,
+            audio_chunk_callback=audio_chunk_callback,
         )
-        rec_id = self._recorder.start(source_type=source_type, detected_title=detected_title)
+        rec_id = self._recorder.start(
+            source_type=source_type, detected_title=detected_title,
+        )
+
         if rec_id > 0:
-            live.start(rec_id)
+            # Republish any device-fallbacks the source recorded during construction.
+            for channel, requested_name in getattr(source, "device_fallbacks", []):
+                self._bus.publish(RecordingDeviceFallback(
+                    recording_id=rec_id,
+                    channel=channel,
+                    requested_name=requested_name,
+                ))
+            if live is not None:
+                live.start(rec_id)
         return rec_id

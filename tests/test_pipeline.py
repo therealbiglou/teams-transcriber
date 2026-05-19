@@ -315,6 +315,7 @@ def test_pipeline_starts_and_stops_live_transcriber(tmp_path, monkeypatch) -> No
     db = build_database(paths.db_path)
     db.initialize()
     settings = load_settings(paths)
+    settings._raw["transcription"]["live_enabled"] = True
     bus = EventBus()
 
     mic = np.zeros(48_000, dtype=np.float32)
@@ -379,6 +380,7 @@ def test_pipeline_stops_live_transcriber_on_recording_failure(tmp_path, monkeypa
     db = build_database(paths.db_path)
     db.initialize()
     settings = load_settings(paths)
+    settings._raw["transcription"]["live_enabled"] = True
     bus = EventBus()
 
     mic = np.zeros(48_000, dtype=np.float32)
