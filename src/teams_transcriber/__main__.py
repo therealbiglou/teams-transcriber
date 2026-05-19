@@ -10,9 +10,47 @@ default GUI launch and the build script's `smoke-test` invocation.
 
 import sys
 
-if len(sys.argv) > 1:
-    from teams_transcriber.cli import main as _main
-else:
-    from teams_transcriber.ui.app import main as _main
 
-sys.exit(_main())
+def _bootstrap_gpu_runtime() -> bool:
+    """If the runtime isn't installed, let the wizard handle it (UI mode)
+    or exit cleanly (CLI mode).
+
+    Returns True if the caller should proceed with normal app start.
+    """
+    import sys
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.runtime.gpu_runtime import (
+        is_runtime_installed,
+        register_runtime,
+    )
+
+    paths = AppPaths()
+    paths.ensure_dirs()
+    runtime_base = paths.runtime_dir / "nvidia"
+    if is_runtime_installed(runtime_base):
+        register_runtime(runtime_base)
+        return True
+
+    if len(sys.argv) > 1 and sys.argv[1] in {"serve", "retry-summary", "smoke-test"}:
+        print(
+            "GPU runtime not installed. Launch the GUI once to set it up "
+            "(it'll download ~700 MB of NVIDIA libraries).",
+            file=sys.stderr,
+        )
+        return False
+    return True  # UI mode falls through; wizard handles missing runtime.
+
+
+def main() -> int:
+    if not _bootstrap_gpu_runtime():
+        return 2
+
+    if len(sys.argv) > 1:
+        from teams_transcriber.cli import main as _main
+    else:
+        from teams_transcriber.ui.app import main as _main
+
+    return _main()
+
+
+sys.exit(main())
