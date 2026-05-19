@@ -45,10 +45,15 @@ class AppPaths:
         return self.root / "config"
 
     @property
+    def runtime_dir(self) -> Path:
+        return self.root / "runtime"
+
+    @property
     def first_run_marker_path(self) -> Path:
         return self.config_dir / ".first-run-complete"
 
     def ensure_dirs(self) -> None:
         """Create all managed directories. Safe to call repeatedly."""
-        for d in (self.root, self.audio_dir, self.models_dir, self.logs_dir, self.config_dir):
+        for d in (self.root, self.audio_dir, self.models_dir, self.logs_dir,
+                  self.config_dir, self.runtime_dir):
             d.mkdir(parents=True, exist_ok=True)
