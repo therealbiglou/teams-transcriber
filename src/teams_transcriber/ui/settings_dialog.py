@@ -178,6 +178,10 @@ class SettingsDialog(QDialog):
         if idx >= 0:
             self.compute_combo.setCurrentIndex(idx)
         form.addRow("Compute type:", self.compute_combo)
+
+        self._live_enabled_check = QCheckBox("Stream transcription during recording (experimental)")
+        self._live_enabled_check.setChecked(self._settings.transcription_live_enabled)
+        form.addRow("", self._live_enabled_check)
         return w
 
     def _build_ai_tab(self) -> QWidget:
@@ -258,6 +262,7 @@ class SettingsDialog(QDialog):
         s._raw["detection"]["title_patterns"] = patterns
         s._raw["transcription"]["model"] = self.model_combo.currentText()
         s._raw["transcription"]["compute_type"] = self.compute_combo.currentText()
+        s._raw["transcription"]["live_enabled"] = self._live_enabled_check.isChecked()
         s._raw["ai"]["model"] = self.ai_model_combo.currentText()
         s._raw["ai"]["custom_prompt_addendum"] = self.addendum_input.toPlainText()
 

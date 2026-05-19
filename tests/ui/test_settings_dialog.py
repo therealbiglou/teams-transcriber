@@ -158,3 +158,21 @@ def test_settings_dialog_audio_default_round_trips(tmp_path, qapp, monkeypatch) 
 
     reloaded = load_settings(paths)
     assert reloaded.audio_mic_device is None
+
+
+def test_settings_dialog_live_enabled_round_trip(tmp_path, qapp) -> None:
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.ui.settings_dialog import SettingsDialog
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    settings = load_settings(paths)
+    assert settings.transcription_live_enabled is False
+
+    dlg = SettingsDialog(settings, paths)
+    dlg._live_enabled_check.setChecked(True)
+    dlg._on_accept()
+
+    reloaded = load_settings(paths)
+    assert reloaded.transcription_live_enabled is True
