@@ -88,6 +88,7 @@ class WorkspaceWindow(QWidget):
         recording_id: int,
         bridge: QtEventBridge,
         live: bool,
+        settings=None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -95,6 +96,8 @@ class WorkspaceWindow(QWidget):
         self._recording_id = recording_id
         self._bridge = bridge
         self._live = live
+        self._settings = settings
+        self._placeholder = None
 
         self.setWindowFlags(
             Qt.WindowType.Window
@@ -160,11 +163,43 @@ class WorkspaceWindow(QWidget):
         inner.addLayout(footer)
 
         # Wire live or past mode.
-        if live:
+        live_streaming_enabled = (
+            settings is None or settings.transcription_live_enabled
+        )
+        if live and live_streaming_enabled:
             self._bridge.live_segment_available.connect(self._on_live_segment)
+        elif live and not live_streaming_enabled:
+            # Phase 6: live disabled — show placeholder, reload on SummaryReady.
+            self._show_placeholder(
+                "Transcription will appear when the meeting ends."
+            )
+            self._bridge.summary_ready.connect(self._on_summary_ready_refresh)
         else:
             segments = TranscriptRepo(db).list_for_recording(recording_id)
             self.transcript_view.load_segments(segments)
+
+    def _show_placeholder(self, text: str) -> None:
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QLabel
+        placeholder = QLabel(text)
+        placeholder.setStyleSheet("color: #6B7280; padding: 24px; font-size: 13px;")
+        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Insert above the transcript_view in its parent layout.
+        parent_widget = self.transcript_view.parentWidget()
+        parent_layout = parent_widget.layout() if parent_widget else None
+        if parent_layout is not None:
+            parent_layout.insertWidget(0, placeholder)
+        self._placeholder = placeholder
+
+    def _on_summary_ready_refresh(self, evt) -> None:
+        if evt.recording_id != self._recording_id:
+            return
+        from teams_transcriber.storage import TranscriptRepo
+        segments = TranscriptRepo(self._db).list_for_recording(self._recording_id)
+        self.transcript_view.load_segments(segments)
+        if hasattr(self, "_placeholder") and self._placeholder is not None:
+            self._placeholder.deleteLater()
+            self._placeholder = None
 
     def _on_live_segment(self, evt: LiveSegmentAvailable) -> None:
         if evt.recording_id != self._recording_id:

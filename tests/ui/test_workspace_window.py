@@ -123,3 +123,34 @@ def test_workspace_set_recording_finished_hides_stop_button(env, qapp) -> None:
     assert win._stop_button.isVisible() is True or win._stop_button.isVisibleTo(win)
     win.set_recording_finished()
     assert win._stop_button.isHidden() is True
+
+
+def test_workspace_shows_placeholder_when_live_disabled(env, qapp) -> None:
+    """In live recording mode but with live_enabled=False, show a placeholder
+    instead of subscribing to LiveSegmentAvailable."""
+    from teams_transcriber.events import EventBus, LiveSegmentAvailable
+    from teams_transcriber.storage import (
+        Channel,
+        RecordingStatus,
+        TranscriptSegment,
+    )
+    from teams_transcriber.ui.qt_bridge import QtEventBridge
+    from teams_transcriber.ui.workspace_window import WorkspaceWindow
+
+    paths, db, settings = env
+    settings._raw["transcription"]["live_enabled"] = False
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    rid = _make_recording(db, status=RecordingStatus.RECORDING)
+    win = WorkspaceWindow(
+        db=db, recording_id=rid, bridge=bridge, live=True, settings=settings,
+    )
+    bus.publish(LiveSegmentAvailable(
+        recording_id=rid,
+        segment=TranscriptSegment(
+            id=None, recording_id=rid, start_ms=0, end_ms=1500,
+            channel=Channel.ME, text="should be ignored",
+        ),
+    ))
+    qapp.processEvents()
+    assert win.transcript_view.count() == 0

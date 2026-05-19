@@ -403,6 +403,7 @@ class App:
             recording_id=recording_id,
             bridge=self.bridge,
             live=live,
+            settings=self.settings,
         )
         win.stop_recording_requested.connect(lambda _rid: self._stop_manual())
         win.closed.connect(self._on_workspace_closed)
