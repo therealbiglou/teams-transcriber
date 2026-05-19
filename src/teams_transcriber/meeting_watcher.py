@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum, auto
 
+from teams_transcriber.audio.wasapi_sessions import teams_active_capture_pids
 from teams_transcriber.events import EventBus, MeetingDetected, MeetingEnded
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ class MeetingWatcher:
         title_patterns: list[str],
         debounce_polls: int = 2,
         poll_interval_ms: int = 2000,
+        audio_session_probe: Callable[[], set[int]] = teams_active_capture_pids,
     ) -> None:
         self._bus = bus
         self._current_windows = current_windows
@@ -89,6 +91,7 @@ class MeetingWatcher:
         self._paused = False
         self._stop = threading.Event()
         self._lock = threading.Lock()
+        self._audio_session_probe = audio_session_probe
 
     def set_paused(self, paused: bool) -> None:
         with self._lock:
@@ -139,26 +142,42 @@ class MeetingWatcher:
     # --- internals ---------------------------------------------------------
 
     def _find_meeting_window(self, windows: list[WindowInfo]) -> WindowInfo | None:
-        """Find an active meeting window.
+        """Hybrid detection: WASAPI audio session probe first, title patterns as fallback.
 
-        Strategy:
-        1. Allowlist: any title that substring-matches a configured `title_patterns` entry.
-        2. Smart fallback: any ms-teams.exe window whose title is NOT in the nav-view
-           denylist AND clearly belongs to Teams (ends with "| Microsoft Teams" or
-           contains "Microsoft Teams Call").
+        Tier 1 (WASAPI): if any Teams PID is holding an active capture session,
+            find a real meeting window for one of those PIDs (excluding nav views).
+        Tier 2 (titles, fallback): the existing title-pattern + smart-fallback logic.
         """
+        try:
+            active_pids = self._audio_session_probe()
+        except Exception:
+            logger.exception("audio_session_probe raised; treating as no signal")
+            active_pids = set()
+
+        if active_pids:
+            candidates: list[WindowInfo] = []
+            for w in windows:
+                if w.pid not in active_pids:
+                    continue
+                if w.process_name.lower() not in TEAMS_PROCESS_NAMES:
+                    continue
+                title_lower = w.title.lower()
+                if title_lower in TEAMS_NAV_VIEW_TITLES:
+                    continue
+                if any(title_lower.startswith(p) for p in TEAMS_NAV_VIEW_PREFIXES):
+                    continue
+                candidates.append(w)
+            if candidates:
+                # Prefer the longest title (usually the most descriptive).
+                return max(candidates, key=lambda w: len(w.title))
+
+        # Title-pattern fallback (existing logic preserved).
         for w in windows:
             if w.process_name.lower() not in TEAMS_PROCESS_NAMES:
                 continue
             title_lower = w.title.lower()
-
-            # 1. Configured patterns win.
             if any(p in title_lower for p in self._title_patterns):
                 return w
-
-            # 2. Smart fallback: exclude exact-match nav views, exclude nav prefixes
-            # (so "Chat | Blake Tyler | Microsoft Teams" doesn't count as a meeting),
-            # then accept any other Teams-app window.
             if title_lower in TEAMS_NAV_VIEW_TITLES:
                 continue
             if any(title_lower.startswith(p) for p in TEAMS_NAV_VIEW_PREFIXES):
