@@ -92,3 +92,19 @@ def test_bridge_emits_live_transcription_degraded(qapp) -> None:
     bus.publish(LiveTranscriptionDegraded(recording_id=5, reason="ouch"))
     qapp.processEvents()
     assert received and received[0].reason == "ouch"
+
+
+def test_bridge_emits_recording_device_fallback(qapp) -> None:
+    from teams_transcriber.events import EventBus, RecordingDeviceFallback
+    from teams_transcriber.ui.qt_bridge import QtEventBridge
+
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    received: list[RecordingDeviceFallback] = []
+    bridge.recording_device_fallback.connect(received.append)
+
+    bus.publish(RecordingDeviceFallback(
+        recording_id=42, channel="microphone", requested_name="Sony Headset",
+    ))
+    qapp.processEvents()
+    assert received and received[0].requested_name == "Sony Headset"

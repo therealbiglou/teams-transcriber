@@ -115,6 +115,7 @@ class App:
         self.bridge.recording_started.connect(self._on_recording_started)
         self.bridge.recording_finalized.connect(self._on_recording_finalized)
         self.bridge.recording_failed.connect(self._on_recording_failed)
+        self.bridge.recording_device_fallback.connect(self._on_recording_device_fallback)
         self.bridge.transcription_complete.connect(self._on_transcription_complete)
         self.bridge.summary_ready.connect(self._on_summary_ready)
 
@@ -353,8 +354,42 @@ class App:
 
     def _on_recording_failed(self, evt: RecordingFailed) -> None:
         self.tray.set_state(TrayState.ERROR)
-        show_in_app_toast("Recording failed", evt.error_message)
+        msg = evt.error_message
+        if "audio devices" in msg.lower():
+            show_in_app_toast(
+                "Recording failed", msg,
+                action_label="Open Settings",
+                action_callback=self._open_settings_audio_tab,
+            )
+        else:
+            show_in_app_toast("Recording failed", msg)
         self._refresh_history()
+
+    def _on_recording_device_fallback(self, evt) -> None:
+        channel_label = "microphone" if evt.channel == "microphone" else "system audio source"
+        show_in_app_toast(
+            f"Saved {channel_label} not connected",
+            f"'{evt.requested_name}' is not available — using Windows default. "
+            "Choose a different device in Settings → Audio.",
+            action_label="Open Settings",
+            action_callback=self._open_settings_audio_tab,
+        )
+
+    def _open_settings_audio_tab(self) -> None:
+        """Open Settings and jump to the Audio tab."""
+        from PySide6.QtWidgets import QTabWidget
+        dlg = SettingsDialog(
+            self.settings, self.paths,
+            hotkey_reload_callback=self._on_hotkey_reload,
+            parent=self.window,
+        )
+        for child in dlg.findChildren(QTabWidget):
+            for i in range(child.count()):
+                if child.tabText(i) == "Audio":
+                    child.setCurrentIndex(i)
+                    break
+        dlg.saved.connect(self._refresh_history)
+        dlg.exec()
 
     def _on_transcription_complete(self, _evt: TranscriptionComplete) -> None:
         self.tray.set_state(TrayState.PROCESSING)
