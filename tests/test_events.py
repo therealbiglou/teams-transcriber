@@ -129,3 +129,20 @@ def test_live_transcription_degraded_event_round_trip() -> None:
     evt = LiveTranscriptionDegraded(recording_id=7, reason="cuda oom")
     assert evt.recording_id == 7
     assert evt.reason == "cuda oom"
+
+
+def test_recording_device_fallback_event_round_trip() -> None:
+    from teams_transcriber.events import RecordingDeviceFallback
+
+    evt = RecordingDeviceFallback(recording_id=7, channel="microphone", requested_name="Sony WH-1000")
+    assert evt.recording_id == 7
+    assert evt.channel == "microphone"
+    assert evt.requested_name == "Sony WH-1000"
+
+
+def test_no_audio_devices_error_is_exception() -> None:
+    from teams_transcriber.audio.source import NoAudioDevicesError
+
+    assert issubclass(NoAudioDevicesError, Exception)
+    err = NoAudioDevicesError("no devices")
+    assert str(err) == "no devices"

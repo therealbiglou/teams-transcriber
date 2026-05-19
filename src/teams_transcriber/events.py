@@ -78,6 +78,13 @@ class LiveTranscriptionDegraded(Event):
     reason: str
 
 
+@dataclass(slots=True, frozen=True)
+class RecordingDeviceFallback(Event):
+    recording_id: int
+    channel: str          # "microphone" or "system audio"
+    requested_name: str   # name of the saved-but-unavailable device
+
+
 # --- EventBus -------------------------------------------------------------
 
 E = TypeVar("E", bound=Event)

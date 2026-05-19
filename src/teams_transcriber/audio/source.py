@@ -17,6 +17,10 @@ CAPTURE_BLOCK_FRAMES: int = 1024  # ~64 ms at 16 kHz; small enough for tight sto
 SAMPLE_RATE: int = 16_000
 
 
+class NoAudioDevicesError(RuntimeError):
+    """Raised when neither a saved nor default audio device is available."""
+
+
 class AudioSource(Protocol):
     """Yields (frames, 2) float32 PCM at 16 kHz.
 
