@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from teams_transcriber.config import Settings
-from teams_transcriber.events import EventBus, TranscriptionComplete
+from teams_transcriber.events import EventBus, TranscriptionComplete, TranscriptionFailed
 from teams_transcriber.storage import (
     Channel,
     Database,
@@ -93,6 +93,10 @@ class Transcriber:
             rec_repo.update_status(
                 recording_id, RecordingStatus.TRANSCRIPTION_FAILED, error_message=msg,
             )
+            self._bus.publish(TranscriptionFailed(
+                recording_id=recording_id,
+                error_message=msg,
+            ))
             return
 
         try:
@@ -137,6 +141,10 @@ class Transcriber:
                 RecordingStatus.TRANSCRIPTION_FAILED,
                 error_message=str(exc),
             )
+            self._bus.publish(TranscriptionFailed(
+                recording_id=recording_id,
+                error_message=str(exc),
+            ))
 
     def _run_whisper(
         self, wav_path: Path, recording_id: int, channel: Channel,

@@ -22,6 +22,7 @@ from teams_transcriber.events import (
     SummaryFailed,
     SummaryReady,
     TranscriptionComplete,
+    TranscriptionFailed,
 )
 
 
@@ -35,6 +36,7 @@ class QtEventBridge(QObject):
     recording_failed = Signal(object)
     recording_device_fallback = Signal(object)
     transcription_complete = Signal(object)
+    transcription_failed = Signal(object)
     summary_ready = Signal(object)
     summary_failed = Signal(object)
     live_segment_available = Signal(object)
@@ -51,6 +53,7 @@ class QtEventBridge(QObject):
         bus.subscribe(RecordingFailed,        self._on_recording_failed)
         bus.subscribe(RecordingDeviceFallback, self._on_recording_device_fallback)
         bus.subscribe(TranscriptionComplete,  self._on_transcription_complete)
+        bus.subscribe(TranscriptionFailed,    self._on_transcription_failed)
         bus.subscribe(SummaryReady,           self._on_summary_ready)
         bus.subscribe(SummaryFailed,          self._on_summary_failed)
         bus.subscribe(LiveSegmentAvailable,        self._on_live_segment)
@@ -65,6 +68,8 @@ class QtEventBridge(QObject):
         self.recording_device_fallback.emit(e)
     def _on_transcription_complete(self, e: TranscriptionComplete) -> None:
         self.transcription_complete.emit(e)
+    def _on_transcription_failed(self, e: TranscriptionFailed) -> None:
+        self.transcription_failed.emit(e)
     def _on_summary_ready(self, e: SummaryReady) -> None:              self.summary_ready.emit(e)
     def _on_summary_failed(self, e: SummaryFailed) -> None:           self.summary_failed.emit(e)
     def _on_live_segment(self, e: LiveSegmentAvailable) -> None:

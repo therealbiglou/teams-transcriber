@@ -122,3 +122,17 @@ def test_bridge_emits_summary_failed(qapp) -> None:
     bus.publish(SummaryFailed(recording_id=11, error_message="boom"))
     qapp.processEvents()
     assert received and received[0].error_message == "boom"
+
+
+def test_bridge_emits_transcription_failed(qapp) -> None:
+    from teams_transcriber.events import EventBus, TranscriptionFailed
+    from teams_transcriber.ui.qt_bridge import QtEventBridge
+
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    received: list[TranscriptionFailed] = []
+    bridge.transcription_failed.connect(received.append)
+
+    bus.publish(TranscriptionFailed(recording_id=7, error_message="ouch"))
+    qapp.processEvents()
+    assert received and received[0].error_message == "ouch"

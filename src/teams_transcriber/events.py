@@ -62,6 +62,12 @@ class TranscriptionComplete(Event):
 
 
 @dataclass(slots=True, frozen=True)
+class TranscriptionFailed(Event):
+    recording_id: int
+    error_message: str
+
+
+@dataclass(slots=True, frozen=True)
 class SummaryReady(Event):
     recording_id: int
 

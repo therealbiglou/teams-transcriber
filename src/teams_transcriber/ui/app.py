@@ -128,6 +128,7 @@ class App:
         self.bridge.recording_failed.connect(self._on_recording_failed)
         self.bridge.recording_device_fallback.connect(self._on_recording_device_fallback)
         self.bridge.transcription_complete.connect(self._on_transcription_complete)
+        self.bridge.transcription_failed.connect(self._on_transcription_failed)
         self.bridge.summary_ready.connect(self._on_summary_ready)
         self.bridge.summary_failed.connect(self._on_summary_failed)
 
@@ -413,6 +414,15 @@ class App:
 
     def _on_transcription_complete(self, _evt: TranscriptionComplete) -> None:
         self.tray.set_state(TrayState.PROCESSING)
+        self._refresh_history()
+
+    def _on_transcription_failed(self, evt) -> None:
+        self.tray.set_state(TrayState.ERROR)
+        if self.active_banner.current_recording_id() == evt.recording_id:
+            self.active_banner.hide_banner()
+        show_in_app_toast(
+            "Transcription failed", evt.error_message,
+        )
         self._refresh_history()
 
     def _on_summary_failed(self, evt: SummaryFailed) -> None:
