@@ -120,3 +120,35 @@ def test_summary_pane_renders_inline_transcript_section(tmp_path, qapp) -> None:
     assert view is not None
     assert view.count() == 1
     db.close()
+
+
+def test_summary_pane_shows_error_for_failed_recording(tmp_path, qapp) -> None:
+    from teams_transcriber.storage import (
+        Recording,
+        RecordingRepo,
+        RecordingSource,
+        RecordingStatus,
+        build_database,
+    )
+    from teams_transcriber.ui.summary_pane import SummaryPane
+    from PySide6.QtWidgets import QLabel
+
+    db = build_database(tmp_path / "test.db")
+    db.initialize()
+
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-05-20T10:00:00+00:00",
+        ended_at=None, source=RecordingSource.MANUAL,
+        detected_title="t", display_title="t",
+        audio_path=None, audio_deleted_at=None, duration_ms=10_000,
+        status=RecordingStatus.SUMMARY_FAILED,
+        error_message="transcript is empty",
+    ))
+
+    pane = SummaryPane(db)
+    pane.show_recording(rec.id)
+
+    label_texts = [c.text() for c in pane.findChildren(QLabel)]
+    assert any("transcript is empty" in t for t in label_texts)
+    assert any("Summarization failed" in t for t in label_texts)
+    db.close()

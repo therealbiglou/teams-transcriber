@@ -63,3 +63,23 @@ def test_fmt_time_converts_utc_to_local(qapp) -> None:
 def test_fmt_time_handles_invalid_input(qapp) -> None:
     from teams_transcriber.ui.meeting_card import _fmt_time
     assert _fmt_time("not-a-date") == "not-a-date"
+
+
+def test_meeting_card_shows_error_message_for_failed_recording(qapp) -> None:
+    from teams_transcriber.storage.models import Recording, RecordingSource, RecordingStatus
+    from teams_transcriber.ui.meeting_card import MeetingCard
+
+    rec = Recording(
+        id=1, started_at="2026-05-20T10:00:00+00:00",
+        ended_at=None, source=RecordingSource.MANUAL,
+        detected_title="Brief test", display_title=None,
+        audio_path=None, audio_deleted_at=None, duration_ms=15_000,
+        status=RecordingStatus.TRANSCRIPTION_FAILED,
+        error_message="audio file missing: C:/foo/bar.opus",
+    )
+    card = MeetingCard(rec, one_line=None, todo_count=0)
+    # Check that the error message appears somewhere in the card's children.
+    labels = card.findChildren(type(card).__bases__[0])  # any child widget
+    from PySide6.QtWidgets import QLabel
+    label_texts = [c.text() for c in card.findChildren(QLabel)]
+    assert any("audio file missing" in t for t in label_texts)

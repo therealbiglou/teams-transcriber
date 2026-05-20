@@ -18,7 +18,9 @@ from teams_transcriber.events import (
     RecordingDeviceFallback,
     RecordingFailed,
     RecordingFinalized,
+    SummaryFailed,
     TranscriptionComplete,
+    TranscriptionFailed,
 )
 from teams_transcriber.live_transcriber import LiveTranscriber
 from teams_transcriber.meeting_watcher import MeetingWatcher
@@ -141,14 +143,42 @@ class Pipeline:
             self._summarizer.summarize(
                 evt.recording_id, api_key=self._settings.anthropic_api_key(),
             )
-        except Exception:
+        except Exception as exc:
             logger.exception("summarization crashed for %d", evt.recording_id)
+            try:
+                rec_repo = RecordingRepo(self._db)
+                rec_repo.update_status(
+                    evt.recording_id,
+                    RecordingStatus.SUMMARY_FAILED,
+                    error_message=f"unexpected error: {exc}",
+                )
+            except Exception:
+                logger.exception("could not even update status for %d", evt.recording_id)
+            self._bus.publish(SummaryFailed(
+                recording_id=evt.recording_id,
+                error_message=f"unexpected error: {exc}",
+            ))
 
     def _run_post_processing(self, recording_id: int) -> None:
         try:
             self._transcriber.transcribe(recording_id)
-        except Exception:
+        except Exception as exc:
             logger.exception("transcription crashed for %d", recording_id)
+            # Defensive: ensure the UI hears about it even if Transcriber's
+            # internal try/except didn't fire.
+            try:
+                rec_repo = RecordingRepo(self._db)
+                rec_repo.update_status(
+                    recording_id,
+                    RecordingStatus.TRANSCRIPTION_FAILED,
+                    error_message=f"unexpected error: {exc}",
+                )
+            except Exception:
+                logger.exception("could not even update status for %d", recording_id)
+            self._bus.publish(TranscriptionFailed(
+                recording_id=recording_id,
+                error_message=f"unexpected error: {exc}",
+            ))
         # transcribe() publishes TranscriptionComplete synchronously inside its body;
         # _on_transcription_complete runs on this same worker thread.
 

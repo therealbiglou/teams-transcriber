@@ -72,6 +72,18 @@ class MeetingCard(QFrame):
         meta.setWordWrap(True)
         outer.addWidget(meta)
 
+        # When the recording is in any failed state, surface the actual reason.
+        if recording.status in (
+            RecordingStatus.RECORDING_FAILED,
+            RecordingStatus.TRANSCRIPTION_FAILED,
+            RecordingStatus.SUMMARY_FAILED,
+        ) and recording.error_message:
+            err = QLabel(recording.error_message)
+            err.setWordWrap(True)
+            err.setStyleSheet("color: #DC2626; font-size: 12px;")
+            err.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            outer.addWidget(err)
+
         if one_line:
             ol = QLabel(one_line)
             ol.setWordWrap(True)

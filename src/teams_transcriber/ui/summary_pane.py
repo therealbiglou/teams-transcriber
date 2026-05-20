@@ -82,7 +82,18 @@ class SummaryPane(QScrollArea):
             self._layout.addWidget(QLabel("Recording not found."))
             return
         if summary is None:
-            self._layout.addWidget(QLabel("No summary yet for this recording."))
+            from teams_transcriber.storage import RecordingStatus
+            if rec.status in (
+                RecordingStatus.RECORDING_FAILED,
+                RecordingStatus.TRANSCRIPTION_FAILED,
+                RecordingStatus.SUMMARY_FAILED,
+            ):
+                self._layout.addWidget(_section_card("Failed", [
+                    _failure_status_label(rec.status),
+                    _failure_message_label(rec.error_message or "(no detail)"),
+                ]))
+            else:
+                self._layout.addWidget(QLabel("No summary yet for this recording."))
             return
 
         from PySide6.QtWidgets import QSizePolicy
@@ -302,3 +313,30 @@ def _fmt_meta_time(iso: str) -> str:
         return dt.strftime("%b %d, %Y, %I:%M %p").lstrip("0").replace(" 0", " ")
     except ValueError:
         return iso
+
+
+def _failure_status_label(status) -> "QLabel":
+    from teams_transcriber.storage import RecordingStatus
+    label_map = {
+        RecordingStatus.RECORDING_FAILED:    "Recording failed",
+        RecordingStatus.TRANSCRIPTION_FAILED: "Transcription failed",
+        RecordingStatus.SUMMARY_FAILED:      "Summarization failed",
+    }
+    text = label_map.get(status, "Failed")
+    label = QLabel(text)
+    label.setStyleSheet("color: #DC2626; font-size: 14px; font-weight: 600;")
+    return label
+
+
+def _failure_message_label(msg: str) -> "QLabel":
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QSizePolicy
+    label = QLabel(msg)
+    label.setWordWrap(True)
+    label.setStyleSheet("color: #374151; font-size: 13px;")
+    label.setTextInteractionFlags(
+        Qt.TextInteractionFlag.TextSelectableByMouse
+        | Qt.TextInteractionFlag.TextSelectableByKeyboard,
+    )
+    label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+    return label
