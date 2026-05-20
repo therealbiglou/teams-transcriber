@@ -34,6 +34,7 @@ from teams_transcriber.storage import RecordingRepo, RecordingSource, RecordingS
 from teams_transcriber.storage.models import Recording
 from teams_transcriber.summarizer import Summarizer
 from teams_transcriber.transcriber import Transcriber
+from teams_transcriber.ui.active_recording_banner import ActiveRecordingBanner
 from teams_transcriber.ui.confirm_dialog import ConfirmDialog
 from teams_transcriber.ui.history_list import HistoryList, filter_for_bucket
 from teams_transcriber.ui.hotkeys import HotkeyManager
@@ -106,6 +107,7 @@ class App:
         self.tray.open_workspace_requested.connect(self._open_workspace_for_active)
         self.tray.quit_requested.connect(self._quit)
         self.tray.settings_action.triggered.connect(self._open_settings)
+        self.window.title_bar.settings_requested.connect(self._open_settings)
 
         # Tracks the currently-recording recording id so the tray notes action
         # and the toast "Add notes" button can find it.
@@ -147,6 +149,10 @@ class App:
         self.search = SearchBar()
         self.search.query_changed.connect(self._on_search)
         layout.addWidget(self.search)
+
+        self.active_banner = ActiveRecordingBanner()
+        self.active_banner.clicked.connect(self._open_workspace)
+        layout.addWidget(self.active_banner)
 
         body = QWidget()
         body_layout = QHBoxLayout(body)
@@ -327,6 +333,8 @@ class App:
         self._active_recording_id = recording_id
         rec = RecordingRepo(self.db).get(recording_id)
         is_manual = rec is not None and rec.source == RecordingSource.MANUAL
+        title = (rec.display_title if rec else None) or (rec.detected_title if rec else None) or "Manual recording"
+        self.active_banner.show_recording(recording_id, title, status_label="Recording")
         if is_manual:
             self._open_workspace(recording_id)
         show_in_app_toast(
@@ -350,6 +358,7 @@ class App:
             ws = workspaces.get(rid)
             if ws is not None:
                 ws.set_recording_finished()
+        self.active_banner.set_processing()
         self._refresh_history()
 
     def _on_recording_failed(self, evt: RecordingFailed) -> None:
@@ -363,6 +372,7 @@ class App:
             )
         else:
             show_in_app_toast("Recording failed", msg)
+        self.active_banner.hide_banner()
         self._refresh_history()
 
     def _on_recording_device_fallback(self, evt) -> None:
@@ -397,6 +407,10 @@ class App:
 
     def _on_summary_ready(self, evt: SummaryReady) -> None:
         self.tray.set_state(TrayState.IDLE)
+        if (
+            self.active_banner.current_recording_id() == evt.recording_id
+        ):
+            self.active_banner.hide_banner()
         rec = RecordingRepo(self.db).get(evt.recording_id)
         title = (rec.display_title if rec else None) or "Meeting"
         recording_id = evt.recording_id

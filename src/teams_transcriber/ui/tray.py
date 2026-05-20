@@ -84,10 +84,12 @@ class AppTray(QSystemTrayIcon):
         }
         self.setToolTip(f"Teams Transcriber — {labels[state]}")
 
-        # Menu state: only allow stop and notes when recording.
-        self.start_action.setEnabled(state == TrayState.IDLE)
+        # Menu state per the design table:
+        # Start: IDLE or ERROR. Stop: RECORDING only.
+        # Open workspace: RECORDING or PROCESSING.
+        self.start_action.setEnabled(state in (TrayState.IDLE, TrayState.ERROR))
         self.stop_action.setEnabled(state == TrayState.RECORDING)
-        self.notes_action.setEnabled(state == TrayState.RECORDING)
+        self.notes_action.setEnabled(state in (TrayState.RECORDING, TrayState.PROCESSING))
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:

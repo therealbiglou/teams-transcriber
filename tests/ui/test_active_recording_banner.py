@@ -1,0 +1,44 @@
+"""Tests for the ActiveRecordingBanner widget."""
+
+from __future__ import annotations
+
+import pytest
+
+from teams_transcriber.ui.active_recording_banner import ActiveRecordingBanner
+
+
+def test_banner_hidden_by_default(qapp) -> None:
+    banner = ActiveRecordingBanner()
+    assert banner.isHidden() is True
+    assert banner.current_recording_id() is None
+
+
+def test_banner_shows_on_show_recording(qapp) -> None:
+    banner = ActiveRecordingBanner()
+    banner.show()  # required so isVisible() can return True in offscreen
+    banner.show_recording(42, "Test Meeting")
+    assert banner.current_recording_id() == 42
+
+
+def test_banner_hide_clears_state(qapp) -> None:
+    banner = ActiveRecordingBanner()
+    banner.show_recording(42, "Test Meeting")
+    banner.hide_banner()
+    assert banner.current_recording_id() is None
+
+
+def test_banner_emits_clicked_with_recording_id(qapp) -> None:
+    banner = ActiveRecordingBanner()
+    received: list[int] = []
+    banner.clicked.connect(received.append)
+    banner.show_recording(99, "Click Me")
+    banner._emit_clicked()
+    assert received == [99]
+
+
+def test_banner_set_processing_updates_title_prefix(qapp) -> None:
+    banner = ActiveRecordingBanner()
+    banner.show_recording(7, "My Meeting", status_label="Recording")
+    banner.set_processing()
+    assert "Processing" in banner._title_label.text()
+    assert "My Meeting" in banner._title_label.text()

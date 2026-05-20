@@ -17,6 +17,7 @@ class TitleBar(QWidget):
     minimize_requested = Signal()
     maximize_requested = Signal()
     close_requested = Signal()
+    settings_requested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -32,6 +33,9 @@ class TitleBar(QWidget):
         self.title_label.setProperty("role", "subtitle")
         layout.addWidget(self.title_label)
         layout.addStretch(1)
+
+        self.settings_btn = self._make_btn(IconName.SETTINGS, self.settings_requested.emit)
+        layout.addWidget(self.settings_btn)
 
         self.minimize_btn = self._make_btn(IconName.MINIMIZE, self.minimize_requested.emit)
         self.maximize_btn = self._make_btn(IconName.MAXIMIZE, self.maximize_requested.emit)
