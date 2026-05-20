@@ -10,7 +10,7 @@ import keyring
 def _enumerate_microphones() -> list:
     try:
         import soundcard
-        return list(soundcard.all_microphones(exclude_monitors=True))
+        return list(soundcard.all_microphones(include_loopback=False))
     except Exception:
         return []
 

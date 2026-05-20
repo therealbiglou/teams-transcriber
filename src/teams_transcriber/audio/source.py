@@ -125,7 +125,7 @@ class RealAudioSource:
         NoAudioDevicesError if no usable device is available."""
         import soundcard
 
-        all_mics = soundcard.all_microphones(exclude_monitors=True)
+        all_mics = soundcard.all_microphones(include_loopback=False)
         all_speakers = soundcard.all_speakers()
         default_mic = soundcard.default_microphone() if all_mics else None
         default_speaker = soundcard.default_speaker() if all_speakers else None

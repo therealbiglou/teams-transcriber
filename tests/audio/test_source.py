@@ -211,3 +211,44 @@ def test_from_settings_no_devices_at_all_raises() -> None:
             default_mic=None,
             default_speaker=None,
         )
+
+
+def test_from_settings_calls_all_microphones_with_correct_kwarg(monkeypatch) -> None:
+    """Regression — soundcard.all_microphones takes include_loopback, not
+    exclude_monitors. Calling with a non-existent kwarg raises TypeError at
+    runtime; this test guards against re-introducing it."""
+    import sys
+    from types import SimpleNamespace
+
+    captured_kwargs: list[dict] = []
+
+    # Strict signature — only `include_loopback` is accepted. Any other kwarg
+    # (e.g., exclude_monitors) triggers TypeError, which from_settings would
+    # surface as a build/test failure.
+    def fake_all_microphones(*, include_loopback=False):
+        captured_kwargs.append({"include_loopback": include_loopback})
+        return []  # empty — exercise the no-mic raise path
+
+    fake_sc = SimpleNamespace(
+        all_microphones=fake_all_microphones,
+        all_speakers=lambda: [],
+        default_microphone=lambda: None,
+        default_speaker=lambda: None,
+        get_microphone=lambda *_a, **_kw: None,
+    )
+    monkeypatch.setitem(sys.modules, "soundcard", fake_sc)
+
+    from teams_transcriber.audio.source import NoAudioDevicesError
+
+    class _Settings:
+        audio_mic_device = None
+        audio_loopback_device = None
+
+    # Expected to raise NoAudioDevicesError because we return empty lists —
+    # which is fine; we just need to confirm all_microphones was called with
+    # the right kwarg before the raise.
+    import pytest
+    with pytest.raises(NoAudioDevicesError):
+        RealAudioSource.from_settings(_Settings())
+
+    assert captured_kwargs == [{"include_loopback": False}]
