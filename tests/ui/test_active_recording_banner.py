@@ -42,3 +42,13 @@ def test_banner_set_processing_updates_title_prefix(qapp) -> None:
     banner.set_processing()
     assert "Processing" in banner._title_label.text()
     assert "My Meeting" in banner._title_label.text()
+
+
+def test_banner_set_processing_stops_timer_and_clears_elapsed(qapp) -> None:
+    banner = ActiveRecordingBanner()
+    banner.show_recording(5, "Brief Test", status_label="Recording")
+    assert banner._timer.isActive() is True
+    banner.set_processing()
+    assert banner._timer.isActive() is False
+    # The time label should not be showing a clock-style mm:ss anymore.
+    assert ":" not in banner._elapsed_label.text()

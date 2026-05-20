@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from teams_transcriber.config import Settings
-from teams_transcriber.events import EventBus, SummaryReady
+from teams_transcriber.events import EventBus, SummaryFailed, SummaryReady
 from teams_transcriber.storage import (
     ActionItemOther,
     Database,
@@ -125,6 +125,10 @@ class Summarizer:
                 recording_id, RecordingStatus.SUMMARY_FAILED,
                 error_message="Anthropic API key is not configured",
             )
+            self._bus.publish(SummaryFailed(
+                recording_id=recording_id,
+                error_message="Anthropic API key is not configured",
+            ))
             return
 
         transcript = self._build_transcript_text(recording_id)
@@ -133,16 +137,23 @@ class Summarizer:
                 recording_id, RecordingStatus.SUMMARY_FAILED,
                 error_message="transcript is empty",
             )
+            self._bus.publish(SummaryFailed(
+                recording_id=recording_id,
+                error_message="transcript is empty",
+            ))
             return
         if len(transcript) > _TRANSCRIPT_CHAR_LIMIT:
-            rec_repo.update_status(
-                recording_id, RecordingStatus.SUMMARY_FAILED,
-                error_message=(
-                    f"transcript too long for single-shot summarization "
-                    f"({len(transcript):,} chars; limit {_TRANSCRIPT_CHAR_LIMIT:,}). "
-                    "Chunking is not yet implemented."
-                ),
+            msg = (
+                f"transcript too long for single-shot summarization "
+                f"({len(transcript):,} chars; limit {_TRANSCRIPT_CHAR_LIMIT:,}). "
+                "Chunking is not yet implemented."
             )
+            rec_repo.update_status(
+                recording_id, RecordingStatus.SUMMARY_FAILED, error_message=msg,
+            )
+            self._bus.publish(SummaryFailed(
+                recording_id=recording_id, error_message=msg,
+            ))
             return
 
         client = self._client_factory(api_key)
@@ -155,6 +166,9 @@ class Summarizer:
             rec_repo.update_status(
                 recording_id, RecordingStatus.SUMMARY_FAILED, error_message=str(result),
             )
+            self._bus.publish(SummaryFailed(
+                recording_id=recording_id, error_message=str(result),
+            ))
             return
 
         self._persist(recording_id, result)

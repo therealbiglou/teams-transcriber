@@ -94,7 +94,7 @@ class SummaryPane(QScrollArea):
         self._layout.addWidget(title)
 
         meta = QLabel(
-            f"{rec.started_at} · {(rec.duration_ms or 0) / 60000:.0f} min · {summary.model_used}"
+            f"{_fmt_meta_time(rec.started_at)} · {(rec.duration_ms or 0) / 60000:.0f} min · {summary.model_used}"
         )
         meta.setProperty("role", "muted")
         meta.setWordWrap(True)
@@ -292,3 +292,13 @@ def _topics_row(topics: list[str]) -> QFrame:
         flow.addWidget(chip)
     layout.addWidget(chips_wrapper)
     return card
+
+
+def _fmt_meta_time(iso: str) -> str:
+    """Format a stored UTC ISO timestamp as local time."""
+    from datetime import datetime
+    try:
+        dt = datetime.fromisoformat(iso).astimezone()
+        return dt.strftime("%b %d, %Y, %I:%M %p").lstrip("0").replace(" 0", " ")
+    except ValueError:
+        return iso

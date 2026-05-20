@@ -24,6 +24,7 @@ from teams_transcriber.events import (
     RecordingFailed,
     RecordingFinalized,
     RecordingStarted,
+    SummaryFailed,
     SummaryReady,
     TranscriptionComplete,
 )
@@ -51,6 +52,14 @@ from teams_transcriber.ui.toast_banner import show_in_app_toast
 from teams_transcriber.ui.tray import AppTray
 
 logger = logging.getLogger(__name__)
+
+
+def _fmt_export_time(iso: str) -> str:
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(iso).astimezone().strftime("%Y-%m-%d %I:%M %p").lstrip("0")
+    except ValueError:
+        return iso
 
 
 def _make_app() -> QApplication:
@@ -120,6 +129,7 @@ class App:
         self.bridge.recording_device_fallback.connect(self._on_recording_device_fallback)
         self.bridge.transcription_complete.connect(self._on_transcription_complete)
         self.bridge.summary_ready.connect(self._on_summary_ready)
+        self.bridge.summary_failed.connect(self._on_summary_failed)
 
         self.hotkeys = HotkeyManager()
         self._apply_hotkeys(self.settings.hotkeys)
@@ -275,7 +285,7 @@ class App:
             return
         lines = [
             f"# {s.title or rec.display_title or 'Meeting'}", "",
-            f"_{rec.started_at} · {(rec.duration_ms or 0)/60000:.0f} min_", "",
+            f"_{_fmt_export_time(rec.started_at)} · {(rec.duration_ms or 0)/60000:.0f} min_", "",
             s.summary or "", "", "## My todos",
         ]
         for t in s.my_todos:
@@ -403,6 +413,15 @@ class App:
 
     def _on_transcription_complete(self, _evt: TranscriptionComplete) -> None:
         self.tray.set_state(TrayState.PROCESSING)
+        self._refresh_history()
+
+    def _on_summary_failed(self, evt: SummaryFailed) -> None:
+        self.tray.set_state(TrayState.ERROR)
+        if self.active_banner.current_recording_id() == evt.recording_id:
+            self.active_banner.hide_banner()
+        show_in_app_toast(
+            "Summary failed", evt.error_message,
+        )
         self._refresh_history()
 
     def _on_summary_ready(self, evt: SummaryReady) -> None:

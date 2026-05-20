@@ -95,10 +95,14 @@ class ActiveRecordingBanner(QFrame):
             return
         self._dot.setStyleSheet("color: #F59E0B; font-size: 16px;")
         title_text = self._title_label.text()
-        # Replace "Recording: " prefix with "Processing: ".
         if title_text.startswith("Recording:"):
             title_text = "Processing:" + title_text[len("Recording:"):]
             self._title_label.setText(title_text)
+        # Stop ticking — the elapsed timer was measuring recording time, not processing time.
+        self._timer.stop()
+        # Repurpose the time label as a "Processing..." indicator.
+        self._elapsed_label.setText("…")
+        self._elapsed_label.setFixedWidth(20)
 
     def hide_banner(self) -> None:
         self._timer.stop()

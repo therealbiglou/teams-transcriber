@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"
 
 
 def _nvidia_root() -> Path | None:

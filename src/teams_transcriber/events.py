@@ -67,6 +67,12 @@ class SummaryReady(Event):
 
 
 @dataclass(slots=True, frozen=True)
+class SummaryFailed(Event):
+    recording_id: int
+    error_message: str
+
+
+@dataclass(slots=True, frozen=True)
 class LiveSegmentAvailable(Event):
     recording_id: int
     segment: "TranscriptSegment"

@@ -134,7 +134,7 @@ def _status_chip(status: RecordingStatus) -> QLabel | None:
 
 def _fmt_time(iso: str) -> str:
     try:
-        dt = datetime.fromisoformat(iso)
+        dt = datetime.fromisoformat(iso).astimezone()  # convert UTC → local
         return dt.strftime("%b %d, %I:%M %p").lstrip("0").replace(" 0", " ")
     except ValueError:
         return iso

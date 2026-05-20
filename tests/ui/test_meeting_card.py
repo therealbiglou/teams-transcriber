@@ -43,3 +43,23 @@ def test_card_shows_failed_chip(qapp, qtbot) -> None:
     from PySide6.QtWidgets import QLabel
     chips = [w for w in card.findChildren(QLabel) if w.property("role") == "chip"]
     assert any("Failed" in c.text() for c in chips)
+
+
+def test_fmt_time_converts_utc_to_local(qapp) -> None:
+    """_fmt_time must call astimezone() to render in local time, not UTC."""
+    from datetime import datetime
+    from teams_transcriber.ui.meeting_card import _fmt_time
+
+    # A noon UTC timestamp.
+    iso = "2026-05-20T12:00:00+00:00"
+    formatted = _fmt_time(iso)
+    # The local hour will vary by machine, but the formatter must NOT contain
+    # "12:00 PM" if local time isn't actually UTC. Use a direct check by
+    # computing expected output here.
+    expected_local = datetime.fromisoformat(iso).astimezone().strftime("%b %d, %I:%M %p").lstrip("0").replace(" 0", " ")
+    assert formatted == expected_local
+
+
+def test_fmt_time_handles_invalid_input(qapp) -> None:
+    from teams_transcriber.ui.meeting_card import _fmt_time
+    assert _fmt_time("not-a-date") == "not-a-date"

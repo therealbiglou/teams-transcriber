@@ -19,6 +19,7 @@ from teams_transcriber.events import (
     RecordingFailed,
     RecordingFinalized,
     RecordingStarted,
+    SummaryFailed,
     SummaryReady,
     TranscriptionComplete,
 )
@@ -35,6 +36,7 @@ class QtEventBridge(QObject):
     recording_device_fallback = Signal(object)
     transcription_complete = Signal(object)
     summary_ready = Signal(object)
+    summary_failed = Signal(object)
     live_segment_available = Signal(object)
     live_transcription_degraded = Signal(object)
 
@@ -50,6 +52,7 @@ class QtEventBridge(QObject):
         bus.subscribe(RecordingDeviceFallback, self._on_recording_device_fallback)
         bus.subscribe(TranscriptionComplete,  self._on_transcription_complete)
         bus.subscribe(SummaryReady,           self._on_summary_ready)
+        bus.subscribe(SummaryFailed,          self._on_summary_failed)
         bus.subscribe(LiveSegmentAvailable,        self._on_live_segment)
         bus.subscribe(LiveTranscriptionDegraded,   self._on_live_degraded)
 
@@ -63,6 +66,7 @@ class QtEventBridge(QObject):
     def _on_transcription_complete(self, e: TranscriptionComplete) -> None:
         self.transcription_complete.emit(e)
     def _on_summary_ready(self, e: SummaryReady) -> None:              self.summary_ready.emit(e)
+    def _on_summary_failed(self, e: SummaryFailed) -> None:           self.summary_failed.emit(e)
     def _on_live_segment(self, e: LiveSegmentAvailable) -> None:
         self.live_segment_available.emit(e)
     def _on_live_degraded(self, e: LiveTranscriptionDegraded) -> None:
