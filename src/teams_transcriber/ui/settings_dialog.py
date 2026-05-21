@@ -182,6 +182,11 @@ class SettingsDialog(QDialog):
         self._live_enabled_check = QCheckBox("Stream transcription during recording (experimental)")
         self._live_enabled_check.setChecked(self._settings.transcription_live_enabled)
         form.addRow("", self._live_enabled_check)
+
+        self._redownload_model_btn = QPushButton("Re-download Whisper model")
+        self._redownload_model_btn.setProperty("role", "secondary")
+        self._redownload_model_btn.clicked.connect(self._redownload_model)
+        form.addRow("", self._redownload_model_btn)
         return w
 
     def _build_ai_tab(self) -> QWidget:
@@ -235,6 +240,74 @@ class SettingsDialog(QDialog):
         outer.addWidget(shortcuts_group)
         outer.addStretch(1)
         return w
+
+    def _redownload_model(self) -> None:
+        """Wipe the cached Whisper model snapshot dir and re-download.
+
+        Used to recover from broken downloads (missing model.bin etc.).
+        """
+        import shutil
+        from pathlib import Path
+        from PySide6.QtWidgets import QMessageBox
+        from teams_transcriber.ui.confirm_dialog import ConfirmDialog
+
+        repo_id = self._settings.transcription_model
+        cache_root = Path.home() / ".cache" / "huggingface" / "hub"
+        target_marker = repo_id.replace("/", "--")
+        candidates: list[Path] = []
+        if cache_root.is_dir():
+            for d in cache_root.iterdir():
+                if d.is_dir() and target_marker in d.name:
+                    candidates.append(d)
+                elif d.is_dir() and "faster-whisper" in d.name:
+                    candidates.append(d)
+        # Deduplicate while preserving order.
+        seen: set[Path] = set()
+        unique_candidates: list[Path] = []
+        for c in candidates:
+            if c not in seen:
+                seen.add(c)
+                unique_candidates.append(c)
+        candidates = unique_candidates
+
+        if not candidates:
+            QMessageBox.information(
+                self, "Model cache not found",
+                f"Could not find a cached Whisper model under {cache_root}.\n"
+                "The model will download fresh on next transcription.",
+            )
+            return
+
+        names = "\n".join(f"  • {d.name}" for d in candidates)
+        ok = ConfirmDialog.ask(
+            self, title="Re-download Whisper model?",
+            body=(
+                "This will delete the following cached model directories "
+                "so they re-download (~3 GB) on next transcription:\n\n"
+                f"{names}"
+            ),
+            confirm_label="Re-download", cancel_label="Cancel", danger=True,
+        )
+        if not ok:
+            return
+
+        deleted_any = False
+        for d in candidates:
+            try:
+                shutil.rmtree(d)
+                deleted_any = True
+            except OSError as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Could not delete %s: %s", d, exc,
+                )
+        if deleted_any:
+            QMessageBox.information(
+                self, "Done",
+                "Model cache cleared. The model will re-download on the "
+                "next transcription. Use Retry on any failed recordings "
+                "to trigger it now.",
+            )
 
     def _add_pattern(self) -> None:
         text = self.pattern_input.text().strip()

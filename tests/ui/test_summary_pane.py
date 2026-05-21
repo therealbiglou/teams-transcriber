@@ -152,3 +152,72 @@ def test_summary_pane_shows_error_for_failed_recording(tmp_path, qapp) -> None:
     assert any("transcript is empty" in t for t in label_texts)
     assert any("Summarization failed" in t for t in label_texts)
     db.close()
+
+
+def test_summary_pane_failed_card_has_retry_button_for_recoverable_statuses(tmp_path, qapp) -> None:
+    """Failed recordings with TRANSCRIPTION_FAILED / SUMMARY_FAILED get a Retry button."""
+    from PySide6.QtWidgets import QPushButton
+    from teams_transcriber.storage import (
+        Recording,
+        RecordingRepo,
+        RecordingSource,
+        RecordingStatus,
+        build_database,
+    )
+    from teams_transcriber.ui.summary_pane import SummaryPane
+
+    db = build_database(tmp_path / "test.db")
+    db.initialize()
+
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-05-21T10:00:00+00:00",
+        ended_at=None, source=RecordingSource.MANUAL,
+        detected_title="t", display_title="t",
+        audio_path=None, audio_deleted_at=None, duration_ms=10_000,
+        status=RecordingStatus.SUMMARY_FAILED,
+        error_message="transcript is empty",
+    ))
+
+    received: list[int] = []
+    pane = SummaryPane(db)
+    pane.retry_requested.connect(received.append)
+    pane.show_recording(rec.id)
+
+    # Find the Retry button.
+    btns = [b for b in pane.findChildren(QPushButton) if b.text() == "Retry"]
+    assert len(btns) == 1
+    btns[0].click()
+    assert received == [rec.id]
+    db.close()
+
+
+def test_summary_pane_no_retry_for_recording_failed(tmp_path, qapp) -> None:
+    """RECORDING_FAILED has no audio to retry from — no Retry button."""
+    from PySide6.QtWidgets import QPushButton
+    from teams_transcriber.storage import (
+        Recording,
+        RecordingRepo,
+        RecordingSource,
+        RecordingStatus,
+        build_database,
+    )
+    from teams_transcriber.ui.summary_pane import SummaryPane
+
+    db = build_database(tmp_path / "test.db")
+    db.initialize()
+
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-05-21T10:00:00+00:00",
+        ended_at=None, source=RecordingSource.MANUAL,
+        detected_title="t", display_title="t",
+        audio_path=None, audio_deleted_at=None, duration_ms=10_000,
+        status=RecordingStatus.RECORDING_FAILED,
+        error_message="audio device disappeared",
+    ))
+
+    pane = SummaryPane(db)
+    pane.show_recording(rec.id)
+
+    btns = [b for b in pane.findChildren(QPushButton) if b.text() == "Retry"]
+    assert len(btns) == 0
+    db.close()

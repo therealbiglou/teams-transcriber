@@ -420,3 +420,63 @@ def test_pipeline_stops_live_transcriber_on_recording_failure(tmp_path, monkeypa
     # The live transcriber should have been stopped via the failure path,
     # not via shutdown. Exactly one stop call.
     assert stop_calls == ["stop"]
+
+
+def test_pipeline_retry_transcription_resets_status_and_enqueues(tmp_path, monkeypatch) -> None:
+    """retry_transcription resets the recording to TRANSCRIBING and re-runs the pipeline post-processing."""
+    import numpy as np
+    from teams_transcriber.audio.source import FakeAudioSource
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.events import EventBus
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.pipeline import Pipeline
+    from teams_transcriber.storage import (
+        Recording,
+        RecordingRepo,
+        RecordingSource,
+        RecordingStatus,
+        build_database,
+    )
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    settings = load_settings(paths)
+    bus = EventBus()
+
+    class _NoopTranscriber:
+        def __init__(self): self.calls = []
+        def transcribe(self, rid): self.calls.append(rid)
+    class _NoopSummarizer:
+        def summarize(self, rid, *, api_key): pass
+
+    transcriber = _NoopTranscriber()
+
+    mic = np.zeros(48_000, dtype=np.float32)
+    loop = np.zeros(48_000, dtype=np.float32)
+
+    p = Pipeline(
+        bus=bus, db=db, paths=paths, settings=settings,
+        audio_source_factory=lambda: FakeAudioSource(mic, loop),
+        meeting_watcher=None,
+        transcriber=transcriber,
+        summarizer=_NoopSummarizer(),
+    )
+
+    # Create a failed recording.
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-05-21T10:00:00+00:00",
+        ended_at=None, source=RecordingSource.MANUAL,
+        detected_title="t", display_title="t",
+        audio_path=None, audio_deleted_at=None, duration_ms=10_000,
+        status=RecordingStatus.TRANSCRIPTION_FAILED,
+        error_message="model.bin missing",
+    ))
+
+    p.retry_transcription(rec.id)
+    p._executor.shutdown(wait=True)
+    db.close()
+
+    # Transcriber was called with our recording id.
+    assert transcriber.calls == [rec.id]

@@ -175,6 +175,7 @@ class App:
         self.summary.export_requested.connect(self._export_summary)
         self.summary.delete_requested.connect(self._delete_recording)
         self.summary.notes_requested.connect(self._open_workspace)
+        self.summary.retry_requested.connect(self._retry_recording)
         body_layout.addWidget(self.history, 1)
         body_layout.addWidget(self.summary, 1)
         layout.addWidget(body, 1)
@@ -412,6 +413,57 @@ class App:
         dlg.saved.connect(self._refresh_history)
         dlg.exec()
 
+    def _open_settings_ai_tab(self) -> None:
+        """Open Settings and jump to the AI tab."""
+        from PySide6.QtWidgets import QTabWidget
+        dlg = SettingsDialog(
+            self.settings, self.paths,
+            hotkey_reload_callback=self._on_hotkey_reload,
+            parent=self.window,
+        )
+        for child in dlg.findChildren(QTabWidget):
+            for i in range(child.count()):
+                if child.tabText(i) == "AI":
+                    child.setCurrentIndex(i)
+                    break
+        dlg.saved.connect(self._refresh_history)
+        dlg.exec()
+
+    def _retry_recording(self, recording_id: int) -> None:
+        """Re-run the failed step (transcription or summary) for a recording."""
+        from teams_transcriber.storage import RecordingStatus
+        rec = RecordingRepo(self.db).get(recording_id)
+        if rec is None:
+            return
+        if rec.status == RecordingStatus.SUMMARY_FAILED:
+            api_key = self.settings.anthropic_api_key()
+            if not api_key:
+                show_in_app_toast(
+                    "Anthropic API key not configured",
+                    "Open Settings → AI to add your key, then retry.",
+                    action_label="Open Settings",
+                    action_callback=self._open_settings_ai_tab,
+                )
+                return
+            self.pipeline.retry_summary(recording_id, api_key=api_key)
+            show_in_app_toast(
+                "Retrying summary",
+                "Re-running summarization — you'll get a notification when it's ready.",
+            )
+            title = (rec.display_title if rec else None) or "Meeting"
+            self.active_banner.show_recording(recording_id, title, status_label="Recording")
+            self.active_banner.set_processing()
+        elif rec.status == RecordingStatus.TRANSCRIPTION_FAILED:
+            self.pipeline.retry_transcription(recording_id)
+            show_in_app_toast(
+                "Retrying transcription",
+                "Re-running transcription — you'll get a notification when it's ready.",
+            )
+            title = (rec.display_title if rec else None) or "Meeting"
+            self.active_banner.show_recording(recording_id, title, status_label="Recording")
+            self.active_banner.set_processing()
+        self._refresh_history()
+
     def _on_transcription_complete(self, _evt: TranscriptionComplete) -> None:
         self.tray.set_state(TrayState.PROCESSING)
         self._refresh_history()
@@ -429,9 +481,14 @@ class App:
         self.tray.set_state(TrayState.ERROR)
         if self.active_banner.current_recording_id() == evt.recording_id:
             self.active_banner.hide_banner()
-        show_in_app_toast(
-            "Summary failed", evt.error_message,
-        )
+        if "api key" in evt.error_message.lower():
+            show_in_app_toast(
+                "Summary failed", evt.error_message,
+                action_label="Open Settings",
+                action_callback=self._open_settings_ai_tab,
+            )
+        else:
+            show_in_app_toast("Summary failed", evt.error_message)
         self._refresh_history()
 
     def _on_summary_ready(self, evt: SummaryReady) -> None:

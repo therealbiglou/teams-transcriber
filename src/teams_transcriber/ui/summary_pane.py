@@ -35,6 +35,7 @@ class SummaryPane(QScrollArea):
     export_requested = Signal(int)      # recording_id
     delete_requested = Signal(int)      # recording_id (caller confirms + deletes)
     notes_requested = Signal(int)       # recording_id — open notes editor
+    retry_requested = Signal(int)       # recording_id — re-run from the failed step
 
     def __init__(self, db: Database, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -88,10 +89,22 @@ class SummaryPane(QScrollArea):
                 RecordingStatus.TRANSCRIPTION_FAILED,
                 RecordingStatus.SUMMARY_FAILED,
             ):
-                self._layout.addWidget(_section_card("Failed", [
+                widgets = [
                     _failure_status_label(rec.status),
                     _failure_message_label(rec.error_message or "(no detail)"),
-                ]))
+                ]
+                if rec.status in (
+                    RecordingStatus.TRANSCRIPTION_FAILED,
+                    RecordingStatus.SUMMARY_FAILED,
+                ):
+                    retry_btn = QPushButton("Retry")
+                    retry_btn.setProperty("role", "primary")
+                    retry_btn.clicked.connect(
+                        lambda _checked=False, rid=recording_id:
+                        self.retry_requested.emit(rid),
+                    )
+                    widgets.append(retry_btn)
+                self._layout.addWidget(_section_card("Failed", widgets))
             else:
                 self._layout.addWidget(QLabel("No summary yet for this recording."))
             return

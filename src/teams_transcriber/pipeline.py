@@ -81,6 +81,26 @@ class Pipeline:
         """Public entry point for re-running summarization on an existing recording."""
         self._summarizer.summarize(recording_id, api_key=api_key)
 
+    def retry_transcription(self, recording_id: int) -> None:
+        """Public entry point for re-running transcription (and onward).
+
+        Resets the recording's status to TRANSCRIBING and enqueues
+        _run_post_processing on the executor — the same code path the
+        normal RecordingFinalized handler uses. Safe to call on any
+        recording regardless of its current failed/done status.
+        """
+        rec_repo = RecordingRepo(self._db)
+        rec = rec_repo.get(recording_id)
+        if rec is None:
+            return
+        rec_repo.update_status(
+            recording_id,
+            RecordingStatus.TRANSCRIBING,
+            error_message=None,
+        )
+        future = self._executor.submit(self._run_post_processing, recording_id)
+        self._pending_futures.append(future)
+
     def serve(self) -> None:
         if self._meeting_watcher is None:
             raise RuntimeError("Pipeline configured without a MeetingWatcher")
