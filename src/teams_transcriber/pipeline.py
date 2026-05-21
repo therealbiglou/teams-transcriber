@@ -203,29 +203,45 @@ class Pipeline:
         # _on_transcription_complete runs on this same worker thread.
 
     def _recover_stuck_recordings(self) -> None:
-        """At startup, transition any TRANSCRIBING/SUMMARIZING rows to *_FAILED.
+        """At startup, transition stuck rows to a correct state.
 
-        These are recordings whose post-processing was interrupted (app crash,
-        forced exit). Leaving them in an in-progress state confuses the UI
-        and prevents the user from triggering retry. Mark them failed with a
-        clear message so the existing retry path can pick them back up.
+        - SUMMARIZING + has Summary row → DONE (summary clearly succeeded;
+          summarizer crashed between sum_repo.upsert and update_status).
+        - SUMMARIZING + no Summary → SUMMARY_FAILED.
+        - TRANSCRIBING + has segments → SUMMARIZING.
+        - TRANSCRIBING + no segments → TRANSCRIPTION_FAILED.
         """
+        from teams_transcriber.storage import SummaryRepo, TranscriptRepo
+
         rec_repo = RecordingRepo(self._db)
-        for rec in rec_repo.list_by_status(RecordingStatus.TRANSCRIBING):
-            if rec.id is None:
-                continue
-            logger.warning("recovering stuck TRANSCRIBING recording %d", rec.id)
-            rec_repo.update_status(
-                rec.id, RecordingStatus.TRANSCRIPTION_FAILED,
-                error_message="transcription was interrupted (app exited mid-process)",
-            )
+        sum_repo = SummaryRepo(self._db)
+        tr_repo = TranscriptRepo(self._db)
+
         for rec in rec_repo.list_by_status(RecordingStatus.SUMMARIZING):
             if rec.id is None:
                 continue
-            logger.warning("recovering stuck SUMMARIZING recording %d", rec.id)
+            if sum_repo.get(rec.id) is not None:
+                logger.info("recover: %d had summary, marking DONE", rec.id)
+                rec_repo.update_status(rec.id, RecordingStatus.DONE)
+                continue
+            logger.warning("recovering stuck SUMMARIZING %d (no summary)", rec.id)
             rec_repo.update_status(
                 rec.id, RecordingStatus.SUMMARY_FAILED,
                 error_message="summary was interrupted (app exited mid-process)",
+            )
+
+        for rec in rec_repo.list_by_status(RecordingStatus.TRANSCRIBING):
+            if rec.id is None:
+                continue
+            segments = tr_repo.list_for_recording(rec.id)
+            if segments:
+                logger.info("recover: %d had segments, marking SUMMARIZING", rec.id)
+                rec_repo.update_status(rec.id, RecordingStatus.SUMMARIZING)
+                continue
+            logger.warning("recovering stuck TRANSCRIBING %d (no segments)", rec.id)
+            rec_repo.update_status(
+                rec.id, RecordingStatus.TRANSCRIPTION_FAILED,
+                error_message="transcription was interrupted (app exited mid-process)",
             )
 
     def _start_recorder(self, *, source_type: str, detected_title: str | None) -> int:

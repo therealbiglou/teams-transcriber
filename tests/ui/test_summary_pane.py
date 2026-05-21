@@ -70,31 +70,25 @@ def test_todo_toggle_persists(qapp, qtbot, db_with_summary) -> None:
     assert any(s.done and s.task_text == "Do A" for s in states)
 
 
-def test_summary_pane_renders_inline_transcript_section(tmp_path, qapp) -> None:
-    """The summary pane shows transcript segments inline (collapsible)."""
-    from teams_transcriber.paths import AppPaths
+def test_summary_pane_has_view_transcript_button(tmp_path, qapp) -> None:
+    """The summary pane shows a 'View transcript' button (replaces inline card)."""
     from teams_transcriber.storage import (
-        Channel,
         Recording,
         RecordingRepo,
         RecordingSource,
         RecordingStatus,
         Summary,
         SummaryRepo,
-        TranscriptRepo,
-        TranscriptSegment,
         build_database,
     )
-    from teams_transcriber.ui.live_transcript_view import LiveTranscriptView
     from teams_transcriber.ui.summary_pane import SummaryPane
+    from PySide6.QtWidgets import QPushButton
 
-    paths = AppPaths(root=tmp_path)
-    paths.ensure_dirs()
-    db = build_database(paths.db_path)
+    db = build_database(tmp_path / "test.db")
     db.initialize()
 
     rec = RecordingRepo(db).create(Recording(
-        id=None, started_at="2026-05-18T10:00:00+00:00",
+        id=None, started_at="2026-05-21T10:00:00+00:00",
         ended_at=None, source=RecordingSource.MANUAL,
         detected_title="t", display_title="t", audio_path=None,
         audio_deleted_at=None, duration_ms=60_000,
@@ -106,19 +100,18 @@ def test_summary_pane_renders_inline_transcript_section(tmp_path, qapp) -> None:
         title="t", one_line="line", summary="body",
         my_todos=[], action_items_others=[], key_decisions=[],
         follow_ups=[], topics=[], model_used="m",
-        generated_at="2026-05-18T10:00:00+00:00",
-    ))
-    TranscriptRepo(db).append(TranscriptSegment(
-        id=None, recording_id=rec.id, start_ms=0, end_ms=1500,
-        channel=Channel.ME, text="inline segment",
+        generated_at="2026-05-21T10:00:00+00:00",
     ))
 
+    received: list[int] = []
     pane = SummaryPane(db)
+    pane.transcript_requested.connect(received.append)
     pane.show_recording(rec.id)
 
-    view = pane.findChild(LiveTranscriptView)
-    assert view is not None
-    assert view.count() == 1
+    btns = [b for b in pane.findChildren(QPushButton) if b.text() == "View transcript"]
+    assert len(btns) == 1
+    btns[0].click()
+    assert received == [rec.id]
     db.close()
 
 
@@ -185,6 +178,80 @@ def test_summary_pane_failed_card_has_retry_button_for_recoverable_statuses(tmp_
 
     # Find the Retry button.
     btns = [b for b in pane.findChildren(QPushButton) if b.text() == "Retry"]
+    assert len(btns) == 1
+    btns[0].click()
+    assert received == [rec.id]
+    db.close()
+
+
+def test_summary_pane_labels_are_selectable(tmp_path, qapp) -> None:
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QLabel
+    from teams_transcriber.storage import (
+        Recording,
+        RecordingRepo,
+        RecordingSource,
+        RecordingStatus,
+        Summary,
+        SummaryRepo,
+        build_database,
+    )
+    from teams_transcriber.ui.summary_pane import SummaryPane
+
+    db = build_database(tmp_path / "test.db")
+    db.initialize()
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-05-21T10:00:00+00:00",
+        ended_at=None, source=RecordingSource.MANUAL,
+        detected_title="t", display_title="t",
+        audio_path=None, audio_deleted_at=None, duration_ms=60_000,
+        status=RecordingStatus.DONE, error_message=None,
+    ))
+    SummaryRepo(db).upsert(Summary(
+        recording_id=rec.id, title="Test title", one_line="x",
+        summary="Body text here", my_todos=[], action_items_others=[],
+        key_decisions=["decision A"], follow_ups=[], topics=[],
+        model_used="m", generated_at="2026-05-21T10:00:00+00:00",
+    ))
+    pane = SummaryPane(db)
+    pane.show_recording(rec.id)
+
+    # At least the title and summary body should be text-selectable.
+    selectable_count = 0
+    for label in pane.findChildren(QLabel):
+        flags = label.textInteractionFlags()
+        if flags & Qt.TextInteractionFlag.TextSelectableByMouse:
+            selectable_count += 1
+    assert selectable_count >= 2  # title + summary at minimum
+    db.close()
+
+
+def test_summary_pane_failed_card_has_delete_button(tmp_path, qapp) -> None:
+    from PySide6.QtWidgets import QPushButton
+    from teams_transcriber.storage import (
+        Recording,
+        RecordingRepo,
+        RecordingSource,
+        RecordingStatus,
+        build_database,
+    )
+    from teams_transcriber.ui.summary_pane import SummaryPane
+
+    db = build_database(tmp_path / "test.db")
+    db.initialize()
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-05-21T10:00:00+00:00",
+        ended_at=None, source=RecordingSource.MANUAL,
+        detected_title="t", display_title="t",
+        audio_path=None, audio_deleted_at=None, duration_ms=10_000,
+        status=RecordingStatus.SUMMARY_FAILED,
+        error_message="boom",
+    ))
+    received: list[int] = []
+    pane = SummaryPane(db)
+    pane.delete_requested.connect(received.append)
+    pane.show_recording(rec.id)
+    btns = [b for b in pane.findChildren(QPushButton) if b.text() == "Delete"]
     assert len(btns) == 1
     btns[0].click()
     assert received == [rec.id]

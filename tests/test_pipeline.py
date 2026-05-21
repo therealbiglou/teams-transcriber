@@ -480,3 +480,55 @@ def test_pipeline_retry_transcription_resets_status_and_enqueues(tmp_path, monke
 
     # Transcriber was called with our recording id.
     assert transcriber.calls == [rec.id]
+
+
+def test_recover_stuck_summarizing_with_summary_marks_done(tmp_path) -> None:
+    """If SUMMARIZING row has a Summary, recovery should mark it DONE."""
+    from teams_transcriber.audio.source import FakeAudioSource
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.events import EventBus
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.pipeline import Pipeline
+    from teams_transcriber.storage import (
+        Recording,
+        RecordingRepo,
+        RecordingSource,
+        RecordingStatus,
+        Summary,
+        SummaryRepo,
+        build_database,
+    )
+    import numpy as np
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+
+    # Pre-seed a SUMMARIZING recording WITH a summary row.
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-05-21T10:00:00+00:00",
+        ended_at=None, source=RecordingSource.MANUAL,
+        detected_title="t", display_title="t",
+        audio_path=None, audio_deleted_at=None, duration_ms=60_000,
+        status=RecordingStatus.SUMMARIZING, error_message=None,
+    ))
+    SummaryRepo(db).upsert(Summary(
+        recording_id=rec.id, title="t", one_line="x", summary="y",
+        my_todos=[], action_items_others=[], key_decisions=[],
+        follow_ups=[], topics=[], model_used="m",
+        generated_at="2026-05-21T10:00:00+00:00",
+    ))
+
+    settings = load_settings(paths)
+    Pipeline(
+        bus=EventBus(), db=db, paths=paths, settings=settings,
+        audio_source_factory=lambda: FakeAudioSource(
+            np.zeros(1, dtype=np.float32), np.zeros(1, dtype=np.float32),
+        ),
+        meeting_watcher=None,
+    )  # constructor triggers _recover_stuck_recordings
+
+    fixed = RecordingRepo(db).get(rec.id)
+    assert fixed.status == RecordingStatus.DONE
+    db.close()

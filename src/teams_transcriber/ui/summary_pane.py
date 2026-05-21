@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from PySide6.QtCore import Qt as _Qt
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QResizeEvent
 from PySide6.QtWidgets import (
@@ -24,18 +25,25 @@ from teams_transcriber.storage import (
     Summary,
     SummaryRepo,
     TodoStateRepo,
-    TranscriptRepo,
 )
-from teams_transcriber.ui.live_transcript_view import LiveTranscriptView
+
+
+def _make_selectable(label: "QLabel") -> "QLabel":
+    label.setTextInteractionFlags(
+        _Qt.TextInteractionFlag.TextSelectableByMouse
+        | _Qt.TextInteractionFlag.TextSelectableByKeyboard,
+    )
+    return label
 
 
 class SummaryPane(QScrollArea):
     """Right-side scroll panel showing one recording's summary."""
 
-    export_requested = Signal(int)      # recording_id
-    delete_requested = Signal(int)      # recording_id (caller confirms + deletes)
-    notes_requested = Signal(int)       # recording_id — open notes editor
-    retry_requested = Signal(int)       # recording_id — re-run from the failed step
+    export_requested = Signal(int)       # recording_id
+    delete_requested = Signal(int)       # recording_id (caller confirms + deletes)
+    notes_requested = Signal(int)        # recording_id — open notes editor
+    retry_requested = Signal(int)        # recording_id — re-run from the failed step
+    transcript_requested = Signal(int)   # recording_id — open transcript window
 
     def __init__(self, db: Database, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -104,22 +112,29 @@ class SummaryPane(QScrollArea):
                         self.retry_requested.emit(rid),
                     )
                     widgets.append(retry_btn)
+                delete_btn = QPushButton("Delete")
+                delete_btn.setProperty("role", "danger")
+                delete_btn.clicked.connect(
+                    lambda _checked=False, rid=recording_id:
+                    self.delete_requested.emit(rid),
+                )
+                widgets.append(delete_btn)
                 self._layout.addWidget(_section_card("Failed", widgets))
             else:
                 self._layout.addWidget(QLabel("No summary yet for this recording."))
             return
 
         from PySide6.QtWidgets import QSizePolicy
-        title = QLabel(rec.display_title or summary.title or "Untitled meeting")
+        title = _make_selectable(QLabel(rec.display_title or summary.title or "Untitled meeting"))
         title.setProperty("role", "title")
         title.setWordWrap(True)
         title.setMinimumWidth(0)
         title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self._layout.addWidget(title)
 
-        meta = QLabel(
+        meta = _make_selectable(QLabel(
             f"{_fmt_meta_time(rec.started_at)} · {(rec.duration_ms or 0) / 60000:.0f} min · {summary.model_used}"
-        )
+        ))
         meta.setProperty("role", "muted")
         meta.setWordWrap(True)
         meta.setMinimumWidth(0)
@@ -156,13 +171,15 @@ class SummaryPane(QScrollArea):
         if summary.topics:
             self._layout.addWidget(_topics_row(summary.topics))
 
-        # Inline transcript (collapsed by default).
-        segments = TranscriptRepo(self._db).list_for_recording(recording_id)
-        if segments:
-            self._layout.addWidget(self._build_transcript_card(segments))
-
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
+
+        transcript_btn = QPushButton("View transcript")
+        transcript_btn.setProperty("role", "secondary")
+        transcript_btn.clicked.connect(
+            lambda: self.transcript_requested.emit(recording_id),
+        )
+        buttons.addWidget(transcript_btn)
 
         notes_btn = QPushButton("Edit notes" if rec.manual_notes else "Add notes")
         notes_btn.setProperty("role", "secondary")
@@ -210,36 +227,6 @@ class SummaryPane(QScrollArea):
             rows.append(cb)
         return _section_card("My todos", rows)
 
-    def _build_transcript_card(self, segments: list) -> QFrame:
-        card = QFrame()
-        card.setProperty("card", True)
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(20, 16, 20, 16)
-        layout.setSpacing(8)
-
-        header_row = QHBoxLayout()
-        header = QLabel("Transcript")
-        header.setStyleSheet("font-size: 14px; font-weight: 600;")
-        header_row.addWidget(header)
-        header_row.addStretch(1)
-        toggle = QPushButton("Show")
-        toggle.setProperty("role", "ghost")
-        toggle.setCheckable(True)
-        header_row.addWidget(toggle)
-        layout.addLayout(header_row)
-
-        view = LiveTranscriptView()
-        view.load_segments(segments)
-        view.setVisible(False)
-        view.setMinimumHeight(280)
-        layout.addWidget(view)
-
-        def _toggle(checked: bool) -> None:
-            view.setVisible(checked)
-            toggle.setText("Hide" if checked else "Show")
-        toggle.toggled.connect(_toggle)
-        return card
-
     def _copy_markdown(self, summary: Summary, recording: Any) -> None:
         lines = [f"# {summary.title or recording.display_title or 'Meeting'}", ""]
         if summary.summary:
@@ -283,6 +270,7 @@ def _section_card(title: str, body_widgets: list[QWidget]) -> QFrame:
     layout.addWidget(header)
     for w in body_widgets:
         if isinstance(w, QLabel):
+            _make_selectable(w)
             w.setWordWrap(True)
             w.setMinimumWidth(0)
             # QLabel with word wrap reports minSizeHint = longest-word-width by

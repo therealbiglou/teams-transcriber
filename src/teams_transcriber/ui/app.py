@@ -152,14 +152,26 @@ class App:
         self._refresh_history()
 
     def _build_main_content(self) -> None:
+        from PySide6.QtWidgets import QPushButton
+
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
 
+        # Top row: Record button + search
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
+        self.record_btn = QPushButton("Record")
+        self.record_btn.setProperty("role", "primary")
+        self.record_btn.setFixedHeight(36)
+        self.record_btn.clicked.connect(self._toggle_manual)
+        top_row.addWidget(self.record_btn)
+
         self.search = SearchBar()
         self.search.query_changed.connect(self._on_search)
-        layout.addWidget(self.search)
+        top_row.addWidget(self.search, 1)
+        layout.addLayout(top_row)
 
         self.active_banner = ActiveRecordingBanner()
         self.active_banner.clicked.connect(self._open_workspace)
@@ -176,6 +188,7 @@ class App:
         self.summary.delete_requested.connect(self._delete_recording)
         self.summary.notes_requested.connect(self._open_workspace)
         self.summary.retry_requested.connect(self._retry_recording)
+        self.summary.transcript_requested.connect(self._show_transcript)
         body_layout.addWidget(self.history, 1)
         body_layout.addWidget(self.summary, 1)
         layout.addWidget(body, 1)
@@ -339,6 +352,13 @@ class App:
         # No-op here — _on_recording_started handles the toast.
         del evt
 
+    def _update_record_button(self) -> None:
+        """Sync the Record/Stop button label to current recording state."""
+        if self._active_recording_id is not None:
+            self.record_btn.setText("Stop")
+        else:
+            self.record_btn.setText("Record")
+
     def _on_recording_started(self, evt: RecordingStarted) -> None:
         self.tray.set_state(TrayState.RECORDING, label=Path(evt.audio_path).stem)
         recording_id = evt.recording_id
@@ -355,6 +375,7 @@ class App:
             action_label="Open workspace",
             action_callback=lambda: self._open_workspace(recording_id),
         )
+        self._update_record_button()
         self._refresh_history()
 
     def _on_recording_finalized(self, _evt: RecordingFinalized) -> None:
@@ -371,10 +392,12 @@ class App:
             if ws is not None:
                 ws.set_recording_finished()
         self.active_banner.set_processing()
+        self._update_record_button()
         self._refresh_history()
 
     def _on_recording_failed(self, evt: RecordingFailed) -> None:
         self.tray.set_state(TrayState.ERROR)
+        self._active_recording_id = None
         msg = evt.error_message
         if "audio devices" in msg.lower():
             show_in_app_toast(
@@ -385,6 +408,7 @@ class App:
         else:
             show_in_app_toast("Recording failed", msg)
         self.active_banner.hide_banner()
+        self._update_record_button()
         self._refresh_history()
 
     def _on_recording_device_fallback(self, evt) -> None:
@@ -550,6 +574,14 @@ class App:
         windows = getattr(self, "_workspace_windows", {})
         windows.pop(recording_id, None)
         self._refresh_history()
+
+    def _show_transcript(self, recording_id: int) -> None:
+        from teams_transcriber.ui.transcript_window import TranscriptWindow
+        win = TranscriptWindow(db=self.db, recording_id=recording_id)
+        win.show()
+        # Keep a reference so it doesn't get garbage-collected.
+        self._transcript_windows = getattr(self, "_transcript_windows", {})
+        self._transcript_windows[recording_id] = win
 
     def _quit(self) -> None:
         self.hotkeys.stop()
