@@ -146,3 +146,33 @@ def test_no_audio_devices_error_is_exception() -> None:
     assert issubclass(NoAudioDevicesError, Exception)
     err = NoAudioDevicesError("no devices")
     assert str(err) == "no devices"
+
+
+def test_update_available_event_round_trip() -> None:
+    from teams_transcriber.events import UpdateAvailable
+
+    evt = UpdateAvailable(
+        version="v0.5.1",
+        download_url="https://example.com/installer.exe",
+        release_url="https://github.com/therealbiglou/teams-transcriber/releases/tag/v0.5.1",
+    )
+    assert evt.version == "v0.5.1"
+    assert evt.download_url == "https://example.com/installer.exe"
+    assert evt.release_url.endswith("v0.5.1")
+
+
+def test_update_check_completed_event_round_trip() -> None:
+    from teams_transcriber.events import UpdateCheckCompleted
+
+    evt_with_update = UpdateCheckCompleted(
+        latest_version="v0.5.1",
+        checked_at="2026-05-21T12:00:00+00:00",
+    )
+    assert evt_with_update.latest_version == "v0.5.1"
+    assert evt_with_update.checked_at == "2026-05-21T12:00:00+00:00"
+
+    evt_no_update = UpdateCheckCompleted(
+        latest_version=None,
+        checked_at="2026-05-21T12:00:00+00:00",
+    )
+    assert evt_no_update.latest_version is None

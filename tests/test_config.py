@@ -153,6 +153,33 @@ def test_audio_device_dict_round_trip() -> None:
         assert s2.audio_loopback_device == {"id": "{spk-id-1}", "name": "Realtek Speakers"}
 
 
+def test_auto_check_updates_default_true(paths: AppPaths) -> None:
+    s = load_settings(paths)
+    assert s.auto_check_updates is True
+
+
+def test_auto_check_updates_persists(paths: AppPaths) -> None:
+    s = load_settings(paths)
+    s._raw["general"]["auto_check_updates"] = False
+    save_settings(paths, s)
+    s2 = load_settings(paths)
+    assert s2.auto_check_updates is False
+
+
+def test_last_update_check_default_none(paths: AppPaths) -> None:
+    s = load_settings(paths)
+    assert s.last_update_check is None
+
+
+def test_last_update_check_persists(paths: AppPaths) -> None:
+    s = load_settings(paths)
+    ts = "2026-05-21T12:00:00+00:00"
+    s._raw["general"]["last_update_check"] = ts
+    save_settings(paths, s)
+    s2 = load_settings(paths)
+    assert s2.last_update_check == ts
+
+
 def test_audio_device_legacy_string_loads_as_none() -> None:
     """Old settings.json files that stored mic_device as a bare string load gracefully."""
     import json

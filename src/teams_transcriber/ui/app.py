@@ -131,6 +131,8 @@ class App:
         self.bridge.transcription_failed.connect(self._on_transcription_failed)
         self.bridge.summary_ready.connect(self._on_summary_ready)
         self.bridge.summary_failed.connect(self._on_summary_failed)
+        self.bridge.update_available.connect(self._on_update_available)
+        self.bridge.update_check_completed.connect(self._on_update_check_completed)
 
         self.hotkeys = HotkeyManager()
         self._apply_hotkeys(self.settings.hotkeys)
@@ -150,6 +152,11 @@ class App:
 
         self.pipeline.serve()
         self._refresh_history()
+
+        # Background update check on startup.
+        if self.settings.auto_check_updates:
+            import threading
+            threading.Thread(target=self._background_update_check, daemon=True).start()
 
     def _build_main_content(self) -> None:
         from PySide6.QtWidgets import QPushButton
@@ -530,6 +537,59 @@ class App:
             action_callback=lambda: self._show_summary(recording_id),
         )
         self._refresh_history()
+
+    def _background_update_check(self) -> None:
+        from datetime import UTC, datetime
+
+        from teams_transcriber import __version__
+        from teams_transcriber.events import UpdateAvailable, UpdateCheckCompleted
+        from teams_transcriber.update_checker import (
+            UpdateCheckError,
+            fetch_latest_release,
+            is_update_available,
+        )
+
+        try:
+            latest = fetch_latest_release()
+        except UpdateCheckError as exc:
+            logger.warning("update check failed: %s", exc)
+            return
+
+        now_iso = datetime.now(UTC).isoformat()
+        if is_update_available(__version__, latest):
+            self.bus.publish(UpdateAvailable(
+                version=latest.tag,
+                download_url=latest.installer_url,
+                release_url=latest.html_url,
+            ))
+        self.bus.publish(UpdateCheckCompleted(
+            latest_version=(latest.tag if is_update_available(__version__, latest) else None),
+            checked_at=now_iso,
+        ))
+
+    def _on_update_available(self, evt) -> None:
+        show_in_app_toast(
+            f"Update available: {evt.version}",
+            "Click Install to download the latest installer.",
+            action_label="Install",
+            action_callback=lambda: self._start_update_download(evt),
+        )
+
+    def _on_update_check_completed(self, evt) -> None:
+        # Persist last_update_check.
+        self.settings._raw["general"]["last_update_check"] = evt.checked_at
+        from teams_transcriber.config import save_settings
+        save_settings(self.paths, self.settings)
+
+    def _start_update_download(self, evt) -> None:
+        from teams_transcriber.ui.update_dialog import UpdateDialog
+        dlg = UpdateDialog(
+            version=evt.version,
+            download_url=evt.download_url,
+            paths=self.paths,
+            parent=self.window,
+        )
+        dlg.exec()
 
     def _open_workspace_for_active(self) -> None:
         if self._active_recording_id is not None:

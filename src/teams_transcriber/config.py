@@ -21,6 +21,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "general": {
         "auto_launch": True,
         "pause_on_startup": False,
+        "auto_check_updates": True,
+        "last_update_check": None,
     },
     "audio": {
         "mic_device": None,
@@ -88,6 +90,15 @@ class Settings:
     @auto_launch.setter
     def auto_launch(self, value: bool) -> None:
         self._raw["general"]["auto_launch"] = bool(value)
+
+    @property
+    def auto_check_updates(self) -> bool:
+        return bool(self._raw["general"].get("auto_check_updates", True))
+
+    @property
+    def last_update_check(self) -> str | None:
+        v = self._raw["general"].get("last_update_check")
+        return v if isinstance(v, str) else None
 
     # --- audio
     @property

@@ -23,6 +23,7 @@ def _enumerate_speakers() -> list:
         return []
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -79,6 +80,7 @@ class SettingsDialog(QDialog):
         self._tabs.addTab(self._build_transcription_tab(), "Transcription")
         self._tabs.addTab(self._build_ai_tab(), "AI")
         self._tabs.addTab(self._build_shortcuts_tab(), "Shortcuts")
+        self._tabs.addTab(self._build_about_tab(), "About")
         outer.addWidget(self._tabs)
 
         buttons = QDialogButtonBox(
@@ -241,6 +243,69 @@ class SettingsDialog(QDialog):
         outer.addStretch(1)
         return w
 
+    def _build_about_tab(self) -> QWidget:
+        from teams_transcriber import __version__
+
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setSpacing(12)
+
+        title = QLabel("<h2>Teams Transcriber</h2>")
+        v.addWidget(title)
+
+        version_label = QLabel(f"Version: <b>{__version__}</b>")
+        v.addWidget(version_label)
+
+        last_check = self._settings.last_update_check or "Never"
+        self._last_check_label = QLabel(f"Last update check: {last_check}")
+        v.addWidget(self._last_check_label)
+
+        # Auto-check checkbox.
+        self._auto_check_cb = QCheckBox("Automatically check for updates on startup")
+        self._auto_check_cb.setChecked(self._settings.auto_check_updates)
+        v.addWidget(self._auto_check_cb)
+
+        # "Check for updates now" button.
+        check_btn = QPushButton("Check for updates now")
+        check_btn.setProperty("role", "primary")
+        check_btn.clicked.connect(self._manual_update_check)
+        v.addWidget(check_btn)
+
+        self._update_check_result = QLabel("")
+        self._update_check_result.setWordWrap(True)
+        v.addWidget(self._update_check_result)
+
+        v.addStretch(1)
+        return w
+
+    def _manual_update_check(self) -> None:
+        """Runs update_checker.fetch_latest_release synchronously, updates UI."""
+        from teams_transcriber import __version__
+        from teams_transcriber.update_checker import (
+            UpdateCheckError,
+            fetch_latest_release,
+            is_update_available,
+        )
+        from datetime import datetime, UTC
+
+        self._update_check_result.setText("Checking…")
+        QApplication.processEvents()  # let the label repaint
+        try:
+            latest = fetch_latest_release()
+        except UpdateCheckError as exc:
+            self._update_check_result.setText(f"<span style='color: #DC2626;'>Check failed: {exc}</span>")
+            return
+        ts = datetime.now(UTC).strftime("%Y-%m-%d %I:%M %p UTC")
+        self._last_check_label.setText(f"Last update check: {ts}")
+        if is_update_available(__version__, latest):
+            self._update_check_result.setText(
+                f"<b>Update available: {latest.tag}</b><br>"
+                f"<a href='{latest.html_url}'>View release notes</a>"
+            )
+            self._update_check_result.setOpenExternalLinks(True)
+        else:
+            self._update_check_result.setText("You're on the latest version.")
+
     def _redownload_model(self) -> None:
         """Wipe the cached Whisper model snapshot dir and re-download.
 
@@ -323,6 +388,8 @@ class SettingsDialog(QDialog):
     def _on_accept(self) -> None:
         s = self._settings
         s._raw["general"]["auto_launch"] = self.auto_launch_cb.isChecked()
+        # General — auto_check_updates (new).
+        s._raw["general"]["auto_check_updates"] = self._auto_check_cb.isChecked()
         s._raw["audio"]["retention_days"] = self.retention_spin.value()
         # Audio device selections — Phase 6.
         s._raw["audio"]["mic_device"] = self._mic_combo.currentData()

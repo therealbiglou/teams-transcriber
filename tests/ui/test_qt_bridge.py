@@ -136,3 +136,38 @@ def test_bridge_emits_transcription_failed(qapp) -> None:
     bus.publish(TranscriptionFailed(recording_id=7, error_message="ouch"))
     qapp.processEvents()
     assert received and received[0].error_message == "ouch"
+
+
+def test_bridge_emits_update_available(qapp) -> None:
+    from teams_transcriber.events import EventBus, UpdateAvailable
+    from teams_transcriber.ui.qt_bridge import QtEventBridge
+
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    received: list[UpdateAvailable] = []
+    bridge.update_available.connect(received.append)
+
+    bus.publish(UpdateAvailable(
+        version="v0.5.1",
+        download_url="https://example.com/installer.exe",
+        release_url="https://github.com/therealbiglou/teams-transcriber/releases/tag/v0.5.1",
+    ))
+    qapp.processEvents()
+    assert received and received[0].version == "v0.5.1"
+
+
+def test_bridge_emits_update_check_completed(qapp) -> None:
+    from teams_transcriber.events import EventBus, UpdateCheckCompleted
+    from teams_transcriber.ui.qt_bridge import QtEventBridge
+
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    received: list[UpdateCheckCompleted] = []
+    bridge.update_check_completed.connect(received.append)
+
+    bus.publish(UpdateCheckCompleted(
+        latest_version="v0.5.1",
+        checked_at="2026-05-21T12:00:00+00:00",
+    ))
+    qapp.processEvents()
+    assert received and received[0].latest_version == "v0.5.1"

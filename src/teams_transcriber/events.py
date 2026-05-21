@@ -97,6 +97,20 @@ class RecordingDeviceFallback(Event):
     requested_name: str   # name of the saved-but-unavailable device
 
 
+@dataclass(slots=True, frozen=True)
+class UpdateAvailable(Event):
+    version: str
+    download_url: str
+    release_url: str
+
+
+@dataclass(slots=True, frozen=True)
+class UpdateCheckCompleted(Event):
+    """Refreshes the Settings → About 'last checked' display."""
+    latest_version: str | None  # None if no newer version available
+    checked_at: str             # ISO 8601 UTC
+
+
 # --- EventBus -------------------------------------------------------------
 
 E = TypeVar("E", bound=Event)

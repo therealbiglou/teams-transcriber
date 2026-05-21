@@ -23,6 +23,8 @@ from teams_transcriber.events import (
     SummaryReady,
     TranscriptionComplete,
     TranscriptionFailed,
+    UpdateAvailable,
+    UpdateCheckCompleted,
 )
 
 
@@ -41,6 +43,8 @@ class QtEventBridge(QObject):
     summary_failed = Signal(object)
     live_segment_available = Signal(object)
     live_transcription_degraded = Signal(object)
+    update_available = Signal(object)
+    update_check_completed = Signal(object)
 
     def __init__(self, bus: EventBus, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -58,6 +62,8 @@ class QtEventBridge(QObject):
         bus.subscribe(SummaryFailed,          self._on_summary_failed)
         bus.subscribe(LiveSegmentAvailable,        self._on_live_segment)
         bus.subscribe(LiveTranscriptionDegraded,   self._on_live_degraded)
+        bus.subscribe(UpdateAvailable,             self._on_update_available)
+        bus.subscribe(UpdateCheckCompleted,        self._on_update_check_completed)
 
     def _on_meeting_detected(self, e: MeetingDetected) -> None:        self.meeting_detected.emit(e)
     def _on_meeting_ended(self, e: MeetingEnded) -> None:              self.meeting_ended.emit(e)
@@ -76,3 +82,7 @@ class QtEventBridge(QObject):
         self.live_segment_available.emit(e)
     def _on_live_degraded(self, e: LiveTranscriptionDegraded) -> None:
         self.live_transcription_degraded.emit(e)
+    def _on_update_available(self, e: UpdateAvailable) -> None:
+        self.update_available.emit(e)
+    def _on_update_check_completed(self, e: UpdateCheckCompleted) -> None:
+        self.update_check_completed.emit(e)
