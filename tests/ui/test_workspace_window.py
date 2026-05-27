@@ -165,3 +165,19 @@ def test_show_waiting_for_processing_reveals_footer_note(env, qapp):
     assert win._waiting_label.text() == ""
     win.show_waiting_for_processing()
     assert "close this window" in win._waiting_label.text().lower()
+
+
+def test_workspace_is_resizable_with_shared_chrome(env, qapp):
+    from PySide6.QtCore import QPoint, Qt
+
+    from teams_transcriber.ui.frameless import FramelessWindowMixin
+
+    paths, db, settings = env
+    rid = _make_recording(db, status=RecordingStatus.DONE)
+    win = WorkspaceWindow(
+        db=db, recording_id=rid, bridge=QtEventBridge(EventBus()), live=False,
+    )
+    win.resize(900, 600)
+    assert isinstance(win, FramelessWindowMixin)
+    assert win._edge_at(QPoint(2, 2)) == (Qt.Edge.LeftEdge | Qt.Edge.TopEdge)
+    assert win._pin_btn is not None

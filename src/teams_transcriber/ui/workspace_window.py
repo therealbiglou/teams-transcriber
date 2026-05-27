@@ -9,10 +9,8 @@ and doesn't subscribe to updates.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QMouseEvent
 from PySide6.QtWidgets import (
     QFrame,
-    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -23,59 +21,14 @@ from PySide6.QtWidgets import (
 
 from teams_transcriber.events import LiveSegmentAvailable
 from teams_transcriber.storage import Database, RecordingRepo, TranscriptRepo
+from teams_transcriber.ui.frameless import FramelessWindowMixin
 from teams_transcriber.ui.live_transcript_view import LiveTranscriptView
 from teams_transcriber.ui.notes_editor import NotesEditor
 from teams_transcriber.ui.qt_bridge import QtEventBridge
+from teams_transcriber.ui.title_bar import TitleBar
 
 
-class _WorkspaceTitleBar(QWidget):
-    close_requested = Signal()
-    always_on_top_toggled = Signal(bool)
-
-    def __init__(self, title: str, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setFixedHeight(44)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 8, 8, 8)
-        layout.setSpacing(8)
-
-        self._dot = QLabel("●")
-        self._dot.setStyleSheet("color: #9CA3AF; font-size: 14px;")
-        layout.addWidget(self._dot)
-
-        self._title = QLabel(title)
-        self._title.setStyleSheet("font-weight: 600;")
-        layout.addWidget(self._title, 1)
-
-        self._pin = QPushButton("📌")
-        self._pin.setCheckable(True)
-        self._pin.setProperty("role", "ghost")
-        self._pin.setFixedSize(28, 28)
-        self._pin.setToolTip("Always on top")
-        self._pin.toggled.connect(self.always_on_top_toggled.emit)
-        layout.addWidget(self._pin)
-
-        close = QPushButton("✕")
-        close.setProperty("role", "ghost")
-        close.setFixedSize(28, 28)
-        close.clicked.connect(self.close_requested.emit)
-        layout.addWidget(close)
-
-    def set_recording(self, recording: bool) -> None:
-        color = "#EF4444" if recording else "#9CA3AF"
-        self._dot.setStyleSheet(f"color: {color}; font-size: 14px;")
-
-    def mousePressEvent(self, ev: QMouseEvent) -> None:  # noqa: N802
-        if ev.button() == Qt.MouseButton.LeftButton:
-            win = self.window()
-            if win is not None:
-                handle = win.windowHandle()
-                if handle is not None:
-                    handle.startSystemMove()
-        super().mousePressEvent(ev)
-
-
-class WorkspaceWindow(QWidget):
+class WorkspaceWindow(FramelessWindowMixin, QWidget):
     """Frameless workspace window with notes (70 %) + live transcript (30 %)."""
 
     stop_recording_requested = Signal(int)  # recording_id
@@ -103,22 +56,15 @@ class WorkspaceWindow(QWidget):
             Qt.WindowType.Window
             | Qt.WindowType.FramelessWindowHint,
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setMouseTracking(True)
         self.resize(1100, 700)
 
         self._frame = QFrame()
-        self._frame.setObjectName("workspaceFrame")
-        self._frame.setStyleSheet(
-            "QFrame#workspaceFrame { background: #F2EFE9; border-radius: 16px; }"
-        )
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(36)
-        shadow.setColor(QColor(0, 0, 0, 60))
-        shadow.setOffset(0, 6)
-        self._frame.setGraphicsEffect(shadow)
+        self._frame.setObjectName("OuterFrame")  # mixin styles this
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self._frame)
 
         inner = QVBoxLayout(self._frame)
@@ -127,11 +73,29 @@ class WorkspaceWindow(QWidget):
 
         rec = RecordingRepo(db).get(recording_id)
         title = (rec.display_title if rec else None) or "Meeting"
-        self._title_bar = _WorkspaceTitleBar(title)
-        self._title_bar.set_recording(live)
+
+        self._dot = QLabel("●")
+        self._dot.setStyleSheet("color: #9CA3AF; font-size: 14px;")
+
+        self._pin_btn = QPushButton("📌")
+        self._pin_btn.setCheckable(True)
+        self._pin_btn.setProperty("role", "ghost")
+        self._pin_btn.setFixedSize(28, 28)
+        self._pin_btn.setToolTip("Always on top")
+        self._pin_btn.toggled.connect(self._on_always_on_top)
+
+        self._title_bar = TitleBar(
+            title=title,
+            controls=("min", "max", "close"),
+            extra_left=[self._dot],
+            extra_right=[self._pin_btn],
+        )
+        self._title_bar.minimize_requested.connect(self.showMinimized)
+        self._title_bar.maximize_requested.connect(self.toggle_max)
         self._title_bar.close_requested.connect(self.close)
-        self._title_bar.always_on_top_toggled.connect(self._on_always_on_top)
         inner.addWidget(self._title_bar)
+
+        self._set_recording_dot(live)
 
         # 70/30 splitter
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -181,6 +145,12 @@ class WorkspaceWindow(QWidget):
             segments = TranscriptRepo(db).list_for_recording(recording_id)
             self.transcript_view.load_segments(segments)
 
+        self._init_frameless(self._frame, resizable=True, title_bar=self._title_bar)
+
+    def _set_recording_dot(self, recording: bool) -> None:
+        color = "#EF4444" if recording else "#9CA3AF"
+        self._dot.setStyleSheet(f"color: {color}; font-size: 14px;")
+
     def _show_placeholder(self, text: str) -> None:
         from PySide6.QtCore import Qt
         from PySide6.QtWidgets import QLabel
@@ -223,7 +193,7 @@ class WorkspaceWindow(QWidget):
 
     def set_recording_finished(self) -> None:
         """Transition the workspace from live to finished mode."""
-        self._title_bar.set_recording(False)
+        self._set_recording_dot(False)
         self._stop_button.setVisible(False)
         self._live = False
         try:
