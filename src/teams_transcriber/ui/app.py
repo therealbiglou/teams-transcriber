@@ -79,12 +79,15 @@ class _WorkspaceTracker:
             return recording_id in self._ids
 
 
-def _fmt_export_time(iso: str) -> str:
+def _default_export_name(title: str, started_at: str) -> str:
+    import re
     from datetime import datetime
+    slug = re.sub(r"[^a-z0-9]+", "-", (title or "meeting").lower()).strip("-") or "meeting"
     try:
-        return datetime.fromisoformat(iso).astimezone().strftime("%Y-%m-%d %I:%M %p").lstrip("0")
+        day = datetime.fromisoformat(started_at).astimezone().strftime("%Y-%m-%d")
     except ValueError:
-        return iso
+        day = "export"
+    return f"{slug}-{day}.pdf"
 
 
 def _make_app() -> QApplication:
@@ -325,32 +328,24 @@ class App:
         self.summary.show_recording(recording_id)
 
     def _export_summary(self, recording_id: int) -> None:
-        path, _ = QFileDialog.getSaveFileName(
-            self.window, "Export summary",
-            f"meeting-{recording_id}.md",
-            "Markdown (*.md);;Plain text (*.txt)",
-        )
-        if not path:
-            return
         rec = RecordingRepo(self.db).get(recording_id)
         s = SummaryRepo(self.db).get(recording_id)
         if rec is None or s is None:
             return
-        lines = [
-            f"# {s.title or rec.display_title or 'Meeting'}", "",
-            f"_{_fmt_export_time(rec.started_at)} · {(rec.duration_ms or 0)/60000:.0f} min_", "",
-            s.summary or "", "", "## My todos",
-        ]
-        for t in s.my_todos:
-            lines.append(f"- [ ] {t.task}" + (f" (due {t.due})" if t.due else ""))
-        lines += ["", "## Action items for others"]
-        for a in s.action_items_others:
-            lines.append(f"- {a.who}: {a.task}" + (f" (due {a.due})" if a.due else ""))
-        lines += ["", "## Key decisions"]
-        lines += [f"- {d}" for d in s.key_decisions]
-        lines += ["", "## Follow-ups"]
-        lines += [f"- {f}" for f in s.follow_ups]
-        Path(path).write_text("\n".join(lines), encoding="utf-8")
+        default_name = _default_export_name(rec.display_title or s.title or "meeting", rec.started_at)
+        path, _ = QFileDialog.getSaveFileName(
+            self.window, "Export summary", default_name,
+            "PDF (*.pdf);;Markdown (*.md);;Plain text (*.txt)",
+        )
+        if not path:
+            return
+        from teams_transcriber.storage import TodoStateRepo
+        from teams_transcriber.ui.pdf_export import write_summary_export
+        states = {
+            st.todo_index: st.done
+            for st in TodoStateRepo(self.db).list_for_recording(recording_id)
+        }
+        write_summary_export(path, s, rec, states)
 
     def _delete_recording(self, recording_id: int) -> None:
         """Confirm and delete a recording (DB row + audio file). Cascading delete
