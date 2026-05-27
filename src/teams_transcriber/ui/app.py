@@ -31,7 +31,7 @@ from teams_transcriber.events import (
 from teams_transcriber.meeting_watcher import MeetingWatcher, enumerate_windows
 from teams_transcriber.paths import AppPaths
 from teams_transcriber.pipeline import Pipeline
-from teams_transcriber.storage import RecordingRepo, RecordingSource, RecordingStatus, SummaryRepo, build_database
+from teams_transcriber.storage import RecordingRepo, RecordingSource, RecordingStatus, SummaryRepo, TodoStateRepo, build_database
 from teams_transcriber.storage.models import Recording
 from teams_transcriber.summarizer import Summarizer
 from teams_transcriber.transcriber import Transcriber
@@ -196,6 +196,9 @@ class App:
         self.summary.notes_requested.connect(self._open_workspace)
         self.summary.retry_requested.connect(self._retry_recording)
         self.summary.transcript_requested.connect(self._show_transcript)
+        self.summary.todo_state_changed.connect(
+            lambda _rid: self._refresh_history(query=self.search.input.text() or None)
+        )
         body_layout.addWidget(self.history, 1)
         body_layout.addWidget(self.summary, 1)
         layout.addWidget(body, 1)
@@ -206,14 +209,16 @@ class App:
     def _refresh_history(self, query: str | None = None) -> None:
         rec_repo = RecordingRepo(self.db)
         sum_repo = SummaryRepo(self.db)
-        rows: list[tuple[Recording, str | None, int]] = []
+        todo_repo = TodoStateRepo(self.db)
+        rows: list[tuple[Recording, str | None, int, int]] = []
         for rec in rec_repo.list_recent(limit=200):
             if rec.id is None:
                 continue
             s = sum_repo.get(rec.id)
             one_line = s.one_line if s else None
             todos = len(s.my_todos) if s else 0
-            rows.append((rec, one_line, todos))
+            done = sum(1 for st in todo_repo.list_for_recording(rec.id) if st.done) if s else 0
+            rows.append((rec, one_line, todos, done))
         if query:
             ql = query.lower()
             rows = [

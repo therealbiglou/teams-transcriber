@@ -290,6 +290,23 @@ def test_summary_pane_no_retry_for_recording_failed(tmp_path, qapp) -> None:
     db.close()
 
 
+def test_todo_state_changed_signal_emitted_on_toggle(qapp, qtbot, db_with_summary) -> None:
+    """Toggling a todo checkbox emits todo_state_changed with the recording_id."""
+    db, rec_id = db_with_summary
+    pane = SummaryPane(db)
+
+    received: list[int] = []
+    pane.todo_state_changed.connect(received.append)
+
+    pane.show_recording(rec_id)
+    from PySide6.QtWidgets import QCheckBox
+    cbs = pane.findChildren(QCheckBox)
+    assert len(cbs) >= 1, "Expected at least one todo checkbox"
+    # Toggle the first checkbox (currently unchecked → checked)
+    cbs[0].setChecked(True)
+    assert received == [rec_id]
+
+
 def test_all_non_header_labels_are_selectable(tmp_path, qapp) -> None:
     """Every visible QLabel outside of section headers must be text-selectable.
 

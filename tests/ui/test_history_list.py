@@ -39,8 +39,8 @@ def test_buckets_partition_by_date() -> None:
 
 def test_filter_for_bucket_failed() -> None:
     rows = [
-        (_rec(1, "2026-05-15T10:00:00+00:00", RecordingStatus.DONE), None, 0),
-        (_rec(2, "2026-05-15T10:00:00+00:00", RecordingStatus.SUMMARY_FAILED), None, 0),
+        (_rec(1, "2026-05-15T10:00:00+00:00", RecordingStatus.DONE), None, 0, 0),
+        (_rec(2, "2026-05-15T10:00:00+00:00", RecordingStatus.SUMMARY_FAILED), None, 0, 0),
     ]
     out = filter_for_bucket(rows, SidebarBucket.FAILED)
     assert [r[0].id for r in out] == [2]
@@ -48,8 +48,8 @@ def test_filter_for_bucket_failed() -> None:
 
 def test_filter_for_bucket_manual() -> None:
     rows = [
-        (_rec(1, "2026-05-15T10:00:00+00:00", source=RecordingSource.TEAMS), None, 0),
-        (_rec(2, "2026-05-15T10:00:00+00:00", source=RecordingSource.MANUAL), None, 0),
+        (_rec(1, "2026-05-15T10:00:00+00:00", source=RecordingSource.TEAMS), None, 0, 0),
+        (_rec(2, "2026-05-15T10:00:00+00:00", source=RecordingSource.MANUAL), None, 0, 0),
     ]
     out = filter_for_bucket(rows, SidebarBucket.MANUAL)
     assert [r[0].id for r in out] == [2]
@@ -61,7 +61,7 @@ def test_history_list_renders_and_emits(qapp, qtbot) -> None:
     received: list[int] = []
     lst.recording_selected.connect(received.append)
 
-    rows = [(_rec(1, "2026-05-15T10:00:00+00:00"), "one-liner", 2)]
+    rows = [(_rec(1, "2026-05-15T10:00:00+00:00"), "one-liner", 2, 0)]
     lst.set_recordings(rows)
 
     from teams_transcriber.ui.meeting_card import MeetingCard
@@ -69,3 +69,11 @@ def test_history_list_renders_and_emits(qapp, qtbot) -> None:
     assert len(cards) == 1
     qtbot.mouseClick(cards[0], Qt.MouseButton.LeftButton)
     assert received == [1]
+
+
+def test_history_list_accepts_four_tuple(qapp) -> None:
+    """set_recordings must accept 4-tuples (Recording, one_line, todo_count, todos_done)."""
+    lst = HistoryList()
+    rows = [(_rec(1, "2026-05-15T10:00:00+00:00"), "one line", 3, 1)]
+    lst.set_recordings(rows)
+    assert 1 in lst._cards

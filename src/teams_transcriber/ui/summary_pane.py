@@ -44,6 +44,7 @@ class SummaryPane(QScrollArea):
     notes_requested = Signal(int)        # recording_id — open notes editor
     retry_requested = Signal(int)        # recording_id — re-run from the failed step
     transcript_requested = Signal(int)   # recording_id — open transcript window
+    todo_state_changed = Signal(int)     # recording_id — a checkbox toggled
 
     def __init__(self, db: Database, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -221,10 +222,10 @@ class SummaryPane(QScrollArea):
             state = existing.get(i)
             if state is not None and state.done:
                 cb.setChecked(True)
-            cb.toggled.connect(
-                lambda checked, idx=i, task=td.task:
+            def _on_toggle(checked, idx=i, task=td.task):
                 todo_repo.upsert(summary.recording_id, idx, task, checked)
-            )
+                self.todo_state_changed.emit(summary.recording_id)
+            cb.toggled.connect(_on_toggle)
             rows.append(cb)
         return _section_card("My todos", rows)
 
