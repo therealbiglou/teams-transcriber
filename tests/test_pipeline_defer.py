@@ -114,6 +114,31 @@ def test_release_processing_submits_and_clears(tmp_path: Path, monkeypatch: pyte
     db.close()
 
 
+def test_release_before_finalize_does_not_strand(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TOCTOU race: notes window closes (release) before RecordingFinalized arrives.
+
+    The release marks an early-release flag; when finalize runs it must NOT defer
+    (which would strand the recording in WAITING_FOR_NOTES) — it must process it.
+    """
+    pipe, db = _build_pipeline(tmp_path, gate=lambda rid: True)
+    rid = _make_recording(db, RecordingStatus.TRANSCRIBING)
+
+    submitted: list[int] = []
+    monkeypatch.setattr(pipe, "_submit_post_processing", lambda rid: submitted.append(rid))
+
+    # Release arrives first (notes window already closed) — no deferral stored yet.
+    pipe.release_processing(rid)
+    # Now the finalize handler runs.
+    pipe._on_recording_finalized(RecordingFinalized(recording_id=rid, duration_ms=1000))
+
+    assert submitted == [rid]  # processed, not deferred
+    assert rid not in pipe._deferred
+    assert RecordingRepo(db).get(rid).status != RecordingStatus.WAITING_FOR_NOTES
+    db.close()
+
+
 def test_release_unknown_id_is_noop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     pipe, db = _build_pipeline(tmp_path, gate=lambda rid: True)
 

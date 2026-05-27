@@ -54,6 +54,7 @@ class Pipeline:
         self._audio_source_factory = audio_source_factory
         self._processing_gate = processing_gate
         self._deferred: dict[int, RecordingFinalized] = {}
+        self._release_requested: set[int] = set()
         self._defer_lock = threading.Lock()
         self._recorder: Recorder | None = None
         self._live_transcriber: LiveTranscriber | None = None
@@ -108,8 +109,11 @@ class Pipeline:
         """Resume deferred post-processing (called when the notes window closes)."""
         with self._defer_lock:
             evt = self._deferred.pop(recording_id, None)
-        if evt is None:
-            return
+            if evt is None:
+                # Release may have arrived before _on_recording_finalized stored the
+                # deferral (race). Mark it so the finalize handler won't strand it.
+                self._release_requested.add(recording_id)
+                return
         RecordingRepo(self._db).update_status(recording_id, RecordingStatus.TRANSCRIBING)
         self._submit_post_processing(recording_id)
 
@@ -163,14 +167,27 @@ class Pipeline:
         self._pending_futures.append(future)
 
     def _on_recording_finalized(self, evt: RecordingFinalized) -> None:
-        if self._processing_gate is not None and self._processing_gate(evt.recording_id):
-            RecordingRepo(self._db).update_status(
-                evt.recording_id, RecordingStatus.WAITING_FOR_NOTES,
+        with self._defer_lock:
+            # Evaluate the gate inside the lock so defer and release_processing
+            # are serialized — this closes the TOCTOU race where a release that
+            # arrives between the gate read and the store would be lost.
+            gated = (
+                self._processing_gate is not None
+                and self._processing_gate(evt.recording_id)
+                and evt.recording_id not in self._release_requested
             )
-            with self._defer_lock:
+            if gated:
+                RecordingRepo(self._db).update_status(
+                    evt.recording_id, RecordingStatus.WAITING_FOR_NOTES,
+                )
                 self._deferred[evt.recording_id] = evt
-            logger.info("deferring post-processing for %d (notes window open)", evt.recording_id)
-            return
+                logger.info(
+                    "deferring post-processing for %d (notes window open)", evt.recording_id,
+                )
+                return
+            # Not deferring (gate false, or a release already arrived early):
+            # clear any early-release marker so it can't leak to a future recording.
+            self._release_requested.discard(evt.recording_id)
         self._submit_post_processing(evt.recording_id)
 
     def _on_recording_failed(self, evt: RecordingFailed) -> None:

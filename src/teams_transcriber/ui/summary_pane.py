@@ -267,7 +267,7 @@ def _section_card(title: str, body_widgets: list[QWidget]) -> QFrame:
     layout = QVBoxLayout(card)
     layout.setContentsMargins(20, 16, 20, 16)
     layout.setSpacing(8)
-    header = QLabel(title)
+    header = _make_selectable(QLabel(title))
     header.setStyleSheet("font-size: 14px; font-weight: 600;")
     layout.addWidget(header)
     for w in body_widgets:
@@ -292,7 +292,7 @@ def _topics_row(topics: list[str]) -> QFrame:
     layout = QVBoxLayout(card)
     layout.setContentsMargins(20, 16, 20, 16)
     layout.setSpacing(8)
-    header = QLabel("Topics")
+    header = _make_selectable(QLabel("Topics"))
     header.setStyleSheet("font-size: 14px; font-weight: 600;")
     layout.addWidget(header)
 

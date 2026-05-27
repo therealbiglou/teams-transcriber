@@ -308,12 +308,12 @@ def test_todo_state_changed_signal_emitted_on_toggle(qapp, qtbot, db_with_summar
 
 
 def test_all_non_header_labels_are_selectable(tmp_path, qapp) -> None:
-    """Every visible QLabel outside of section headers must be text-selectable.
+    """Every visible QLabel — including section/card headers — must be text-selectable.
 
     Covers: title, meta, summary body, notes body, action-items-others body,
-    key-decisions body, follow-ups body.  Also covers the two bare placeholder
+    key-decisions body, follow-ups body, AND the bold card-title headers
+    (Summary, My notes, Topics, etc.). Also covers the two bare placeholder
     labels ("Recording not found." and "No summary yet for this recording.").
-    Section-header labels (the bold card titles) are decorative — excluded.
     """
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QLabel
@@ -329,12 +329,6 @@ def test_all_non_header_labels_are_selectable(tmp_path, qapp) -> None:
         build_database,
     )
     from teams_transcriber.ui.summary_pane import SummaryPane
-
-    HEADER_TEXTS = {
-        "Summary", "My notes", "My todos", "Key decisions",
-        "Follow-ups", "Action items for others", "Topics",
-        "Failed",
-    }
 
     db = build_database(tmp_path / "selectable.db")
     db.initialize()
@@ -367,14 +361,11 @@ def test_all_non_header_labels_are_selectable(tmp_path, qapp) -> None:
     pane = SummaryPane(db)
     pane.show_recording(rec.id)
 
-    non_header_labels = [
-        lbl for lbl in pane.findChildren(QLabel)
-        if lbl.text() not in HEADER_TEXTS
-    ]
-    assert non_header_labels, "Expected at least some non-header labels"
+    all_labels = pane.findChildren(QLabel)
+    assert all_labels, "Expected at least some labels"
 
     non_selectable = [
-        lbl.text() for lbl in non_header_labels
+        lbl.text() for lbl in all_labels
         if not (lbl.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse)
     ]
     assert non_selectable == [], (
