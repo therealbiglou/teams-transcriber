@@ -8,6 +8,16 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QVBoxLayout, QWidget
 
 
+# Section headings ("Meeting History", "Todos") — deliberately prominent so they
+# read as headings, not menu items. (Qt QSS supports font-size/weight/color but
+# not text-transform/letter-spacing, so prominence comes from size + weight + a
+# darker color + a divider rule.)
+_HEADING_STYLE = (
+    "font-size: 15px; font-weight: 800; color: #111827; "
+    "border-bottom: 1px solid #E5E7EB; margin-bottom: 2px; "
+)
+
+
 class SidebarBucket(Enum):
     ALL = "All meetings"
     TODAY = "Today"
@@ -33,9 +43,8 @@ class Sidebar(QFrame):
         layout.setContentsMargins(16, 24, 16, 24)
         layout.setSpacing(4)
 
-        header = QLabel("History")
-        header.setProperty("role", "muted")
-        header.setStyleSheet("font-weight: 600; padding: 0 8px 12px 8px;")
+        header = QLabel("Meeting History")
+        header.setStyleSheet(_HEADING_STYLE + "padding: 0 8px 8px 8px;")
         layout.addWidget(header)
 
         self._buttons: dict[SidebarBucket, QPushButton] = {}
@@ -47,8 +56,7 @@ class Sidebar(QFrame):
             self._buttons[bucket] = btn
 
         todos_header = QLabel("Todos")
-        todos_header.setProperty("role", "muted")
-        todos_header.setStyleSheet("font-weight: 600; padding: 16px 8px 12px 8px;")
+        todos_header.setStyleSheet(_HEADING_STYLE + "padding: 20px 8px 8px 8px;")
         layout.addWidget(todos_header)
 
         self.todos_button = QPushButton("To-Do List")

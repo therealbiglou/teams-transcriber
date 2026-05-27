@@ -1,6 +1,15 @@
 from teams_transcriber.ui.sidebar import Sidebar, SidebarBucket
 
 
+def test_sidebar_section_headings(qapp):
+    from PySide6.QtWidgets import QLabel
+    sb = Sidebar()
+    label_texts = [lbl.text() for lbl in sb.findChildren(QLabel)]
+    assert "Meeting History" in label_texts   # renamed from "History"
+    assert "History" not in label_texts
+    assert "Todos" in label_texts
+
+
 def test_todos_button_emits_todos_selected(qapp):
     sb = Sidebar()
     got = []
