@@ -143,11 +143,18 @@ as-is.
 
 ### New recording status
 
-Add to `RecordingStatus` (a `StrEnum`, stored as text — **no DB migration**):
+Add to `RecordingStatus` (a `StrEnum`):
 
 ```python
 WAITING_FOR_NOTES = "waiting_for_notes"
 ```
+
+**Correction (discovered during implementation):** the `recordings.status`
+column has a SQL `CHECK (status IN (...))` constraint, so a **schema migration
+IS required** — `schema_v3` rebuilds the `recordings` table with the expanded
+allowed-value set (SQLite can't ALTER a CHECK in place), preserving all columns
+and rows. The `MigrationRunner` toggles `PRAGMA foreign_keys = OFF` around each
+migration so the table rebuild doesn't cascade-delete child rows.
 
 ### Gate mechanism (pipeline stays UI-agnostic)
 
