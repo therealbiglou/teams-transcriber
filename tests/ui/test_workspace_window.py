@@ -59,7 +59,7 @@ def test_workspace_opens_in_live_mode_and_appends_segments(env, qapp) -> None:
         ),
     ))
     qapp.processEvents()
-    assert win.transcript_view.count() == 1
+    assert "hello live" in win.transcript_view.toPlainText()
 
 
 def test_workspace_ignores_segments_for_other_recordings(env, qapp) -> None:
@@ -77,7 +77,7 @@ def test_workspace_ignores_segments_for_other_recordings(env, qapp) -> None:
         ),
     ))
     qapp.processEvents()
-    assert win.transcript_view.count() == 0
+    assert "for another recording" not in win.transcript_view.toPlainText()
 
 
 def test_workspace_past_mode_loads_existing_segments_no_subscription(env, qapp) -> None:
@@ -90,7 +90,7 @@ def test_workspace_past_mode_loads_existing_segments_no_subscription(env, qapp) 
         channel=Channel.ME, text="historical",
     ))
     win = WorkspaceWindow(db=db, recording_id=rid, bridge=bridge, live=False)
-    assert win.transcript_view.count() == 1
+    assert "historical" in win.transcript_view.toPlainText()
     bus.publish(LiveSegmentAvailable(
         recording_id=rid,
         segment=TranscriptSegment(
@@ -99,7 +99,9 @@ def test_workspace_past_mode_loads_existing_segments_no_subscription(env, qapp) 
         ),
     ))
     qapp.processEvents()
-    assert win.transcript_view.count() == 1
+    # Past mode does not subscribe to live segments, so "newer" must not appear.
+    assert "newer" not in win.transcript_view.toPlainText()
+    assert "historical" in win.transcript_view.toPlainText()
 
 
 def test_workspace_stop_button_emits_signal(env, qapp) -> None:
@@ -153,4 +155,4 @@ def test_workspace_shows_placeholder_when_live_disabled(env, qapp) -> None:
         ),
     ))
     qapp.processEvents()
-    assert win.transcript_view.count() == 0
+    assert "should be ignored" not in win.transcript_view.toPlainText()

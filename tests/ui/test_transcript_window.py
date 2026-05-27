@@ -33,5 +33,5 @@ def test_transcript_window_loads_segments(tmp_path, qapp) -> None:
     ))
 
     win = TranscriptWindow(db=db, recording_id=rec.id)
-    assert win.transcript_view.count() == 1
+    assert "hello transcript" in win.transcript_view.toPlainText()
     db.close()

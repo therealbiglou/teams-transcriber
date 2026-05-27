@@ -1,22 +1,19 @@
-"""Scrollable list of live transcript segments.
+"""Read-only transcript document with smooth scroll + full selection.
 
-Each row: channel badge (ME = emerald pill, OTHERS = neutral pill),
-mm:ss timestamp, segment text. Auto-scrolls to the bottom when new
-segments arrive, but pauses auto-scroll when the user has scrolled up
-to read earlier content.
+One QTextEdit holds the whole transcript as a single selectable document, so
+the user can drag-select/copy across many lines and scroll smoothly (per-pixel).
+Each segment is one compact block: a colored channel tag, a mm:ss timestamp,
+then the text. Live mode appends blocks via a cursor; smart auto-scroll keeps
+the view pinned to the bottom only when the user is already at the bottom.
 """
 
 from __future__ import annotations
 
+import html
+
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QHBoxLayout,
-    QLabel,
-    QListWidget,
-    QListWidgetItem,
-    QSizePolicy,
-    QWidget,
-)
+from PySide6.QtGui import QTextCursor
+from PySide6.QtWidgets import QTextEdit, QWidget
 
 from teams_transcriber.storage import Channel, TranscriptSegment
 
@@ -26,80 +23,60 @@ def _format_ts(ms: int) -> str:
     return f"{total // 60:02d}:{total % 60:02d}"
 
 
-def _channel_label(channel: Channel) -> tuple[str, str, str]:
-    """Return (text, background_color, text_color) for the channel badge."""
+def _channel_color(channel: Channel) -> tuple[str, str]:
+    """Return (label, text_color) for the inline channel tag."""
     if channel == Channel.ME:
-        return "ME", "#10B981", "#FFFFFF"      # emerald pill
-    return "OTHERS", "#E5E7EB", "#111827"      # neutral pill
+        return "ME", "#10B981"      # emerald
+    return "OTHERS", "#475569"      # slate
 
 
-class _SegmentRow(QWidget):
-    def __init__(self, segment: TranscriptSegment, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(8)
-
-        badge_text, bg, fg = _channel_label(segment.channel)
-        badge = QLabel(badge_text)
-        badge.setStyleSheet(
-            f"background: {bg}; color: {fg}; "
-            "border-radius: 8px; padding: 2px 8px; "
-            "font-size: 11px; font-weight: 600;"
-        )
-        badge.setFixedHeight(20)
-        layout.addWidget(badge, 0, Qt.AlignmentFlag.AlignTop)
-
-        ts = QLabel(_format_ts(segment.start_ms))
-        ts.setStyleSheet("color: #6B7280; font-size: 11px;")
-        ts.setFixedWidth(48)
-        layout.addWidget(ts, 0, Qt.AlignmentFlag.AlignTop)
-
-        text = QLabel(segment.text)
-        text.setWordWrap(True)
-        text.setTextInteractionFlags(
-            Qt.TextInteractionFlag.TextSelectableByMouse
-            | Qt.TextInteractionFlag.TextSelectableByKeyboard,
-        )
-        text.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        layout.addWidget(text, 1)
-
-
-class LiveTranscriptView(QListWidget):
-    """List of segments with smart auto-scroll."""
-
-    RAW_TEXT_ROLE = Qt.ItemDataRole.UserRole + 1
+class LiveTranscriptView(QTextEdit):
+    """Single-document transcript view (read-only, selectable, smooth scroll)."""
 
     AUTO_SCROLL_BOTTOM_TOLERANCE_PX = 16
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setSelectionMode(QListWidget.SelectionMode.NoSelection)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setReadOnly(True)
+        self.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard,
+        )
+        self.document().setDocumentMargin(8)
         self.setStyleSheet(
-            "QListWidget { background: #FFFFFF; border: 1px solid #E5E7EB; "
-            "border-radius: 12px; }"
-            "QListWidget::item { border-bottom: 1px solid #F3F4F6; }"
-            "QListWidget::item:last { border-bottom: none; }"
+            "QTextEdit { background: #FFFFFF; border: 1px solid #E5E7EB; "
+            "border-radius: 12px; padding: 0px; }"
+        )
+
+    def _segment_html(self, segment: TranscriptSegment) -> str:
+        label, color = _channel_color(segment.channel)
+        ts = _format_ts(segment.start_ms)
+        text = html.escape(segment.text)
+        return (
+            f'<div style="margin:0 0 3px 0;">'
+            f'<span style="color:{color}; font-weight:600; font-size:11px;">{label}</span> '
+            f'<span style="color:#6B7280; font-size:11px;">{ts}</span> '
+            f'<span style="color:#111827;">{text}</span>'
+            f'</div>'
         )
 
     def append_segment(self, segment: TranscriptSegment) -> None:
         was_at_bottom = self._is_scrolled_to_bottom()
-        item = QListWidgetItem()
-        item.setData(self.RAW_TEXT_ROLE, segment.text)
-        row = _SegmentRow(segment)
-        item.setSizeHint(row.sizeHint())
-        self.addItem(item)
-        self.setItemWidget(item, row)
+        cursor = QTextCursor(self.document())
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertHtml(self._segment_html(segment))
         if was_at_bottom:
-            self.scrollToBottom()
+            bar = self.verticalScrollBar()
+            bar.setValue(bar.maximum())
 
     def load_segments(self, segments: list[TranscriptSegment]) -> None:
-        """Replace the current contents with a fixed batch (past-recording mode)."""
+        """Replace contents with a fixed batch (past-recording mode)."""
         self.clear()
-        for s in segments:
-            self.append_segment(s)
-        self.scrollToTop()
+        if not segments:
+            return
+        html_blocks = "".join(self._segment_html(s) for s in segments)
+        self.setHtml(html_blocks)
+        self.verticalScrollBar().setValue(0)
 
     def _is_scrolled_to_bottom(self) -> bool:
         bar = self.verticalScrollBar()
