@@ -30,3 +30,22 @@ def test_resizable_false_disables_edges(qapp):
             self._init_frameless(QFrame(self), resizable=False)
     w = _Fixed()
     assert w._edge_at(QPoint(2, 2)).value == 0
+
+
+def test_titlebar_builds_only_requested_controls(qapp):
+    from teams_transcriber.ui.title_bar import TitleBar
+    tb = TitleBar(title="X", controls=("close",))
+    assert tb.title_label.text() == "X"
+    assert tb.close_btn is not None
+    assert tb.minimize_btn is None
+    assert tb.maximize_btn is None
+    assert tb.settings_btn is None
+
+
+def test_titlebar_full_controls(qapp):
+    from teams_transcriber.ui.title_bar import TitleBar
+    tb = TitleBar(title="Main", controls=("settings", "min", "max", "close"))
+    assert tb.settings_btn is not None
+    assert tb.minimize_btn is not None
+    assert tb.maximize_btn is not None
+    assert tb.close_btn is not None

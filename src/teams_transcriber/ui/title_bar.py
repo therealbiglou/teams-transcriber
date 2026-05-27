@@ -19,7 +19,15 @@ class TitleBar(QWidget):
     close_requested = Signal()
     settings_requested = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        title: str = "Teams Transcriber",
+        controls: tuple[str, ...] = ("settings", "min", "max", "close"),
+        extra_left: list[QWidget] | None = None,
+        extra_right: list[QWidget] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setFixedHeight(40)
         self.setObjectName("TitleBar")
@@ -29,20 +37,33 @@ class TitleBar(QWidget):
         layout.setContentsMargins(16, 0, 8, 0)
         layout.setSpacing(8)
 
-        self.title_label = QLabel("Teams Transcriber")
+        for w in (extra_left or []):
+            layout.addWidget(w)
+
+        self.title_label = QLabel(title)
         self.title_label.setProperty("role", "subtitle")
         layout.addWidget(self.title_label)
         layout.addStretch(1)
 
-        self.settings_btn = self._make_btn(IconName.SETTINGS, self.settings_requested.emit)
-        layout.addWidget(self.settings_btn)
+        for w in (extra_right or []):
+            layout.addWidget(w)
 
-        self.minimize_btn = self._make_btn(IconName.MINIMIZE, self.minimize_requested.emit)
-        self.maximize_btn = self._make_btn(IconName.MAXIMIZE, self.maximize_requested.emit)
-        self.close_btn = self._make_btn(IconName.CLOSE, self.close_requested.emit)
-        layout.addWidget(self.minimize_btn)
-        layout.addWidget(self.maximize_btn)
-        layout.addWidget(self.close_btn)
+        self.settings_btn = None
+        self.minimize_btn = None
+        self.maximize_btn = None
+        self.close_btn = None
+        if "settings" in controls:
+            self.settings_btn = self._make_btn(IconName.SETTINGS, self.settings_requested.emit)
+            layout.addWidget(self.settings_btn)
+        if "min" in controls:
+            self.minimize_btn = self._make_btn(IconName.MINIMIZE, self.minimize_requested.emit)
+            layout.addWidget(self.minimize_btn)
+        if "max" in controls:
+            self.maximize_btn = self._make_btn(IconName.MAXIMIZE, self.maximize_requested.emit)
+            layout.addWidget(self.maximize_btn)
+        if "close" in controls:
+            self.close_btn = self._make_btn(IconName.CLOSE, self.close_requested.emit)
+            layout.addWidget(self.close_btn)
 
     def _make_btn(self, icon: IconName, handler: Callable[[], None]) -> QPushButton:
         btn = QPushButton(get_icon(icon), "")
@@ -52,7 +73,8 @@ class TitleBar(QWidget):
         return btn
 
     def set_maximized(self, maximized: bool) -> None:
-        self.maximize_btn.setIcon(get_icon(IconName.RESTORE if maximized else IconName.MAXIMIZE))
+        if self.maximize_btn is not None:
+            self.maximize_btn.setIcon(get_icon(IconName.RESTORE if maximized else IconName.MAXIMIZE))
 
     def mousePressEvent(self, e: QMouseEvent) -> None:
         if e.button() == Qt.MouseButton.LeftButton:
@@ -68,4 +90,5 @@ class TitleBar(QWidget):
 
     def mouseDoubleClickEvent(self, e: QMouseEvent) -> None:
         del e
-        self.maximize_requested.emit()
+        if self.maximize_btn is not None:
+            self.maximize_requested.emit()
