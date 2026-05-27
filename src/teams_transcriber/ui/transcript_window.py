@@ -3,22 +3,19 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QFrame,
-    QGraphicsDropShadowEffect,
-    QHBoxLayout,
-    QLabel,
-    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from teams_transcriber.storage import Database, RecordingRepo, TranscriptRepo
+from teams_transcriber.ui.frameless import FramelessWindowMixin
 from teams_transcriber.ui.live_transcript_view import LiveTranscriptView
+from teams_transcriber.ui.title_bar import TitleBar
 
 
-class TranscriptWindow(QWidget):
+class TranscriptWindow(FramelessWindowMixin, QWidget):
     """Frameless themed window showing one recording's full transcript."""
 
     def __init__(
@@ -32,47 +29,34 @@ class TranscriptWindow(QWidget):
         self._db = db
         self._recording_id = recording_id
 
-        self.setWindowFlags(
-            Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint,
-        )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setMouseTracking(True)
         self.resize(720, 600)
 
         frame = QFrame()
-        frame.setObjectName("transcriptFrame")
-        frame.setStyleSheet(
-            "QFrame#transcriptFrame { background: #F2EFE9; border-radius: 16px; }"
-        )
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(36)
-        shadow.setColor(QColor(0, 0, 0, 60))
-        shadow.setOffset(0, 6)
-        frame.setGraphicsEffect(shadow)
-
+        frame.setObjectName("OuterFrame")
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
+        outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(frame)
 
         inner = QVBoxLayout(frame)
-        inner.setContentsMargins(16, 12, 16, 16)
-        inner.setSpacing(10)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(0)
 
-        # Title row
         rec = RecordingRepo(db).get(recording_id)
         title_text = (rec.display_title if rec else None) or "Transcript"
-        title_row = QHBoxLayout()
-        title = QLabel(title_text)
-        title.setStyleSheet("font-weight: 600; font-size: 14px;")
-        title_row.addWidget(title, 1)
-        close = QPushButton("✕")
-        close.setProperty("role", "ghost")
-        close.setFixedSize(28, 28)
-        close.clicked.connect(self.close)
-        title_row.addWidget(close)
-        inner.addLayout(title_row)
+        self._title_bar = TitleBar(title=title_text, controls=("min", "max", "close"))
+        self._title_bar.minimize_requested.connect(self.showMinimized)
+        self._title_bar.maximize_requested.connect(self.toggle_max)
+        self._title_bar.close_requested.connect(self.close)
+        inner.addWidget(self._title_bar)
 
-        # Transcript pane
+        body = QVBoxLayout()
+        body.setContentsMargins(16, 8, 16, 16)
         self.transcript_view = LiveTranscriptView()
-        segments = TranscriptRepo(db).list_for_recording(recording_id)
-        self.transcript_view.load_segments(segments)
-        inner.addWidget(self.transcript_view, 1)
+        self.transcript_view.load_segments(TranscriptRepo(db).list_for_recording(recording_id))
+        body.addWidget(self.transcript_view, 1)
+        inner.addLayout(body)
+
+        self._init_frameless(frame, resizable=True, title_bar=self._title_bar)
