@@ -230,29 +230,15 @@ class SummaryPane(QScrollArea):
         return _section_card("My todos", rows)
 
     def _copy_markdown(self, summary: Summary, recording: Any) -> None:
-        lines = [f"# {summary.title or recording.display_title or 'Meeting'}", ""]
-        if summary.summary:
-            lines += [summary.summary, ""]
-        if summary.my_todos:
-            lines.append("## My todos")
-            for t in summary.my_todos:
-                lines.append(f"- [ ] {t.task}" + (f" (due {t.due})" if t.due else ""))
-            lines.append("")
-        if summary.action_items_others:
-            lines.append("## Action items for others")
-            for a in summary.action_items_others:
-                lines.append(f"- {a.who}: {a.task}" + (f" (due {a.due})" if a.due else ""))
-            lines.append("")
-        if summary.key_decisions:
-            lines.append("## Key decisions")
-            lines += [f"- {d}" for d in summary.key_decisions]
-            lines.append("")
-        if summary.follow_ups:
-            lines.append("## Follow-ups")
-            lines += [f"- {f}" for f in summary.follow_ups]
+        from teams_transcriber import summary_export
+        states = {
+            s.todo_index: s.done
+            for s in TodoStateRepo(self._db).list_for_recording(summary.recording_id)
+        }
+        md = summary_export.to_markdown(summary, recording, states)
         clipboard = QGuiApplication.clipboard()
         if clipboard is not None:
-            clipboard.setText("\n".join(lines))
+            clipboard.setText(md)
 
 
 def _section_card(title: str, body_widgets: list[QWidget]) -> QFrame:

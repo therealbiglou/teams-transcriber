@@ -290,6 +290,27 @@ def test_summary_pane_no_retry_for_recording_failed(tmp_path, qapp) -> None:
     db.close()
 
 
+def test_copy_markdown_uses_done_state(qapp, db_with_summary) -> None:
+    """_copy_markdown should include [x] for a todo marked done via TodoStateRepo."""
+    db, rec_id = db_with_summary
+    repo = SummaryRepo(db)
+    summary = repo.get(rec_id)
+    assert summary is not None
+    rec = RecordingRepo(db).get(rec_id)
+    assert rec is not None
+
+    # Mark todo index 0 done
+    TodoStateRepo(db).upsert(rec_id, 0, "Do A", True)
+
+    pane = SummaryPane(db)
+    pane._copy_markdown(summary, rec)
+
+    from PySide6.QtGui import QGuiApplication
+    text = QGuiApplication.clipboard().text()
+    assert "- [x] " in text, f"Expected '- [x] ' in clipboard text:\n{text}"
+    assert "- [ ] " in text, f"Expected '- [ ] ' for undone todo in clipboard text:\n{text}"
+
+
 def test_todo_state_changed_signal_emitted_on_toggle(qapp, qtbot, db_with_summary) -> None:
     """Toggling a todo checkbox emits todo_state_changed with the recording_id."""
     db, rec_id = db_with_summary
