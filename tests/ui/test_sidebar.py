@@ -42,3 +42,17 @@ def test_stacked_switch_contract(qapp):
     assert stack.currentIndex() == 1
     sb._buttons[SidebarBucket.ALL].click()
     assert stack.currentIndex() == 0
+
+
+def test_master_view_go_to_summary_signal(qapp, tmp_path):
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.storage import build_database
+    from teams_transcriber.ui.master_todo_view import MasterTodoView
+    paths = AppPaths(root=tmp_path); paths.ensure_dirs()
+    db = build_database(paths.db_path); db.initialize()
+    view = MasterTodoView(db)
+    seen = []
+    view.go_to_summary.connect(seen.append)
+    view._emit_go_to_summary(42)
+    assert seen == [42]
+    db.close()

@@ -225,15 +225,26 @@ class App:
         self.summary.notes_requested.connect(self._open_workspace)
         self.summary.retry_requested.connect(self._retry_recording)
         self.summary.transcript_requested.connect(self._show_transcript)
-        self.summary.todo_state_changed.connect(
-            lambda _rid: self._refresh_history(query=self.search.input.text() or None)
-        )
+        self.summary.todo_state_changed.connect(self._on_todo_state_changed)
         body_layout.addWidget(self.history, 1)
         body_layout.addWidget(self.summary, 1)
-        layout.addWidget(body, 1)
+
+        from PySide6.QtWidgets import QStackedWidget
+        from teams_transcriber.ui.master_todo_view import MasterTodoView
+
+        self._content_stack = QStackedWidget()
+        self._content_stack.addWidget(body)                  # index 0
+        self.master_todos = MasterTodoView(self.db)
+        self._content_stack.addWidget(self.master_todos)     # index 1
+        self.master_todos.go_to_summary.connect(self._go_to_summary_from_todos)
+        self.master_todos.todo_toggled.connect(
+            lambda _rid: self._refresh_history(query=self.search.input.text() or None)
+        )
+        layout.addWidget(self._content_stack, 1)
 
         self.window.set_content(content)
         self.window.sidebar.bucket_selected.connect(self._on_bucket)
+        self.window.sidebar.todos_selected.connect(self._show_master_todos)
 
     def _refresh_history(self, query: str | None = None) -> None:
         rec_repo = RecordingRepo(self.db)
@@ -263,7 +274,23 @@ class App:
         self._refresh_history(query=text or None)
 
     def _on_bucket(self, _bucket: SidebarBucket) -> None:
-        self._refresh_history()
+        self._content_stack.setCurrentIndex(0)
+        self._refresh_history(query=self.search.input.text() or None)
+
+    def _on_todo_state_changed(self, _rid: int) -> None:
+        self._refresh_history(query=self.search.input.text() or None)
+        self.master_todos.reload()
+
+    def _show_master_todos(self) -> None:
+        self.master_todos.reload()
+        self._content_stack.setCurrentIndex(1)
+
+    def _go_to_summary_from_todos(self, recording_id: int) -> None:
+        # Return to History (ALL so the card exists), select + show the meeting.
+        self.window.sidebar.select_bucket(SidebarBucket.ALL)
+        self._content_stack.setCurrentIndex(0)
+        self._show_window()
+        self.history.select(recording_id)
 
     def _show_window(self) -> None:
         self.window.show()
