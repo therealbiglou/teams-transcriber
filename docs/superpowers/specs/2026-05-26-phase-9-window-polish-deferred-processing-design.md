@@ -110,6 +110,21 @@ the user reads or works in for a while (Workspace, Transcript, Settings) gets
 the full set. This honors "same controls as the main app" where it makes
 sense and degrades gracefully where it doesn't.
 
+### Chrome standardization
+
+`MainWindow` uses `WA_TranslucentBackground=True` + an outer `QFrame` with
+`border-radius` and resize from the true window edges (no shadow). Workspace
+and Transcript currently use `WA_TranslucentBackground=False` + a 20 px shadow
+margin (which also prevents edge-resize at the window boundary). Settings /
+Wizard / Update are currently **native Windows chrome** `QDialog`s.
+
+We standardize every window on MainWindow's pattern (translucent bg + rounded
+outer frame + mixin edge-resize), because that is literally "the same as the
+main app" and makes edge-resize work uniformly. The bespoke drop-shadow margin
+on Workspace/Transcript is removed in the process. `ConfirmDialog` already
+satisfies the goal (frameless, themed, drag-to-move, auto-sized) and is left
+as-is.
+
 ### Migration
 
 1. Refactor `MainWindow` to consume `FramelessWindowMixin` (move its inline
@@ -176,39 +191,45 @@ def release_processing(self, recording_id: int) -> None:
 the gate predicate is invoked from the recorder worker thread, release from
 the Qt main thread.
 
-### App wiring (the gate's UI half)
+### App wiring (the gate's UI half) — one shared predicate, no new event
 
-`App` already tracks `self._workspace_windows: dict[int, WorkspaceWindow]`.
-Add a thread-safe snapshot set and provide the predicate:
+`App` already tracks `self._workspace_windows: dict[int, WorkspaceWindow]` and
+already wires `WorkspaceWindow.closed → _on_workspace_closed`. We make the
+gate predicate and the UI's display decision the **same function**, so there
+is exactly one source of truth and no event-ordering race:
 
-- `self._open_workspace_ids: set[int]` guarded by a `Lock`; updated whenever a
-  workspace window opens/closes.
-- Pass `processing_gate=lambda rid: rid in self._open_workspace_ids_snapshot()`
-  into the `Pipeline`.
-- When a `WorkspaceWindow` closes, `App` removes the id from the set **and**
-  calls `pipeline.release_processing(rid)`.
+- `App` keeps a `set[int]` of recording ids with an open workspace, guarded by
+  a `threading.Lock` (the predicate is read from the recorder/watcher thread;
+  the dict is mutated on the Qt main thread). Updated in `_open_workspace`
+  (add) and `_on_workspace_closed` (remove).
+- `App._should_defer_processing(rid) -> bool` reads that lock-guarded set.
+- Pass `processing_gate=self._should_defer_processing` into `Pipeline`.
 
-`WorkspaceWindow` must emit on close. Add `closed = Signal(int)` (recording_id),
-emitted from its `closeEvent`; `App._open_workspace` connects it.
+No new event type is added. The waiting UI surfaces (toast, tray, banner,
+workspace footer) all live in `App` and are driven directly by
+`_on_recording_finalized`, which calls the same `_should_defer_processing(rid)`
+to choose between the existing "Transcribing…" path and the new waiting path.
+This is simpler than a `ProcessingDeferred` event (which would only re-trigger
+App methods and introduce an ordering race against the bridged
+`RecordingFinalized`).
 
-### The alert
+When a `WorkspaceWindow` closes, `_on_workspace_closed` removes the id from the
+set and calls `pipeline.release_processing(rid)` (a no-op if the recording
+wasn't deferred). If the recording *was* waiting, it also shows a "Processing
+started" toast + sets tray PROCESSING + banner.
 
-New event:
+### The alert (waiting UI)
 
-```python
-@dataclass(slots=True, frozen=True)
-class ProcessingDeferred(Event):
-    recording_id: int
-```
+When `_should_defer_processing(rid)` is true at finalize time, `App`:
+- shows an in-app toast: **"Waiting for notes — Transcription will start when
+  you close the notes window."**,
+- leaves the tray at IDLE (not PROCESSING — nothing is processing yet),
+- hides the active-recording banner,
+- calls `WorkspaceWindow.show_waiting_for_processing()` so a persistent footer
+  line ("⏳ Transcription will start when you close this window") is visible in
+  the window the user is looking at.
 
-Bridged through `QtEventBridge`; `App` handler shows an in-app toast:
-
-> **Waiting for notes** — Transcription will start when you close the notes
-> window.
-
-The open `WorkspaceWindow` also shows a persistent footer line ("⏳ Processing
-will start when you close this window") so the reason is visible in the
-window the user is looking at. No action button (strict, per decision).
+No action button (strict, per decision).
 
 ### Recovery safety
 
