@@ -21,7 +21,7 @@ def _enumerate_speakers() -> list:
         return list(soundcard.all_speakers())
     except Exception:
         return []
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -50,9 +51,11 @@ from teams_transcriber.config import (
     save_settings,
 )
 from teams_transcriber.paths import AppPaths
+from teams_transcriber.ui.frameless import FramelessWindowMixin
+from teams_transcriber.ui.title_bar import TitleBar
 
 
-class SettingsDialog(QDialog):
+class SettingsDialog(FramelessWindowMixin, QDialog):
     """Modal settings dialog. Writes to settings.json + keyring on accept."""
 
     saved = Signal()
@@ -67,12 +70,33 @@ class SettingsDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setMouseTracking(True)
         self.resize(700, 540)
         self._settings = settings
         self._paths = paths
         self._hotkey_reload_callback = hotkey_reload_callback
 
-        outer = QVBoxLayout(self)
+        frame = QFrame()
+        frame.setObjectName("OuterFrame")
+        shell = QVBoxLayout(self)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.addWidget(frame)
+
+        inner = QVBoxLayout(frame)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(0)
+
+        self._title_bar = TitleBar(title="Settings", controls=("max", "close"))
+        self._title_bar.maximize_requested.connect(self.toggle_max)
+        self._title_bar.close_requested.connect(self.reject)
+        inner.addWidget(self._title_bar)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(16, 12, 16, 16)
+
         self._tabs = QTabWidget()
         self._tabs.addTab(self._build_general_tab(), "General")
         self._tabs.addTab(self._build_audio_tab(), "Audio")
@@ -81,14 +105,18 @@ class SettingsDialog(QDialog):
         self._tabs.addTab(self._build_ai_tab(), "AI")
         self._tabs.addTab(self._build_shortcuts_tab(), "Shortcuts")
         self._tabs.addTab(self._build_about_tab(), "About")
-        outer.addWidget(self._tabs)
+        body_layout.addWidget(self._tabs)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
-        outer.addWidget(buttons)
+        body_layout.addWidget(buttons)
+
+        inner.addWidget(body, 1)
+
+        self._init_frameless(frame, resizable=True, title_bar=self._title_bar)
 
     def _build_general_tab(self) -> QWidget:
         w = QWidget()

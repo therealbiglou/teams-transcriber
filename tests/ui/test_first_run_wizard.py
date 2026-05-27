@@ -28,6 +28,17 @@ def _isolate_keyring_and_registry(monkeypatch):
     )
 
 
+def test_wizard_has_shared_chrome(qapp, qtbot, paths: AppPaths) -> None:
+    from teams_transcriber.ui.frameless import FramelessWindowMixin
+
+    settings = load_settings(paths)
+    wizard = FirstRunWizard(
+        settings=settings, paths=paths, model_downloader=lambda cb: None,
+    )
+    assert isinstance(wizard, FramelessWindowMixin)
+    assert wizard._title_bar.close_btn is not None
+
+
 def test_finish_writes_marker_file(qapp, qtbot, paths: AppPaths) -> None:
     settings = load_settings(paths)
     wizard = FirstRunWizard(

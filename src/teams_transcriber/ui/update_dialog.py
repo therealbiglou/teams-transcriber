@@ -11,6 +11,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -20,6 +21,8 @@ from PySide6.QtWidgets import (
 )
 
 from teams_transcriber.paths import AppPaths
+from teams_transcriber.ui.frameless import FramelessWindowMixin
+from teams_transcriber.ui.title_bar import TitleBar
 from teams_transcriber.update_checker import (
     ReleaseInfo,
     UpdateCheckError,
@@ -58,7 +61,7 @@ class _DownloadWorker(QObject):
             self.finished.emit(str(exc))
 
 
-class UpdateDialog(QDialog):
+class UpdateDialog(FramelessWindowMixin, QDialog):
     """Download progress + 'Restart now' / 'Later' prompt after download."""
 
     def __init__(
@@ -71,10 +74,29 @@ class UpdateDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Update to {version}")
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setMouseTracking(True)
         self.setMinimumWidth(440)
         self._installer_path = paths.root / "update" / f"TeamsTranscriberSetup-{version.lstrip('v')}.exe"
 
-        layout = QVBoxLayout(self)
+        frame = QFrame()
+        frame.setObjectName("OuterFrame")
+        shell = QVBoxLayout(self)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.addWidget(frame)
+
+        inner = QVBoxLayout(frame)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(0)
+
+        self._title_bar = TitleBar(title="Update", controls=("close",))
+        self._title_bar.close_requested.connect(self.reject)
+        inner.addWidget(self._title_bar)
+
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(16, 12, 16, 16)
         layout.setSpacing(12)
         layout.addWidget(QLabel(f"<b>Downloading update {version}…</b>"))
 
@@ -89,6 +111,10 @@ class UpdateDialog(QDialog):
         self._button_row = QHBoxLayout()
         self._button_row.addStretch(1)
         layout.addLayout(self._button_row)
+
+        inner.addWidget(body, 1)
+
+        self._init_frameless(frame, resizable=True, title_bar=self._title_bar)
 
         # Kick off download on a worker thread.
         self._worker = _DownloadWorker(

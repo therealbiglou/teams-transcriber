@@ -176,3 +176,14 @@ def test_settings_dialog_live_enabled_round_trip(tmp_path, qapp) -> None:
 
     reloaded = load_settings(paths)
     assert reloaded.transcription_live_enabled is True
+
+
+def test_settings_dialog_has_shared_chrome(qapp, qtbot, paths) -> None:
+    from teams_transcriber.ui.frameless import FramelessWindowMixin
+    from teams_transcriber.ui.settings_dialog import SettingsDialog
+
+    settings = load_settings(paths)
+    dlg = SettingsDialog(settings, paths)
+    assert isinstance(dlg, FramelessWindowMixin)
+    assert dlg._title_bar.close_btn is not None
+    assert dlg._tabs.count() >= 7

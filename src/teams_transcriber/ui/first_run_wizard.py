@@ -15,10 +15,11 @@ import logging
 from collections.abc import Callable
 
 import keyring
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -37,6 +38,8 @@ from teams_transcriber.config import (
 )
 from teams_transcriber.paths import AppPaths
 from teams_transcriber.runtime import gpu_runtime
+from teams_transcriber.ui.frameless import FramelessWindowMixin
+from teams_transcriber.ui.title_bar import TitleBar
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +62,7 @@ def _default_model_downloader(progress: Callable[[int], None]) -> None:
     progress(100)
 
 
-class FirstRunWizard(QDialog):
+class FirstRunWizard(FramelessWindowMixin, QDialog):
     finished_ok = Signal()
 
     def __init__(
@@ -72,20 +75,39 @@ class FirstRunWizard(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Welcome to Teams Transcriber")
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setMouseTracking(True)
         self.setModal(True)
         self.setMinimumSize(520, 420)
         self._settings = settings
         self._paths = paths
         self._model_downloader = model_downloader
 
+        frame = QFrame()
+        frame.setObjectName("OuterFrame")
+        shell = QVBoxLayout(self)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.addWidget(frame)
+
+        inner = QVBoxLayout(frame)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(0)
+
+        self._title_bar = TitleBar(title="Welcome", controls=("close",))
+        self._title_bar.close_requested.connect(self.reject)
+        inner.addWidget(self._title_bar)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(16, 12, 16, 16)
+
         self._stack = QStackedWidget()
         self._stack.addWidget(self._build_welcome())
         self._stack.addWidget(self._build_setup())
         self._stack.addWidget(self._build_gpu_runtime())
         self._stack.addWidget(self._build_model_download())
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(self._stack, 1)
+        body_layout.addWidget(self._stack, 1)
 
         nav = QHBoxLayout()
         self._back_btn = QPushButton("Back")
@@ -95,7 +117,11 @@ class FirstRunWizard(QDialog):
         nav.addStretch()
         nav.addWidget(self._back_btn)
         nav.addWidget(self._next_btn)
-        layout.addLayout(nav)
+        body_layout.addLayout(nav)
+
+        inner.addWidget(body, 1)
+
+        self._init_frameless(frame, resizable=True, title_bar=self._title_bar)
         self._update_nav()
 
     # --- pages -----------------------------------------------------------
