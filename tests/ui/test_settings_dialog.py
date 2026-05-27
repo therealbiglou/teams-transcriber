@@ -16,6 +16,30 @@ def paths(tmp_path: Path) -> AppPaths:
     return p
 
 
+def test_install_button_shown_when_update_available(qapp, paths, monkeypatch) -> None:
+    from types import SimpleNamespace
+    from teams_transcriber import update_checker
+    fake = SimpleNamespace(
+        tag="v9.9.9", version=(9, 9, 9), is_prerelease=True,
+        installer_url="https://example.test/x.exe", installer_size=1,
+        html_url="https://example.test/release",
+    )
+    monkeypatch.setattr(update_checker, "fetch_latest_release", lambda: fake)
+    settings = load_settings(paths)
+    dialog = SettingsDialog(settings, paths)
+    assert dialog._install_btn.isHidden() is True          # hidden until a check finds one
+    dialog._manual_update_check()
+    assert dialog._install_btn.isHidden() is False          # now offered
+    assert dialog._latest_release is fake
+
+
+def test_install_update_noop_without_release(qapp, paths) -> None:
+    settings = load_settings(paths)
+    dialog = SettingsDialog(settings, paths)
+    dialog._latest_release = None
+    dialog._install_update()  # must not raise
+
+
 def test_dialog_loads_current_settings(qapp, qtbot, paths) -> None:
     settings = load_settings(paths)
     settings.audio_retention_days = 90

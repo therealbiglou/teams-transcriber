@@ -303,8 +303,29 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         self._update_check_result.setWordWrap(True)
         v.addWidget(self._update_check_result)
 
+        # Shown only when a check finds a newer version; installs in-app.
+        self._latest_release = None
+        self._install_btn = QPushButton("Install update")
+        self._install_btn.setProperty("role", "primary")
+        self._install_btn.setVisible(False)
+        self._install_btn.clicked.connect(self._install_update)
+        v.addWidget(self._install_btn)
+
         v.addStretch(1)
         return w
+
+    def _install_update(self) -> None:
+        """Download + install the update found by the last check, from Settings."""
+        if self._latest_release is None:
+            return
+        from teams_transcriber.ui.update_dialog import UpdateDialog
+        dlg = UpdateDialog(
+            version=self._latest_release.tag,
+            download_url=self._latest_release.installer_url,
+            paths=self._paths,
+            parent=self,
+        )
+        dlg.exec()
 
     def _manual_update_check(self) -> None:
         """Runs update_checker.fetch_latest_release synchronously, updates UI."""
@@ -326,12 +347,16 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         ts = datetime.now(UTC).strftime("%Y-%m-%d %I:%M %p UTC")
         self._last_check_label.setText(f"Last update check: {ts}")
         if is_update_available(__version__, latest):
+            self._latest_release = latest
             self._update_check_result.setText(
                 f"<b>Update available: {latest.tag}</b><br>"
                 f"<a href='{latest.html_url}'>View release notes</a>"
             )
             self._update_check_result.setOpenExternalLinks(True)
+            self._install_btn.setVisible(True)
         else:
+            self._latest_release = None
+            self._install_btn.setVisible(False)
             self._update_check_result.setText("You're on the latest version.")
 
     def _redownload_model(self) -> None:
