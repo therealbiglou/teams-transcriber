@@ -156,3 +156,12 @@ def test_workspace_shows_placeholder_when_live_disabled(env, qapp) -> None:
     ))
     qapp.processEvents()
     assert "should be ignored" not in win.transcript_view.toPlainText()
+
+
+def test_show_waiting_for_processing_reveals_footer_note(env, qapp):
+    paths, db, settings = env
+    rid = _make_recording(db, status=RecordingStatus.DONE)
+    win = WorkspaceWindow(db=db, recording_id=rid, bridge=QtEventBridge(EventBus()), live=False)
+    assert win._waiting_label.text() == ""
+    win.show_waiting_for_processing()
+    assert "close this window" in win._waiting_label.text().lower()

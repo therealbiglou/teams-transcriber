@@ -148,6 +148,9 @@ class WorkspaceWindow(QWidget):
         # Footer
         footer = QHBoxLayout()
         footer.setContentsMargins(16, 12, 16, 16)
+        self._waiting_label = QLabel("")
+        self._waiting_label.setStyleSheet("color: #B45309; font-size: 12px;")
+        footer.addWidget(self._waiting_label)
         footer.addStretch(1)
         self._stop_button = QPushButton("Stop recording")
         self._stop_button.setProperty("role", "danger")
@@ -213,6 +216,10 @@ class WorkspaceWindow(QWidget):
         else:
             self.setWindowFlags(flags & ~Qt.WindowType.WindowStaysOnTopHint)
         self.show()
+
+    def show_waiting_for_processing(self) -> None:
+        """Indicate that transcription/summarization is paused until close."""
+        self._waiting_label.setText("⏳ Transcription will start when you close this window.")
 
     def set_recording_finished(self) -> None:
         """Transition the workspace from live to finished mode."""
