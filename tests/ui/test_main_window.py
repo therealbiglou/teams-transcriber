@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+from teams_transcriber.ui.frameless import FramelessWindowMixin
 from teams_transcriber.ui.main_window import MainWindow
 from teams_transcriber.ui.sidebar import SidebarBucket
+
+
+def test_main_window_uses_shared_chrome(qapp) -> None:
+    w = MainWindow()
+    assert isinstance(w, FramelessWindowMixin)
+    assert w.title_bar.settings_btn is not None  # main keeps the settings cog
+    # toggle_max flips style without raising
+    w.toggle_max()
+    w.toggle_max()
 
 
 def test_main_window_constructs(qapp, qtbot) -> None:
