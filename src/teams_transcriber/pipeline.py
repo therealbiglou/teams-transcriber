@@ -45,12 +45,16 @@ class Pipeline:
         meeting_watcher: MeetingWatcher | None = None,
         transcriber: Transcriber | None = None,
         summarizer: Summarizer | None = None,
+        processing_gate: Callable[[int], bool] | None = None,
     ) -> None:
         self._bus = bus
         self._db = db
         self._paths = paths
         self._settings = settings
         self._audio_source_factory = audio_source_factory
+        self._processing_gate = processing_gate
+        self._deferred: dict[int, RecordingFinalized] = {}
+        self._defer_lock = threading.Lock()
         self._recorder: Recorder | None = None
         self._live_transcriber: LiveTranscriber | None = None
         self._transcriber = transcriber or Transcriber(bus=bus, db=db, settings=settings)
@@ -98,8 +102,16 @@ class Pipeline:
             RecordingStatus.TRANSCRIBING,
             error_message=None,
         )
-        future = self._executor.submit(self._run_post_processing, recording_id)
-        self._pending_futures.append(future)
+        self._submit_post_processing(recording_id)
+
+    def release_processing(self, recording_id: int) -> None:
+        """Resume deferred post-processing (called when the notes window closes)."""
+        with self._defer_lock:
+            evt = self._deferred.pop(recording_id, None)
+        if evt is None:
+            return
+        RecordingRepo(self._db).update_status(recording_id, RecordingStatus.TRANSCRIBING)
+        self._submit_post_processing(recording_id)
 
     def serve(self) -> None:
         if self._meeting_watcher is None:
@@ -146,9 +158,20 @@ class Pipeline:
             self._live_transcriber.flush_and_stop()
             self._live_transcriber = None
 
-    def _on_recording_finalized(self, evt: RecordingFinalized) -> None:
-        future = self._executor.submit(self._run_post_processing, evt.recording_id)
+    def _submit_post_processing(self, recording_id: int) -> None:
+        future = self._executor.submit(self._run_post_processing, recording_id)
         self._pending_futures.append(future)
+
+    def _on_recording_finalized(self, evt: RecordingFinalized) -> None:
+        if self._processing_gate is not None and self._processing_gate(evt.recording_id):
+            RecordingRepo(self._db).update_status(
+                evt.recording_id, RecordingStatus.WAITING_FOR_NOTES,
+            )
+            with self._defer_lock:
+                self._deferred[evt.recording_id] = evt
+            logger.info("deferring post-processing for %d (notes window open)", evt.recording_id)
+            return
+        self._submit_post_processing(evt.recording_id)
 
     def _on_recording_failed(self, evt: RecordingFailed) -> None:
         logger.warning("recording %d failed: %s", evt.recording_id, evt.error_message)

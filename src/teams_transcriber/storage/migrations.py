@@ -36,9 +36,18 @@ class MigrationRunner:
 
     def run(self, conn: sqlite3.Connection) -> None:
         current = conn.execute("PRAGMA user_version").fetchone()[0]
+        fk_was_on = bool(conn.execute("PRAGMA foreign_keys").fetchone()[0])
         for m in self._migrations:
             if m.version <= current:
                 continue
+            # Table-rebuild migrations (CREATE new / DROP old / RENAME) must run with
+            # foreign_keys OFF, otherwise dropping a referenced table cascade-deletes
+            # child rows and RENAME rewrites child FK references. The pragma is a no-op
+            # inside a transaction, so toggle it OUTSIDE the BEGIN per the SQLite docs
+            # ("Making Other Kinds Of Table Schema Changes"). Harmless for pure
+            # CREATE/ALTER migrations that touch no parent tables.
+            if fk_was_on:
+                conn.execute("PRAGMA foreign_keys = OFF")
             # Explicit BEGIN so DDL (CREATE TABLE, etc.) is included in the transaction.
             # Python's sqlite3 only auto-begins for DML by default, leaving DDL unwrapped.
             conn.execute("BEGIN")
@@ -49,4 +58,7 @@ class MigrationRunner:
             except Exception:
                 conn.rollback()
                 raise
+            finally:
+                if fk_was_on:
+                    conn.execute("PRAGMA foreign_keys = ON")
             current = m.version
