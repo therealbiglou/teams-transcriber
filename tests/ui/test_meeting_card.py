@@ -98,6 +98,15 @@ def test_todo_chip_widget(qapp) -> None:
     assert chips[0].property("variant") == "warn"
 
 
+def test_waiting_for_notes_status_chip(qapp):
+    from teams_transcriber.ui.meeting_card import _status_chip
+    from teams_transcriber.storage.models import RecordingStatus
+    chip = _status_chip(RecordingStatus.WAITING_FOR_NOTES)
+    assert chip is not None
+    assert chip.text() == "Waiting for notes"
+    assert chip.property("variant") == "warn"
+
+
 def test_meeting_card_shows_error_message_for_failed_recording(qapp) -> None:
     from teams_transcriber.storage.models import Recording, RecordingSource, RecordingStatus
     from teams_transcriber.ui.meeting_card import MeetingCard

@@ -19,6 +19,7 @@ class RecordingStatus(StrEnum):
     RECORDING = "recording"
     TRANSCRIBING = "transcribing"
     SUMMARIZING = "summarizing"
+    WAITING_FOR_NOTES = "waiting_for_notes"
     DONE = "done"
     RECORDING_FAILED = "recording_failed"
     TRANSCRIPTION_FAILED = "transcription_failed"

@@ -144,6 +144,7 @@ def _status_chip(status: RecordingStatus) -> QLabel | None:
         RecordingStatus.RECORDING:           ("Recording", "warn"),
         RecordingStatus.TRANSCRIBING:        ("Transcribing", "warn"),
         RecordingStatus.SUMMARIZING:         ("Summarizing", "warn"),
+        RecordingStatus.WAITING_FOR_NOTES:   ("Waiting for notes", "warn"),
         RecordingStatus.DONE:                ("", ""),
         RecordingStatus.RECORDING_FAILED:    ("Failed", "error"),
         RecordingStatus.TRANSCRIPTION_FAILED: ("Failed", "error"),
