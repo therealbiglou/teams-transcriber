@@ -67,3 +67,27 @@ def test_html_omits_notes_section_when_tags_only():
 def test_html_includes_notes_section_when_present():
     html = summary_export.to_html(_summary(), _rec(), {})
     assert "My notes" in html
+
+
+def test_notes_inner_html_strips_wrapper_and_pt_font():
+    raw = ('<!DOCTYPE HTML><html><head></head>'
+           '<body style="font-family:\'Sans Serif\'; font-size:9pt;">'
+           '<b>hi</b> <span style="font-size:9pt;">x</span></body></html>')
+    inner = summary_export._notes_inner_html(raw)
+    assert "9pt" not in inner
+    assert "<body" not in inner.lower()
+    assert "<b>hi</b>" in inner
+
+
+def test_pdf_html_normalizes_tiny_notes_font():
+    rec = _rec()
+    rec.manual_notes = (
+        '<!DOCTYPE HTML><html><head></head>'
+        '<body style="font-family:\'Sans Serif\'; font-size:9pt;">'
+        '<ul><li>a note</li></ul></body></html>'
+    )
+    html = summary_export.to_html(_summary(), rec, {})
+    assert "9pt" not in html                  # baked-in point size removed
+    assert "font-size:14px" in html           # notes wrapped at a readable size
+    assert "a note" in html                   # content preserved
+    assert html.lower().count("<body") == 1   # editor's nested <body> stripped
