@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,30 @@ from teams_transcriber.ui.tray import AppTray
 logger = logging.getLogger(__name__)
 
 
+class _WorkspaceTracker:
+    """Thread-safe set of recording ids that currently have an open notes window.
+
+    The predicate is read from the recorder/watcher thread (via the pipeline
+    gate); the set is mutated on the Qt main thread.
+    """
+
+    def __init__(self) -> None:
+        self._ids: set[int] = set()
+        self._lock = threading.Lock()
+
+    def mark_open(self, recording_id: int) -> None:
+        with self._lock:
+            self._ids.add(recording_id)
+
+    def mark_closed(self, recording_id: int) -> None:
+        with self._lock:
+            self._ids.discard(recording_id)
+
+    def is_open(self, recording_id: int) -> bool:
+        with self._lock:
+            return recording_id in self._ids
+
+
 def _fmt_export_time(iso: str) -> str:
     from datetime import datetime
     try:
@@ -98,12 +123,14 @@ class App:
             debounce_polls=self.settings.detection_debounce_polls,
             poll_interval_ms=self.settings.detection_poll_interval_ms,
         )
+        self._workspace_tracker = _WorkspaceTracker()
         self.pipeline = Pipeline(
             bus=self.bus, db=self.db, paths=self.paths, settings=self.settings,
             audio_source_factory=audio_factory,
             meeting_watcher=watcher,
             transcriber=Transcriber(bus=self.bus, db=self.db, settings=self.settings),
             summarizer=Summarizer(bus=self.bus, db=self.db, settings=self.settings),
+            processing_gate=self._workspace_tracker.is_open,
         )
 
         self.window = MainWindow()
@@ -155,7 +182,6 @@ class App:
 
         # Background update check on startup.
         if self.settings.auto_check_updates:
-            import threading
             threading.Thread(target=self._background_update_check, daemon=True).start()
 
     def _build_main_content(self) -> None:
@@ -390,20 +416,33 @@ class App:
         self._update_record_button()
         self._refresh_history()
 
+    def _should_defer_processing(self, recording_id: int) -> bool:
+        return self._workspace_tracker.is_open(recording_id)
+
     def _on_recording_finalized(self, _evt: RecordingFinalized) -> None:
-        self.tray.set_state(TrayState.PROCESSING)
         rid = self._active_recording_id
         self._active_recording_id = None
-        show_in_app_toast(
-            "Recording stopped",
-            "Transcribing and summarizing — you'll get a notification when it's ready.",
-        )
-        if rid is not None:
-            workspaces = getattr(self, "_workspace_windows", {})
-            ws = workspaces.get(rid)
+        deferred = rid is not None and self._should_defer_processing(rid)
+        workspaces = getattr(self, "_workspace_windows", {})
+        ws = workspaces.get(rid) if rid is not None else None
+        if ws is not None:
+            ws.set_recording_finished()
+        if deferred:
+            self.tray.set_state(TrayState.IDLE)
+            self.active_banner.hide_banner()
             if ws is not None:
-                ws.set_recording_finished()
-        self.active_banner.set_processing()
+                ws.show_waiting_for_processing()
+            show_in_app_toast(
+                "Waiting for notes",
+                "Transcription will start when you close the notes window.",
+            )
+        else:
+            self.tray.set_state(TrayState.PROCESSING)
+            self.active_banner.set_processing()
+            show_in_app_toast(
+                "Recording stopped",
+                "Transcribing and summarizing — you'll get a notification when it's ready.",
+            )
         self._update_record_button()
         self._refresh_history()
 
@@ -633,11 +672,23 @@ class App:
         win.closed.connect(self._on_workspace_closed)
         self._workspace_windows = getattr(self, "_workspace_windows", {})
         self._workspace_windows[recording_id] = win
+        self._workspace_tracker.mark_open(recording_id)
         win.show()
 
     def _on_workspace_closed(self, recording_id: int) -> None:
         windows = getattr(self, "_workspace_windows", {})
         windows.pop(recording_id, None)
+        self._workspace_tracker.mark_closed(recording_id)
+        rec = RecordingRepo(self.db).get(recording_id)
+        was_waiting = rec is not None and rec.status == RecordingStatus.WAITING_FOR_NOTES
+        self.pipeline.release_processing(recording_id)
+        if was_waiting:
+            self.tray.set_state(TrayState.PROCESSING)
+            self.active_banner.set_processing()
+            show_in_app_toast(
+                "Processing started",
+                "Transcribing and summarizing your meeting now.",
+            )
         self._refresh_history()
 
     def _show_transcript(self, recording_id: int) -> None:
