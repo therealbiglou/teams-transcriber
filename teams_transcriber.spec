@@ -30,6 +30,11 @@ fw_datas, fw_binaries, fw_hidden = collect_all("faster_whisper")
 extra_hidden = [
     "keyring.backends.Windows",
     "win32timezone",
+    # PDF export (summary → PDF) renders via QtPrintSupport's built-in PDF
+    # engine. The static import in ui/pdf_export.py is normally picked up by
+    # PyInstaller's PySide6 hook; pin it explicitly as insurance. (PDF output
+    # uses Qt's PDF engine in Qt6PrintSupport.dll — no printer plugin needed.)
+    "PySide6.QtPrintSupport",
     *collect_submodules("anthropic"),
     *collect_submodules("keyboard"),
 ]

@@ -137,7 +137,10 @@ def to_html(summary: Summary, recording: Recording, todo_states: dict[int, bool]
     if summary.topics:
         parts.append("<h2 style='color:#065F46;'>Topics</h2>")
         parts.append(f"<p>{e(', '.join(summary.topics))}</p>")
-    if recording.manual_notes:
+    # Gate on stripped content (matches md/txt) so notes that are tags-only
+    # don't emit an empty "My notes" section. manual_notes is our own
+    # NotesEditor HTML, so embed it raw for rich rendering.
+    if _strip_html(recording.manual_notes).strip():
         parts.append("<h2 style='color:#065F46;'>My notes</h2>")
         parts.append(recording.manual_notes)
     parts.append("</body></html>")

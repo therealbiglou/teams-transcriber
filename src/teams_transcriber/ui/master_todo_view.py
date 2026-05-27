@@ -72,6 +72,8 @@ class MasterTodoView(QScrollArea):
         rec_repo = RecordingRepo(self._db)
         sum_repo = SummaryRepo(self._db)
         todo_repo = TodoStateRepo(self._db)
+        # Cap is intentional: personal-scale data. A meeting older than the 500
+        # most recent would not appear here (acceptable per the design's risks).
         for rec in rec_repo.list_recent(limit=500):
             if rec.id is None:
                 continue

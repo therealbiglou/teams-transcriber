@@ -55,3 +55,15 @@ def test_html_is_well_formed_and_escapes_summary():
 
 def test_strip_html_renders_notes_as_text():
     assert summary_export._strip_html("<p>hello <b>world</b></p>").strip() == "hello world"
+
+
+def test_html_omits_notes_section_when_tags_only():
+    rec = _rec()
+    rec.manual_notes = "<br>"  # tags only, no real content
+    html = summary_export.to_html(_summary(), rec, {})
+    assert "My notes" not in html
+
+
+def test_html_includes_notes_section_when_present():
+    html = summary_export.to_html(_summary(), _rec(), {})
+    assert "My notes" in html
