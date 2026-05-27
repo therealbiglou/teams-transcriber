@@ -38,6 +38,39 @@ def _make_recording(db) -> int:
     return rec.id
 
 
+def _cursor_into_list(te) -> None:
+    cursor = te.textCursor()
+    cursor.movePosition(cursor.MoveOperation.Start)
+    te.setTextCursor(cursor)
+    if te.textCursor().currentList() is None:
+        cursor.movePosition(cursor.MoveOperation.NextBlock)
+        te.setTextCursor(cursor)
+
+
+def test_tab_indents_and_shift_tab_outdents_list_item(env):
+    db = env
+    editor = NotesEditor(db, _make_recording(db))
+    te = editor.editor
+    te.setHtml("<ul><li>one</li><li>two</li></ul>")
+    _cursor_into_list(te)
+    lst = te.textCursor().currentList()
+    assert lst is not None
+    start = lst.format().indent()
+
+    assert te.change_list_indent(1) is True
+    assert te.textCursor().currentList().format().indent() == start + 1
+
+    assert te.change_list_indent(-1) is True
+    assert te.textCursor().currentList().format().indent() == start
+
+
+def test_change_list_indent_noop_outside_list(env):
+    db = env
+    editor = NotesEditor(db, _make_recording(db))
+    editor.editor.setPlainText("just a line, no list")
+    assert editor.editor.change_list_indent(1) is False
+
+
 def _process_events_briefly(ms: int = 50) -> None:
     loop = QEventLoop()
     QTimer.singleShot(ms, loop.quit)
