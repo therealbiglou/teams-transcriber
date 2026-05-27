@@ -138,3 +138,20 @@ def test_no_gate_submits_directly(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert submitted == [rid]
     assert rid not in pipe._deferred
     db.close()
+
+
+def test_recovery_processes_waiting_rows(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """WAITING_FOR_NOTES rows are submitted for processing on startup (no notes window can be open)."""
+    pipe, db = _build_pipeline(tmp_path, gate=lambda rid: False)
+
+    submitted: list[int] = []
+    monkeypatch.setattr(pipe, "_submit_post_processing", lambda rid: submitted.append(rid))
+
+    rid = _make_recording(db, RecordingStatus.TRANSCRIBING)
+    RecordingRepo(db).update_status(rid, RecordingStatus.WAITING_FOR_NOTES)
+
+    pipe._recover_stuck_recordings()
+
+    assert submitted == [rid]
+    assert RecordingRepo(db).get(rid).status == RecordingStatus.TRANSCRIBING
+    db.close()

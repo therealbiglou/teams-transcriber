@@ -267,6 +267,14 @@ class Pipeline:
                 error_message="transcription was interrupted (app exited mid-process)",
             )
 
+        for rec in rec_repo.list_by_status(RecordingStatus.WAITING_FOR_NOTES):
+            if rec.id is None:
+                continue
+            # No notes window can be open at startup — process it now.
+            logger.info("recover: %d was waiting for notes, resuming", rec.id)
+            rec_repo.update_status(rec.id, RecordingStatus.TRANSCRIBING)
+            self._submit_post_processing(rec.id)
+
     def _start_recorder(self, *, source_type: str, detected_title: str | None) -> int:
         if self._recorder is not None:
             logger.warning("recorder already running; ignoring duplicate start")
