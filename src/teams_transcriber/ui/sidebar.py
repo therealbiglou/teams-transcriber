@@ -22,6 +22,7 @@ class Sidebar(QFrame):
     """Sidebar with one button per SidebarBucket."""
 
     bucket_selected = Signal(SidebarBucket)
+    todos_selected = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -45,23 +46,51 @@ class Sidebar(QFrame):
             layout.addWidget(btn)
             self._buttons[bucket] = btn
 
+        todos_header = QLabel("Todos")
+        todos_header.setProperty("role", "muted")
+        todos_header.setStyleSheet("font-weight: 600; padding: 16px 8px 12px 8px;")
+        layout.addWidget(todos_header)
+
+        self.todos_button = QPushButton("To-Do List")
+        self.todos_button.setProperty("sidebar_item", True)
+        self.todos_button.clicked.connect(self._select_todos)
+        layout.addWidget(self.todos_button)
+
         layout.addStretch(1)
 
         self._active: SidebarBucket = SidebarBucket.ALL
+        self._active_is_todos: bool = False
         self._refresh_active()
 
     def _select(self, bucket: SidebarBucket) -> None:
         self._active = bucket
+        self._active_is_todos = False
         self._refresh_active()
         self.bucket_selected.emit(bucket)
 
+    def _select_todos(self) -> None:
+        self._active_is_todos = True
+        self._refresh_active()
+        self.todos_selected.emit()
+
+    def select_bucket(self, bucket: SidebarBucket) -> None:
+        """Programmatically select a History bucket (used by 'Go to summary')."""
+        self._select(bucket)
+
     def _refresh_active(self) -> None:
         for bucket, btn in self._buttons.items():
-            btn.setProperty("active", bucket == self._active)
-            style = btn.style()
-            if style is not None:
-                style.unpolish(btn)
-                style.polish(btn)
+            btn.setProperty("active", (not self._active_is_todos) and bucket == self._active)
+            self._restyle(btn)
+        if hasattr(self, "todos_button"):
+            self.todos_button.setProperty("active", self._active_is_todos)
+            self._restyle(self.todos_button)
+
+    @staticmethod
+    def _restyle(btn) -> None:
+        style = btn.style()
+        if style is not None:
+            style.unpolish(btn)
+            style.polish(btn)
 
     @property
     def active_bucket(self) -> SidebarBucket:
