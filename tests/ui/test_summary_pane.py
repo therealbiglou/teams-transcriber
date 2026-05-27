@@ -288,3 +288,117 @@ def test_summary_pane_no_retry_for_recording_failed(tmp_path, qapp) -> None:
     btns = [b for b in pane.findChildren(QPushButton) if b.text() == "Retry"]
     assert len(btns) == 0
     db.close()
+
+
+def test_all_non_header_labels_are_selectable(tmp_path, qapp) -> None:
+    """Every visible QLabel outside of section headers must be text-selectable.
+
+    Covers: title, meta, summary body, notes body, action-items-others body,
+    key-decisions body, follow-ups body.  Also covers the two bare placeholder
+    labels ("Recording not found." and "No summary yet for this recording.").
+    Section-header labels (the bold card titles) are decorative — excluded.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QLabel
+    from teams_transcriber.storage import (
+        ActionItemOther,
+        Recording,
+        RecordingRepo,
+        RecordingSource,
+        RecordingStatus,
+        Summary,
+        SummaryRepo,
+        TodoItem,
+        build_database,
+    )
+    from teams_transcriber.ui.summary_pane import SummaryPane
+
+    HEADER_TEXTS = {
+        "Summary", "My notes", "My todos", "Key decisions",
+        "Follow-ups", "Action items for others", "Topics",
+        "Failed",
+    }
+
+    db = build_database(tmp_path / "selectable.db")
+    db.initialize()
+    repo = RecordingRepo(db)
+    rec = repo.create(Recording(
+        id=None, started_at="2026-05-21T10:00:00+00:00",
+        ended_at="2026-05-21T11:00:00+00:00",
+        source=RecordingSource.MANUAL,
+        detected_title="t", display_title="Selectable test",
+        audio_path=None, audio_deleted_at=None, duration_ms=60_000,
+        status=RecordingStatus.DONE, error_message=None,
+    ))
+    assert rec.id is not None
+    # Set manual_notes so the notes label is rendered.
+    repo.set_manual_notes(rec.id, "<p>My handwritten note</p>")
+
+    SummaryRepo(db).upsert(Summary(
+        recording_id=rec.id,
+        title="Selectable test", one_line="x",
+        summary="Summary body text",
+        my_todos=[TodoItem(task="Do A")],
+        action_items_others=[ActionItemOther(who="Alice", task="Write spec")],
+        key_decisions=["Ship in July"],
+        follow_ups=["Revisit pricing"],
+        topics=["billing"],
+        model_used="claude-sonnet-4-6",
+        generated_at="2026-05-21T10:00:00+00:00",
+    ))
+
+    pane = SummaryPane(db)
+    pane.show_recording(rec.id)
+
+    non_header_labels = [
+        lbl for lbl in pane.findChildren(QLabel)
+        if lbl.text() not in HEADER_TEXTS
+    ]
+    assert non_header_labels, "Expected at least some non-header labels"
+
+    non_selectable = [
+        lbl.text() for lbl in non_header_labels
+        if not (lbl.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse)
+    ]
+    assert non_selectable == [], (
+        f"These labels are NOT selectable: {non_selectable}"
+    )
+
+    # --- Also verify the two placeholder paths ---
+    # "Recording not found." placeholder
+    db2 = build_database(tmp_path / "selectable2.db")
+    db2.initialize()
+    pane2 = SummaryPane(db2)
+    pane2.show_recording(9999)  # non-existent id
+    not_found_labels = [
+        lbl for lbl in pane2.findChildren(QLabel)
+        if "Recording not found" in lbl.text()
+    ]
+    assert not_found_labels, "Expected a 'Recording not found.' label"
+    for lbl in not_found_labels:
+        assert lbl.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse, (
+            "'Recording not found.' label is not selectable"
+        )
+
+    # "No summary yet" placeholder
+    rec3 = RecordingRepo(db2).create(Recording(
+        id=None, started_at="2026-05-21T10:00:00+00:00",
+        ended_at=None, source=RecordingSource.MANUAL,
+        detected_title="t", display_title="t",
+        audio_path=None, audio_deleted_at=None, duration_ms=60_000,
+        status=RecordingStatus.DONE, error_message=None,
+    ))
+    pane3 = SummaryPane(db2)
+    pane3.show_recording(rec3.id)
+    no_summary_labels = [
+        lbl for lbl in pane3.findChildren(QLabel)
+        if "No summary yet" in lbl.text()
+    ]
+    assert no_summary_labels, "Expected a 'No summary yet' label"
+    for lbl in no_summary_labels:
+        assert lbl.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse, (
+            "'No summary yet' label is not selectable"
+        )
+
+    db.close()
+    db2.close()

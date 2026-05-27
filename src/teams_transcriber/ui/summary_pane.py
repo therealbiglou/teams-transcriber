@@ -88,7 +88,7 @@ class SummaryPane(QScrollArea):
         rec = rec_repo.get(recording_id)
         summary = sum_repo.get(recording_id)
         if rec is None:
-            self._layout.addWidget(QLabel("Recording not found."))
+            self._layout.addWidget(_make_selectable(QLabel("Recording not found.")))
             return
         if summary is None:
             from teams_transcriber.storage import RecordingStatus
@@ -121,7 +121,7 @@ class SummaryPane(QScrollArea):
                 widgets.append(delete_btn)
                 self._layout.addWidget(_section_card("Failed", widgets))
             else:
-                self._layout.addWidget(QLabel("No summary yet for this recording."))
+                self._layout.addWidget(_make_selectable(QLabel("No summary yet for this recording.")))
             return
 
         from PySide6.QtWidgets import QSizePolicy
@@ -148,6 +148,7 @@ class SummaryPane(QScrollArea):
             notes_label = QLabel()
             notes_label.setTextFormat(Qt.TextFormat.RichText)
             notes_label.setText(rec.manual_notes)
+            _make_selectable(notes_label)
             self._layout.addWidget(_section_card("My notes", [notes_label]))
 
         if summary.my_todos:
@@ -301,6 +302,7 @@ def _topics_row(topics: list[str]) -> QFrame:
         chip.setProperty("role", "chip")
         chip.setWordWrap(True)
         chip.setMaximumWidth(280)
+        _make_selectable(chip)
         flow.addWidget(chip)
     layout.addWidget(chips_wrapper)
     return card
