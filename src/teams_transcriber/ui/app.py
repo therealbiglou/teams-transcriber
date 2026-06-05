@@ -204,6 +204,16 @@ class App:
         self.record_btn.clicked.connect(self._toggle_manual)
         top_row.addWidget(self.record_btn)
 
+        self.import_btn = QPushButton("Import audio…")
+        self.import_btn.setProperty("role", "secondary")
+        self.import_btn.setFixedHeight(36)
+        self.import_btn.setToolTip(
+            "Transcribe an audio file recorded outside Teams (phone, other "
+            "device, or an orphaned recording in the audio folder)."
+        )
+        self.import_btn.clicked.connect(self._import_audio_file)
+        top_row.addWidget(self.import_btn)
+
         self.search = SearchBar()
         self.search.query_changed.connect(self._on_search)
         top_row.addWidget(self.search, 1)
@@ -353,6 +363,41 @@ class App:
     def _show_summary(self, recording_id: int) -> None:
         self._show_window()
         self.summary.show_recording(recording_id)
+
+    def _import_audio_file(self) -> None:
+        """Pick an external audio file and run it through the pipeline.
+
+        Useful for recordings made outside Teams (phone, other device), or for
+        recovering orphaned .opus files that exist in the audio dir but have
+        no recording row (the file gets copied and a fresh row is created).
+        """
+        from pathlib import Path
+        path, _ = QFileDialog.getOpenFileName(
+            self.window, "Import audio file",
+            str(self.paths.audio_dir),
+            "Audio (*.opus *.wav *.mp3 *.m4a *.flac *.ogg *.mp4);;All files (*.*)",
+        )
+        if not path:
+            return
+        try:
+            rid = self.pipeline.import_audio_file(path)
+        except FileNotFoundError:
+            show_in_app_toast("Import failed", "That file no longer exists.")
+            return
+        except Exception as exc:
+            logger.exception("import_audio_file failed for %r", path)
+            show_in_app_toast(
+                "Import failed",
+                f"Couldn't read that file as audio: {exc}",
+            )
+            return
+        show_in_app_toast(
+            "Importing audio",
+            f"Transcribing {Path(path).name} — you'll get a notification when it's ready.",
+        )
+        self._refresh_history(query=self.search.input.text() or None)
+        # Highlight the new card.
+        self.history.select(rid)
 
     def _export_summary(self, recording_id: int) -> None:
         rec = RecordingRepo(self.db).get(recording_id)
@@ -510,6 +555,26 @@ class App:
         dlg.saved.connect(self._refresh_history)
         dlg.exec()
 
+    def _open_settings_transcription_tab(self) -> None:
+        """Open Settings and jump to the Transcription tab.
+
+        Used as the action button on the 'Whisper model couldn't load' toast
+        so users land directly on the Re-download / model picker controls.
+        """
+        from PySide6.QtWidgets import QTabWidget
+        dlg = SettingsDialog(
+            self.settings, self.paths,
+            hotkey_reload_callback=self._on_hotkey_reload,
+            parent=self.window,
+        )
+        for child in dlg.findChildren(QTabWidget):
+            for i in range(child.count()):
+                if child.tabText(i) == "Transcription":
+                    child.setCurrentIndex(i)
+                    break
+        dlg.saved.connect(self._refresh_history)
+        dlg.exec()
+
     def _open_settings_ai_tab(self) -> None:
         """Open Settings and jump to the AI tab."""
         from PySide6.QtWidgets import QTabWidget
@@ -569,9 +634,22 @@ class App:
         self.tray.set_state(TrayState.ERROR)
         if self.active_banner.current_recording_id() == evt.recording_id:
             self.active_banner.hide_banner()
-        show_in_app_toast(
-            "Transcription failed", evt.error_message,
-        )
+        msg = evt.error_message or ""
+        if "model.bin" in msg.lower():
+            # Specific, actionable UX for the Whisper-model-file failure
+            # (model never finished downloading, antivirus quarantined it,
+            # dangling cache symlink, etc.).
+            show_in_app_toast(
+                "Whisper model couldn't load",
+                "The Whisper model file couldn't be opened. Open Settings → "
+                "Transcription to re-download it (or pick a smaller model). "
+                "If your antivirus may be quarantining model.bin, add the "
+                ".cache\\huggingface folder to its exclusions first.",
+                action_label="Open Settings",
+                action_callback=self._open_settings_transcription_tab,
+            )
+        else:
+            show_in_app_toast("Transcription failed", msg)
         self._refresh_history()
 
     def _on_summary_failed(self, evt: SummaryFailed) -> None:
