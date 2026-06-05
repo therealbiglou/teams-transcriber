@@ -180,3 +180,31 @@ def test_recovery_processes_waiting_rows(tmp_path: Path, monkeypatch: pytest.Mon
     assert submitted == [rid]
     assert RecordingRepo(db).get(rid).status == RecordingStatus.TRANSCRIBING
     db.close()
+
+
+def test_pipeline_import_audio_file_copies_creates_row_and_submits(tmp_path, monkeypatch):
+    """Pipeline.import_audio_file wraps importer + executor submit."""
+    import wave
+    pipe, db = _build_pipeline(tmp_path, gate=None)
+    submitted: list[int] = []
+    monkeypatch.setattr(pipe, "_submit_post_processing", lambda rid: submitted.append(rid))
+
+    src = tmp_path / "external" / "imported-meet.wav"
+    src.parent.mkdir(parents=True)
+    n = int(0.5 * 16_000)
+    t = np.linspace(0, 0.5, n, endpoint=False, dtype=np.float32)
+    samples = (0.25 * np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
+    with wave.open(str(src), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16_000)
+        w.writeframes(samples.tobytes())
+
+    rid = pipe.import_audio_file(str(src))
+
+    assert rid > 0
+    assert submitted == [rid]
+    rec = RecordingRepo(db).get(rid)
+    assert rec is not None
+    assert rec.status == RecordingStatus.TRANSCRIBING
+    assert rec.audio_path is not None
+    assert Path(rec.audio_path).is_file()
+    db.close()

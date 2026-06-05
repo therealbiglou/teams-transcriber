@@ -100,25 +100,41 @@ class Transcriber:
             return
 
         try:
-            from teams_transcriber.audio.splitter import split_channels_to_wav
+            from teams_transcriber.audio.splitter import (
+                probe_audio, split_channels_to_wav, to_mono_wav,
+            )
 
-            opus_path = Path(rec.audio_path)
-            mic_wav = opus_path.with_suffix(".mic.wav")
-            loop_wav = opus_path.with_suffix(".loop.wav")
-            try:
-                split_channels_to_wav(opus_path, ch0_out=mic_wav, ch1_out=loop_wav)
+            audio_path = Path(rec.audio_path)
+            channels, _ = probe_audio(audio_path)
 
-                if self._model is None:
-                    self._model = self._model_factory(
-                        self._settings.transcription_model,
-                        compute_type=self._settings.transcription_compute_type,
-                    )
-
-                me_segments = self._run_whisper(mic_wav, recording_id, Channel.ME)
-                others_segments = self._run_whisper(loop_wav, recording_id, Channel.OTHERS)
-                all_segments = sorted(
-                    me_segments + others_segments, key=lambda s: s.start_ms,
+            if self._model is None:
+                self._model = self._model_factory(
+                    self._settings.transcription_model,
+                    compute_type=self._settings.transcription_compute_type,
                 )
+
+            temp_wavs: list[Path] = []
+            try:
+                if channels == 2:
+                    # Native dual-channel recording: mic = ME, system = OTHERS.
+                    mic_wav = audio_path.with_suffix(".mic.wav")
+                    loop_wav = audio_path.with_suffix(".loop.wav")
+                    temp_wavs = [mic_wav, loop_wav]
+                    split_channels_to_wav(audio_path, ch0_out=mic_wav, ch1_out=loop_wav)
+                    me_segments = self._run_whisper(mic_wav, recording_id, Channel.ME)
+                    others_segments = self._run_whisper(loop_wav, recording_id, Channel.OTHERS)
+                    all_segments = sorted(
+                        me_segments + others_segments, key=lambda s: s.start_ms,
+                    )
+                else:
+                    # Imported / single-channel / multi-channel-not-dual audio:
+                    # downmix to one mono WAV. Tag everything as ME — we can't
+                    # know L/R mapping on arbitrary external files.
+                    mono_wav = audio_path.with_suffix(".mono.wav")
+                    temp_wavs = [mono_wav]
+                    to_mono_wav(audio_path, mono_wav)
+                    all_segments = self._run_whisper(mono_wav, recording_id, Channel.ME)
+
                 if all_segments:
                     TranscriptRepo(self._db).append_many(all_segments)
 
@@ -128,7 +144,7 @@ class Transcriber:
                     segment_count=len(all_segments) + len(existing),
                 ))
             finally:
-                for p in (mic_wav, loop_wav):
+                for p in temp_wavs:
                     try:
                         if p.exists():
                             p.unlink()

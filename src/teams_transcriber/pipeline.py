@@ -86,6 +86,21 @@ class Pipeline:
         """Public entry point for re-running summarization on an existing recording."""
         self._summarizer.summarize(recording_id, api_key=api_key)
 
+    def import_audio_file(self, src_path: str) -> int:
+        """Import an external audio file as a recording and start processing.
+
+        Returns the new recording's id. The file is copied into the audio dir
+        (consistent with native recordings), a Recording row is created at
+        status TRANSCRIBING, and post-processing (transcribe + summarize) is
+        enqueued. Raises FileNotFoundError / ValueError from the importer on a
+        missing or non-audio file.
+        """
+        from pathlib import Path
+        from teams_transcriber.audio.importer import import_audio_file
+        rid = import_audio_file(Path(src_path), db=self._db, paths=self._paths)
+        self._submit_post_processing(rid)
+        return rid
+
     def retry_transcription(self, recording_id: int) -> None:
         """Public entry point for re-running transcription (and onward).
 

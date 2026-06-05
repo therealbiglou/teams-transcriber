@@ -134,6 +134,44 @@ def test_transcribe_writes_segments_and_emits_event(db_with_recording, paths) ->
     assert rec.status == RecordingStatus.SUMMARIZING
 
 
+def test_transcribe_mono_audio_runs_single_pass_labeled_me(paths) -> None:
+    """Imported (mono) audio: one Whisper pass, all segments tagged Channel.ME."""
+    import wave
+    db = build_database(paths.db_path)
+    db.initialize()
+    audio = paths.audio_dir / "imported-mono.wav"
+    rate = 16_000
+    n = int(0.5 * rate)
+    t = np.linspace(0, 0.5, n, endpoint=False, dtype=np.float32)
+    samples = (0.25 * np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
+    with wave.open(str(audio), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(rate)
+        w.writeframes(samples.tobytes())
+
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-06-05T10:00:00+00:00", ended_at=None,
+        source=RecordingSource.MANUAL, detected_title="Imported",
+        display_title="Imported", audio_path=str(audio), audio_deleted_at=None,
+        duration_ms=500, status=RecordingStatus.TRANSCRIBING, error_message=None,
+    ))
+
+    bus = EventBus()
+    received: list[TranscriptionComplete] = []
+    bus.subscribe(TranscriptionComplete, received.append)
+    Transcriber(
+        bus=bus, db=db, settings=Settings(),
+        model_factory=lambda *_a, **_kw: FakeWhisperModel(),
+    ).transcribe(rec.id)
+
+    segments = TranscriptRepo(db).list_for_recording(rec.id)
+    # ONE Whisper pass over mono => 3 fake segments, all ME.
+    assert len(segments) == 3
+    assert {s.channel for s in segments} == {Channel.ME}
+    assert RecordingRepo(db).get(rec.id).status == RecordingStatus.SUMMARIZING
+    assert received and received[0].segment_count == 3
+    db.close()
+
+
 def test_transcribe_marks_failed_when_audio_missing(db_with_recording, paths) -> None:
     db, rec_id = db_with_recording
     # Delete the audio file under the Transcriber's feet.
