@@ -79,13 +79,24 @@ class WrikeFolderPicker(FramelessWindowMixin, QDialog):
 
     def _apply_filter(self, text: str) -> None:
         needle = text.strip().lower()
+        first_visible: int | None = None
         for i in range(self._list.count()):
             item = self._list.item(i)
-            item.setHidden(bool(needle) and needle not in item.text().lower())
+            hidden = bool(needle) and needle not in item.text().lower()
+            item.setHidden(hidden)
+            if not hidden and first_visible is None:
+                first_visible = i
+        cur = self._list.currentItem()
+        if cur is None or cur.isHidden():
+            if first_visible is not None:
+                self._list.setCurrentRow(first_visible)
+            else:
+                self._list.clearSelection()
+                self._list.setCurrentRow(-1)
 
     def _on_accept(self) -> None:
         item = self._list.currentItem()
-        if item is None:
+        if item is None or item.isHidden():
             return
         self.selected_folder_id = item.data(Qt.ItemDataRole.UserRole)
         self.accept()

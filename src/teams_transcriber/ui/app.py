@@ -825,17 +825,15 @@ class App:
         )
 
     def _wrike_open_picker(self, recording_id: int) -> None:
-        """Open the folder picker; on accept, run the sync in a background thread."""
+        """Fetch Wrike folders in a worker, then show the picker on the main thread."""
         import keyring
-        from teams_transcriber.config import (
-            KEYRING_SERVICE, KEYRING_USER_WRIKE, save_settings,
-        )
+        import threading
+        from PySide6.QtCore import QTimer
+        from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_WRIKE
         from teams_transcriber.integrations.wrike_client import (
-            WrikeApiError,
-            WrikeClient,
+            WrikeClient, WrikeApiError,
         )
         from teams_transcriber.storage.wrike import WrikeSyncRepo
-        from teams_transcriber.ui.wrike_folder_picker import WrikeFolderPicker
 
         token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
         if not token:
@@ -845,17 +843,36 @@ class App:
             )
             return
 
-        client = WrikeClient(token=token)
-        try:
-            folders = client.list_folders()
-        except WrikeApiError as exc:
-            client.close()
-            show_in_app_toast("Wrike error", str(exc))
-            WrikeSyncRepo(self.db).update(
-                recording_id, status="failed", error_message=str(exc),
-            )
-            return
-        client.close()
+        def _worker() -> None:
+            client = WrikeClient(token=token)
+            try:
+                folders = client.list_folders()
+            except WrikeApiError as exc:
+                QTimer.singleShot(0, lambda e=str(exc): self._wrike_picker_load_failed(recording_id, e))
+                return
+            except Exception as exc:
+                logger.exception("Wrike list_folders failed")
+                QTimer.singleShot(0, lambda e=str(exc): self._wrike_picker_load_failed(recording_id, e))
+                return
+            finally:
+                client.close()
+            QTimer.singleShot(0, lambda: self._wrike_picker_show(recording_id, folders, token))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _wrike_picker_load_failed(self, recording_id: int, msg: str) -> None:
+        from teams_transcriber.storage.wrike import WrikeSyncRepo
+        show_in_app_toast("Wrike error", msg)
+        WrikeSyncRepo(self.db).update(
+            recording_id, status="failed", error_message=msg,
+        )
+
+    def _wrike_picker_show(
+        self, recording_id: int, folders: list, token: str,
+    ) -> None:
+        import threading
+        from teams_transcriber.config import save_settings
+        from teams_transcriber.ui.wrike_folder_picker import WrikeFolderPicker
 
         recent_ids = list(
             self.settings._raw.get("integrations", {})
@@ -872,7 +889,6 @@ class App:
             "wrike_recent_folder_ids"
         ] = new_recent
         save_settings(self.paths, self.settings)
-
         threading.Thread(
             target=self._wrike_run_sync,
             args=(recording_id, folder_id, token),

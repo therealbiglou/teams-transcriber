@@ -81,7 +81,7 @@ def sync_recording(
     existing = {(r.kind, r.todo_index) for r in task_repo.list_for_recording(recording_id)}
     res = SyncResult()
 
-    self_id = client.test_connection().get("id")
+    self_id = client.test_connection().get("id") if summary.my_todos else None
 
     for i, td in enumerate(summary.my_todos):
         if ("my", i) in existing:

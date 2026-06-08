@@ -118,11 +118,11 @@ def test_sync_case_insensitive_exact_match_for_others(env):
 def test_sync_ambiguous_match_does_not_assign(env):
     _, db = env
     rid = _make_recording_with_summary(
-        db, my_todos=[], others=[ActionItemOther(who="John", task="X")],
+        db, my_todos=[], others=[ActionItemOther(who="John Doe", task="X")],
     )
     client = _FakeClient(contacts=[
         {"id": "C_JOHN1", "firstName": "John", "lastName": "Doe"},
-        {"id": "C_JOHN2", "firstName": "John", "lastName": "Smith"},
+        {"id": "C_JOHN2", "firstName": "John", "lastName": "Doe"},   # duplicate full name
     ])
     res = sync_recording(db, client, rid, folder_id="F1")
     assert res.assigned_other == 0

@@ -34,3 +34,19 @@ def test_picker_returns_selected_folder_id(qapp):
     dlg._list.setCurrentRow(0)
     dlg._on_accept()
     assert dlg.selected_folder_id in {"F1", "F2", "F3"}
+
+
+def test_picker_accept_skips_hidden_current_item(qapp):
+    from teams_transcriber.ui.wrike_folder_picker import WrikeFolderPicker
+    dlg = WrikeFolderPicker(
+        folders=[
+            {"id": "F1", "title": "Inbox"},
+            {"id": "F2", "title": "Meetings"},
+        ],
+        recent_folder_ids=[],
+    )
+    dlg._list.setCurrentRow(0)
+    dlg._search.setText("meet")   # hides the Inbox row that was selected
+    dlg._on_accept()
+    # selected_folder_id must come from a visible row (the Meetings row), not the hidden Inbox.
+    assert dlg.selected_folder_id == "F2"

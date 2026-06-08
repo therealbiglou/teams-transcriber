@@ -254,9 +254,12 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         self.wrike_token_input.setEchoMode(QLineEdit.EchoMode.Password)
         try:
             existing = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
-        except keyring.errors.KeyringError:
+        except Exception:
             existing = ""
-        self.wrike_token_input.setText(existing)
+        if existing:
+            self.wrike_token_input.setPlaceholderText(f"(stored: {existing[:6]}…)")
+        else:
+            self.wrike_token_input.setPlaceholderText("Paste your Wrike Permanent Access Token")
         form.addRow("Wrike API token:", self.wrike_token_input)
 
         # Test connection.
@@ -280,16 +283,17 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
 
     def _wrike_test_connection(self) -> None:
         from teams_transcriber.integrations import wrike_client as _wc
-        token = self.wrike_token_input.text().strip()
+        token = self.wrike_token_input.text().strip() or (
+            keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
+        )
         if not token:
             self.wrike_status_label.setText("Enter a token first.")
             return
         self.wrike_status_label.setText("Checking…")
         QApplication.processEvents()
+        client = _wc.WrikeClient(token=token)
         try:
-            client = _wc.WrikeClient(token=token)
             me = client.test_connection()
-            client.close()
             name = (me.get("firstName") or "user") + " " + (me.get("lastName") or "")
             self.wrike_status_label.setText(
                 f"<span style='color:#065F46;'>✓ Connected as {name.strip()}</span>"
@@ -298,6 +302,8 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
             self.wrike_status_label.setText(
                 f"<span style='color:#DC2626;'>✗ {exc}</span>"
             )
+        finally:
+            client.close()
 
     def _build_shortcuts_tab(self) -> QWidget:
         w = QWidget()
@@ -546,11 +552,9 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         new_wrike_token = self.wrike_token_input.text().strip()
         if new_wrike_token:
             keyring.set_password(KEYRING_SERVICE, KEYRING_USER_WRIKE, new_wrike_token)
-        else:
-            try:
-                keyring.delete_password(KEYRING_SERVICE, KEYRING_USER_WRIKE)
-            except Exception:
-                pass
+        # (Empty input means "keep what's stored"; if the user wants to clear the
+        # token they can do it from the keyring directly. Matches the Anthropic
+        # key pattern.)
 
         self.saved.emit()
         self.accept()
