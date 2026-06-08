@@ -90,6 +90,17 @@ def _default_export_name(title: str, started_at: str) -> str:
     return f"{slug}-{day}.pdf"
 
 
+def _wrike_should_offer_sync(
+    *, enabled: bool, has_token: bool, already_synced: bool,
+) -> bool:
+    return enabled and has_token and not already_synced
+
+
+def _wrike_lru_push(items: list[str], value: str, *, cap: int) -> list[str]:
+    rest = [i for i in items if i != value]
+    return ([value] + rest)[:cap]
+
+
 def _make_app() -> QApplication:
     existing = QApplication.instance()
     app = existing if isinstance(existing, QApplication) else QApplication([])
@@ -160,6 +171,7 @@ class App:
         self.bridge.transcription_complete.connect(self._on_transcription_complete)
         self.bridge.transcription_failed.connect(self._on_transcription_failed)
         self.bridge.summary_ready.connect(self._on_summary_ready)
+        self.bridge.summary_ready.connect(self._on_summary_ready_wrike)
         self.bridge.summary_failed.connect(self._on_summary_failed)
         self.bridge.update_available.connect(self._on_update_available)
         self.bridge.update_check_completed.connect(self._on_update_check_completed)
@@ -681,6 +693,129 @@ class App:
             action_callback=lambda: self._show_summary(recording_id),
         )
         self._refresh_history()
+
+    def _on_summary_ready_wrike(self, evt) -> None:
+        """Offer to sync this summary's todos to Wrike via a toast + picker."""
+        import keyring
+        from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_WRIKE
+        from teams_transcriber.storage import SummaryRepo
+        from teams_transcriber.storage.wrike import WrikeSyncRepo
+
+        token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
+        enabled = bool(
+            self.settings._raw.get("integrations", {}).get("wrike_enabled", False)
+        )
+        existing = WrikeSyncRepo(self.db).get(evt.recording_id)
+        already_synced = bool(existing and existing.status == "synced")
+        if not _wrike_should_offer_sync(
+            enabled=enabled, has_token=bool(token), already_synced=already_synced,
+        ):
+            return
+        s = SummaryRepo(self.db).get(evt.recording_id)
+        if s is None:
+            return
+        n = len(s.my_todos) + len(s.action_items_others)
+        if n == 0:
+            return
+        WrikeSyncRepo(self.db).upsert(evt.recording_id, status="pending")
+        rid = evt.recording_id
+        show_in_app_toast(
+            "Send todos to Wrike",
+            f"{n} task{'s' if n != 1 else ''} ready — pick a folder.",
+            action_label="Pick folder",
+            action_callback=lambda: self._wrike_open_picker(rid),
+        )
+
+    def _wrike_open_picker(self, recording_id: int) -> None:
+        """Open the folder picker; on accept, run the sync in a background thread."""
+        import keyring
+        from teams_transcriber.config import (
+            KEYRING_SERVICE, KEYRING_USER_WRIKE, save_settings,
+        )
+        from teams_transcriber.integrations.wrike_client import (
+            WrikeApiError,
+            WrikeClient,
+        )
+        from teams_transcriber.storage.wrike import WrikeSyncRepo
+        from teams_transcriber.ui.wrike_folder_picker import WrikeFolderPicker
+
+        token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
+        if not token:
+            show_in_app_toast(
+                "Wrike not configured",
+                "Add a token in Settings → Integrations.",
+            )
+            return
+
+        client = WrikeClient(token=token)
+        try:
+            folders = client.list_folders()
+        except WrikeApiError as exc:
+            client.close()
+            show_in_app_toast("Wrike error", str(exc))
+            WrikeSyncRepo(self.db).update(
+                recording_id, status="failed", error_message=str(exc),
+            )
+            return
+        client.close()
+
+        recent_ids = list(
+            self.settings._raw.get("integrations", {})
+            .get("wrike_recent_folder_ids", []) or []
+        )
+        dlg = WrikeFolderPicker(
+            folders=folders, recent_folder_ids=recent_ids, parent=self.window,
+        )
+        if dlg.exec() != dlg.DialogCode.Accepted or not dlg.selected_folder_id:
+            return
+        folder_id = dlg.selected_folder_id
+        new_recent = _wrike_lru_push(recent_ids, folder_id, cap=5)
+        self.settings._raw.setdefault("integrations", {})[
+            "wrike_recent_folder_ids"
+        ] = new_recent
+        save_settings(self.paths, self.settings)
+
+        threading.Thread(
+            target=self._wrike_run_sync,
+            args=(recording_id, folder_id, token),
+            daemon=True,
+        ).start()
+
+    def _wrike_run_sync(
+        self, recording_id: int, folder_id: str, token: str,
+    ) -> None:
+        """Background-thread sync. Updates wrike_sync status + toasts the result."""
+        from teams_transcriber.integrations.wrike_client import (
+            WrikeApiError,
+            WrikeClient,
+        )
+        from teams_transcriber.integrations.wrike_sync import sync_recording
+        from teams_transcriber.storage.wrike import WrikeSyncRepo
+
+        client = WrikeClient(token=token)
+        try:
+            result = sync_recording(
+                self.db, client, recording_id, folder_id=folder_id,
+            )
+            WrikeSyncRepo(self.db).update(
+                recording_id, status="synced", folder_id=folder_id,
+            )
+            n = result.created_my + result.created_other
+            extra = (
+                f" — {result.assigned_other} assigned"
+                if result.assigned_other else ""
+            )
+            show_in_app_toast(
+                "Synced to Wrike",
+                f"Created {n} task{'s' if n != 1 else ''}{extra}",
+            )
+        except WrikeApiError as exc:
+            WrikeSyncRepo(self.db).update(
+                recording_id, status="failed", error_message=str(exc),
+            )
+            show_in_app_toast("Wrike sync failed", str(exc))
+        finally:
+            client.close()
 
     def _background_update_check(self) -> None:
         from datetime import UTC, datetime
