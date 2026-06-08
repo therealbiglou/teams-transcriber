@@ -101,6 +101,23 @@ def _wrike_lru_push(items: list[str], value: str, *, cap: int) -> list[str]:
     return ([value] + rest)[:cap]
 
 
+def _wrike_close_loop_changes(
+    rows: list,                  # list[WrikeTaskRow]
+    todo_states: dict[int, bool],
+) -> list[tuple]:                # list[(WrikeTaskRow, new_done)]
+    """Return only the (row, new_done) pairs whose state changed since
+    last sync. Filters out the 'other' kind — action-items-for-others
+    aren't toggleable in the app, only my-todos are."""
+    out: list[tuple] = []
+    for r in rows:
+        if r.kind != "my":
+            continue
+        new_done = bool(todo_states.get(r.todo_index, False))
+        if new_done != r.last_synced_done:
+            out.append((r, new_done))
+    return out
+
+
 def _make_app() -> QApplication:
     existing = QApplication.instance()
     app = existing if isinstance(existing, QApplication) else QApplication([])
@@ -299,9 +316,65 @@ class App:
         self._content_stack.setCurrentIndex(0)
         self._refresh_history(query=self.search.input.text() or None)
 
-    def _on_todo_state_changed(self, _rid: int) -> None:
+    def _on_todo_state_changed(self, rid: int) -> None:
         self._refresh_history(query=self.search.input.text() or None)
         self.master_todos.reload()
+        self._wrike_close_loop_sync(rid)
+
+    def _wrike_close_loop_sync(self, recording_id: int) -> None:
+        """Compute which my-todos changed and dispatch a worker to push them."""
+        import keyring
+        from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_WRIKE
+        from teams_transcriber.storage import TodoStateRepo
+        from teams_transcriber.storage.wrike import WrikeTaskRepo
+
+        token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
+        enabled = bool(
+            self.settings._raw.get("integrations", {}).get("wrike_enabled", False)
+        )
+        if not (enabled and token):
+            return
+        rows = WrikeTaskRepo(self.db).list_for_recording(recording_id)
+        if not rows:
+            return
+        todo_states = {
+            s.todo_index: s.done
+            for s in TodoStateRepo(self.db).list_for_recording(recording_id)
+        }
+        changes = _wrike_close_loop_changes(rows, todo_states)
+        if not changes:
+            return
+        threading.Thread(
+            target=self._wrike_apply_close_loop,
+            args=(recording_id, changes, token),
+            daemon=True,
+        ).start()
+
+    def _wrike_apply_close_loop(
+        self, recording_id: int, changes: list, token: str,
+    ) -> None:
+        """Background-thread worker: call Wrike API per changed todo."""
+        from teams_transcriber.integrations.wrike_client import (
+            WrikeClient, WrikeApiError,
+        )
+        from teams_transcriber.storage.wrike import WrikeTaskRepo
+
+        client = WrikeClient(token=token)
+        repo = WrikeTaskRepo(self.db)
+        try:
+            for row, new_done in changes:
+                try:
+                    client.complete_task(row.wrike_task_id, done=new_done)
+                    repo.set_last_synced_done(
+                        recording_id, row.kind, row.todo_index, new_done,
+                    )
+                except WrikeApiError as exc:
+                    logger.warning(
+                        "Wrike close-loop failed for %s: %s",
+                        row.wrike_task_id, exc,
+                    )
+        finally:
+            client.close()
 
     def _show_master_todos(self) -> None:
         self.master_todos.reload()
