@@ -258,12 +258,13 @@ class App:
         self.record_btn.clicked.connect(self._toggle_manual)
         top_row.addWidget(self.record_btn)
 
-        self.import_btn = QPushButton("Import audio…")
+        self.import_btn = QPushButton("Import…")
         self.import_btn.setProperty("role", "secondary")
         self.import_btn.setFixedHeight(36)
         self.import_btn.setToolTip(
-            "Transcribe an audio file recorded outside Teams (phone, other "
-            "device, or an orphaned recording in the audio folder)."
+            "Import an audio file (.opus/.wav/.mp3/.m4a/.flac/.ogg/.mp4) "
+            "to transcribe + summarize, OR a transcript file "
+            "(.txt/.md/.vtt/.srt) to summarize directly."
         )
         self.import_btn.clicked.connect(self._import_audio_file)
         top_row.addWidget(self.import_btn)
@@ -476,36 +477,57 @@ class App:
         self.summary.show_recording(recording_id)
 
     def _import_audio_file(self) -> None:
-        """Pick an external audio file and run it through the pipeline.
+        """Pick an external audio OR transcript file and run it through the pipeline.
 
-        Useful for recordings made outside Teams (phone, other device), or for
-        recovering orphaned .opus files that exist in the audio dir but have
-        no recording row (the file gets copied and a fresh row is created).
+        Audio files (.opus/.wav/.mp3/.m4a/.flac/.ogg/.mp4) are copied into the
+        audio dir, transcribed, then summarized — useful for phone recordings,
+        other devices, or recovering orphaned .opus files. Transcript files
+        (.txt/.md/.vtt/.srt) skip transcription entirely and go straight to
+        the summarizer — useful for transcripts exported from another tool.
         """
         from pathlib import Path
+        from teams_transcriber.transcript_importer import is_transcript_file
         path, _ = QFileDialog.getOpenFileName(
-            self.window, "Import audio file",
+            self.window, "Import",
             str(self.paths.audio_dir),
-            "Audio (*.opus *.wav *.mp3 *.m4a *.flac *.ogg *.mp4);;All files (*.*)",
+            (
+                "Audio or transcript "
+                "(*.opus *.wav *.mp3 *.m4a *.flac *.ogg *.mp4 *.txt *.md *.vtt *.srt);;"
+                "Audio (*.opus *.wav *.mp3 *.m4a *.flac *.ogg *.mp4);;"
+                "Transcript (*.txt *.md *.vtt *.srt);;"
+                "All files (*.*)"
+            ),
         )
         if not path:
             return
+        src = Path(path)
+        is_transcript = is_transcript_file(src)
         try:
-            rid = self.pipeline.import_audio_file(path)
+            if is_transcript:
+                rid = self.pipeline.import_transcript_file(path)
+            else:
+                rid = self.pipeline.import_audio_file(path)
         except FileNotFoundError:
             show_in_app_toast("Import failed", "That file no longer exists.")
             return
         except Exception as exc:
-            logger.exception("import_audio_file failed for %r", path)
+            logger.exception("import failed for %r", path)
+            kind = "transcript" if is_transcript else "audio"
             show_in_app_toast(
                 "Import failed",
-                f"Couldn't read that file as audio: {exc}",
+                f"Couldn't read that file as {kind}: {exc}",
             )
             return
-        show_in_app_toast(
-            "Importing audio",
-            f"Transcribing {Path(path).name} — you'll get a notification when it's ready.",
-        )
+        if is_transcript:
+            show_in_app_toast(
+                "Importing transcript",
+                f"Summarizing {src.name} — you'll get a notification when it's ready.",
+            )
+        else:
+            show_in_app_toast(
+                "Importing audio",
+                f"Transcribing {src.name} — you'll get a notification when it's ready.",
+            )
         self._refresh_history(query=self.search.input.text() or None)
         # Highlight the new card.
         self.history.select(rid)

@@ -101,6 +101,20 @@ class Pipeline:
         self._submit_post_processing(rid)
         return rid
 
+    def import_transcript_file(self, src_path: str) -> int:
+        """Import an external transcript file (.txt/.md/.vtt/.srt) and summarize.
+
+        Returns the new recording's id. The file's text becomes a single
+        transcript segment; status starts at TRANSCRIBING and the existing
+        Transcriber path skips Whisper because the segment already covers the
+        recording's duration. Summarization then fires normally.
+        """
+        from pathlib import Path
+        from teams_transcriber.transcript_importer import import_transcript_file
+        rid = import_transcript_file(Path(src_path), db=self._db, paths=self._paths)
+        self._submit_post_processing(rid)
+        return rid
+
     def retry_transcription(self, recording_id: int) -> None:
         """Public entry point for re-running transcription (and onward).
 
