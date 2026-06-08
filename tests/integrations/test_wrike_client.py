@@ -13,7 +13,11 @@ def _client(handler) -> WrikeClient:
 
 def test_test_connection_returns_me_dict():
     def h(req: httpx.Request) -> httpx.Response:
-        assert req.url.path.endswith("/contacts/me")
+        # Correct Wrike v4 form: GET /contacts?me=true (NOT /contacts/me — that
+        # path interprets "me" as a contact id and 400s with
+        # "invalid ContactOrInvitation ID").
+        assert req.url.path.endswith("/contacts")
+        assert req.url.params.get("me") == "true"
         assert req.headers["Authorization"] == "bearer tok"
         return httpx.Response(200, json={"data": [{"id": "U1", "firstName": "Brian"}]})
     me = _client(h).test_connection()

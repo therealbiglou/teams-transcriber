@@ -48,8 +48,13 @@ class WrikeClient:
         )
 
     def test_connection(self) -> dict[str, Any]:
-        """Return the current user (first contact in /contacts/me's data list)."""
-        data = self._request("GET", "/contacts/me")
+        """Return the current user via /contacts?me=true.
+
+        Wrike's `/contacts/{id}` path expects a real contact id; there is no
+        `/contacts/me` shorthand. The current user is fetched by filtering the
+        list endpoint with `me=true`.
+        """
+        data = self._request("GET", "/contacts", params={"me": "true"})
         return data[0] if data else {}
 
     def list_folders(self) -> list[dict[str, Any]]:
@@ -70,11 +75,18 @@ class WrikeClient:
     def close(self) -> None:
         self._client.close()
 
-    def _request(self, method: str, path: str, *, json: Any | None = None) -> list[dict[str, Any]]:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Any | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         attempts = 0
         while True:
             attempts += 1
-            resp = self._client.request(method, path, json=json)
+            resp = self._client.request(method, path, json=json, params=params)
             if resp.status_code == 429:
                 if attempts > _MAX_RETRIES_ON_429:
                     raise WrikeRateLimitError(
