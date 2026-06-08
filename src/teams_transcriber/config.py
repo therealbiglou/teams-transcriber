@@ -14,6 +14,7 @@ from teams_transcriber.paths import AppPaths
 
 KEYRING_SERVICE = "teams-transcriber"
 KEYRING_USER_ANTHROPIC = "anthropic_api_key"
+KEYRING_USER_WRIKE = "wrike_api_token"
 
 
 # Default settings — load_settings merges any user-provided file on top of this.
@@ -59,6 +60,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "toggle_manual_recording": "ctrl+alt+r",
         "open_workspace": "ctrl+alt+n",
         "toggle_pause_detection": "ctrl+alt+p",
+    },
+    "integrations": {
+        "wrike_enabled": False,
+        "wrike_recent_folder_ids": [],
     },
 }
 

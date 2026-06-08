@@ -47,6 +47,7 @@ from PySide6.QtWidgets import (
 from teams_transcriber.config import (
     KEYRING_SERVICE,
     KEYRING_USER_ANTHROPIC,
+    KEYRING_USER_WRIKE,
     Settings,
     save_settings,
 )
@@ -103,6 +104,7 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         self._tabs.addTab(self._build_detection_tab(), "Detection")
         self._tabs.addTab(self._build_transcription_tab(), "Transcription")
         self._tabs.addTab(self._build_ai_tab(), "AI")
+        self._tabs.addTab(self._build_integrations_tab(), "Integrations")
         self._tabs.addTab(self._build_shortcuts_tab(), "Shortcuts")
         self._tabs.addTab(self._build_about_tab(), "About")
         body_layout.addWidget(self._tabs)
@@ -242,6 +244,60 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         self.addendum_input.setFixedHeight(80)
         form.addRow("Custom prompt addendum:", self.addendum_input)
         return w
+
+    def _build_integrations_tab(self) -> QWidget:
+        w = QWidget()
+        form = QFormLayout(w)
+
+        # Token (keyring-backed).
+        self.wrike_token_input = QLineEdit()
+        self.wrike_token_input.setEchoMode(QLineEdit.EchoMode.Password)
+        try:
+            existing = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
+        except keyring.errors.KeyringError:
+            existing = ""
+        self.wrike_token_input.setText(existing)
+        form.addRow("Wrike API token:", self.wrike_token_input)
+
+        # Test connection.
+        test_btn = QPushButton("Test connection")
+        test_btn.setProperty("role", "secondary")
+        test_btn.clicked.connect(self._wrike_test_connection)
+        self.wrike_status_label = QLabel("")
+        self.wrike_status_label.setWordWrap(True)
+        form.addRow("", test_btn)
+        form.addRow("", self.wrike_status_label)
+
+        # Enable.
+        self.wrike_enable_cb = QCheckBox(
+            "Send meeting todos to Wrike automatically when a summary is ready"
+        )
+        self.wrike_enable_cb.setChecked(
+            bool(self._settings._raw.get("integrations", {}).get("wrike_enabled", False))
+        )
+        form.addRow("", self.wrike_enable_cb)
+        return w
+
+    def _wrike_test_connection(self) -> None:
+        from teams_transcriber.integrations import wrike_client as _wc
+        token = self.wrike_token_input.text().strip()
+        if not token:
+            self.wrike_status_label.setText("Enter a token first.")
+            return
+        self.wrike_status_label.setText("Checking…")
+        QApplication.processEvents()
+        try:
+            client = _wc.WrikeClient(token=token)
+            me = client.test_connection()
+            client.close()
+            name = (me.get("firstName") or "user") + " " + (me.get("lastName") or "")
+            self.wrike_status_label.setText(
+                f"<span style='color:#065F46;'>✓ Connected as {name.strip()}</span>"
+            )
+        except Exception as exc:
+            self.wrike_status_label.setText(
+                f"<span style='color:#DC2626;'>✗ {exc}</span>"
+            )
 
     def _build_shortcuts_tab(self) -> QWidget:
         w = QWidget()
@@ -469,6 +525,11 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
             new_hotkeys[key] = value
             s._raw["hotkeys"][key] = value
 
+        # Integrations — Wrike enabled flag.
+        s._raw.setdefault("integrations", {})["wrike_enabled"] = (
+            self.wrike_enable_cb.isChecked()
+        )
+
         save_settings(self._paths, s)
 
         from teams_transcriber import autolaunch
@@ -480,6 +541,16 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         new_key = self.api_key_input.text().strip()
         if new_key:
             keyring.set_password(KEYRING_SERVICE, KEYRING_USER_ANTHROPIC, new_key)
+
+        # Wrike token to keyring.
+        new_wrike_token = self.wrike_token_input.text().strip()
+        if new_wrike_token:
+            keyring.set_password(KEYRING_SERVICE, KEYRING_USER_WRIKE, new_wrike_token)
+        else:
+            try:
+                keyring.delete_password(KEYRING_SERVICE, KEYRING_USER_WRIKE)
+            except Exception:
+                pass
 
         self.saved.emit()
         self.accept()
