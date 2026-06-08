@@ -62,6 +62,54 @@ def _build_description(meeting_title: str, started_at: str, context: str | None)
     return "\n\n".join(parts)
 
 
+def _safe_iso_date(due: str | None) -> str | None:
+    """Return `due` as YYYY-MM-DD if it parses as a real ISO date, else None.
+
+    The LLM produces freeform due-date strings ("next Tuesday", "by EOD Fri",
+    "Q3", or sometimes a real ISO date). Wrike's `dates.due` field requires a
+    strict ISO date string; anything else triggers a 400
+    `Parameter 'dates' value is invalid`. We accept only what Wrike will
+    accept, and the caller appends the original text to the description as a
+    fallback so the information isn't lost.
+    """
+    if not due:
+        return None
+    s = due.strip()
+    if not s:
+        return None
+    # YYYY-MM-DD exact.
+    try:
+        datetime.strptime(s, "%Y-%m-%d")
+        return s
+    except ValueError:
+        pass
+    # Full ISO datetime (with or without timezone) — normalize to date-only.
+    try:
+        dt = datetime.fromisoformat(s)
+        return dt.strftime("%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def _payload_with_due(
+    base_description: str,
+    due: str | None,
+) -> tuple[str, dict[str, str] | None]:
+    """Decide how to ship a possibly-non-ISO due string.
+
+    Returns `(description, dates_field)` where `dates_field` is either a dict
+    safe to put under `payload["dates"]` (e.g. `{"due": "2026-06-15"}`) or
+    None if the date wasn't parseable. When unparseable, the original raw
+    string is appended to the description so the user still sees it.
+    """
+    safe = _safe_iso_date(due)
+    if safe:
+        return base_description, {"due": safe}
+    if due and due.strip():
+        return base_description + f"\n\nDue (as written): {due.strip()}", None
+    return base_description, None
+
+
 def sync_recording(
     db: Database,
     client: _ClientProto,
@@ -86,13 +134,15 @@ def sync_recording(
     for i, td in enumerate(summary.my_todos):
         if ("my", i) in existing:
             continue
+        base_desc = _build_description(rec_title, started_at, td.context)
+        desc, dates = _payload_with_due(base_desc, td.due)
         payload: dict[str, Any] = {
             "title": td.task,
-            "description": _build_description(rec_title, started_at, td.context),
+            "description": desc,
             "status": "Active",
         }
-        if td.due:
-            payload["dates"] = {"due": td.due}
+        if dates:
+            payload["dates"] = dates
         if self_id:
             payload["responsibles"] = [self_id]
         created = client.create_task(folder_id, payload)
@@ -111,13 +161,15 @@ def sync_recording(
         if ("other", j) in existing:
             continue
         matched_id = _match_contact(ai.who, contacts)
+        base_desc = _build_description(rec_title, started_at, None)
+        desc, dates = _payload_with_due(base_desc, ai.due)
         payload = {
             "title": f"For {ai.who}: {ai.task}",
-            "description": _build_description(rec_title, started_at, None),
+            "description": desc,
             "status": "Active",
         }
-        if ai.due:
-            payload["dates"] = {"due": ai.due}
+        if dates:
+            payload["dates"] = dates
         if matched_id:
             payload["responsibles"] = [matched_id]
             res.assigned_other += 1

@@ -126,3 +126,69 @@ def test_sync_ambiguous_match_does_not_assign(env):
     ])
     res = sync_recording(db, client, rid, folder_id="F1")
     assert res.assigned_other == 0
+
+
+# --- date validation ---------------------------------------------------
+
+def test_safe_iso_date_accepts_yyyy_mm_dd():
+    from teams_transcriber.integrations.wrike_sync import _safe_iso_date
+    assert _safe_iso_date("2026-06-15") == "2026-06-15"
+
+
+def test_safe_iso_date_normalizes_full_iso_datetime():
+    from teams_transcriber.integrations.wrike_sync import _safe_iso_date
+    # Wrike's dates.due wants a date; strip the time component.
+    assert _safe_iso_date("2026-06-15T10:30:00") == "2026-06-15"
+
+
+def test_safe_iso_date_rejects_freeform_strings():
+    from teams_transcriber.integrations.wrike_sync import _safe_iso_date
+    for v in (None, "", "  ", "next Tuesday", "by EOD Friday",
+              "Q3", "TBD", "ASAP", "6/15", "June 15", "2026-06"):
+        assert _safe_iso_date(v) is None, f"should reject {v!r}"
+
+
+def test_sync_skips_dates_and_appends_to_description_when_due_is_freeform(env):
+    _, db = env
+    rid = _make_recording_with_summary(
+        db,
+        my_todos=[TodoItem(task="Email Jennifer", due="next Tuesday")],
+        others=[],
+    )
+    client = _FakeClient()
+    res = sync_recording(db, client, rid, folder_id="F1")
+    assert res.created_my == 1
+    payload = client.created[0][1]
+    # Unparseable due is NOT sent as `dates.*` (Wrike would 400).
+    assert "dates" not in payload
+    # ...but the info is preserved in the description so the user still sees it.
+    assert "Due (as written): next Tuesday" in payload["description"]
+
+
+def test_sync_sends_dates_when_due_is_iso(env):
+    _, db = env
+    rid = _make_recording_with_summary(
+        db,
+        my_todos=[TodoItem(task="Email Jennifer", due="2026-06-15")],
+        others=[],
+    )
+    client = _FakeClient()
+    sync_recording(db, client, rid, folder_id="F1")
+    payload = client.created[0][1]
+    assert payload["dates"] == {"due": "2026-06-15"}
+    assert "Due (as written)" not in payload["description"]
+
+
+def test_sync_same_behavior_for_action_items_others(env):
+    _, db = env
+    rid = _make_recording_with_summary(
+        db,
+        my_todos=[],
+        others=[ActionItemOther(who="Jennifer Smith", task="Send floor plan",
+                                due="end of week")],
+    )
+    client = _FakeClient()
+    sync_recording(db, client, rid, folder_id="F1")
+    payload = client.created[0][1]
+    assert "dates" not in payload
+    assert "Due (as written): end of week" in payload["description"]
