@@ -864,19 +864,25 @@ class App:
             return
 
         def _worker() -> None:
+            # PySide6 gotcha: QTimer.singleShot(0, callable) WITHOUT a context
+            # QObject creates the timer on the CALLING thread, which here is
+            # a plain Python worker with no Qt event loop -> the lambda never
+            # fires. The 3-arg form `singleShot(0, qobj, callable)` binds the
+            # timer to qobj's thread (the main GUI thread for self.window),
+            # so it dispatches correctly.
             client = WrikeClient(token=token)
             try:
                 folders = client.list_folders()
             except WrikeApiError as exc:
-                QTimer.singleShot(0, lambda e=str(exc): self._wrike_picker_load_failed(recording_id, e))
+                QTimer.singleShot(0, self.window, lambda e=str(exc): self._wrike_picker_load_failed(recording_id, e))
                 return
             except Exception as exc:
                 logger.exception("Wrike list_folders failed")
-                QTimer.singleShot(0, lambda e=str(exc): self._wrike_picker_load_failed(recording_id, e))
+                QTimer.singleShot(0, self.window, lambda e=str(exc): self._wrike_picker_load_failed(recording_id, e))
                 return
             finally:
                 client.close()
-            QTimer.singleShot(0, lambda: self._wrike_picker_show(recording_id, folders, token))
+            QTimer.singleShot(0, self.window, lambda: self._wrike_picker_show(recording_id, folders, token))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -918,7 +924,13 @@ class App:
     def _wrike_run_sync(
         self, recording_id: int, folder_id: str, token: str,
     ) -> None:
-        """Background-thread sync. Updates wrike_sync status + toasts the result."""
+        """Background-thread sync. Updates wrike_sync status + toasts the result.
+
+        Toasts are scheduled on the main thread via QTimer.singleShot with
+        self.window as context — show_in_app_toast creates QWidgets and must
+        not run on a worker thread.
+        """
+        from PySide6.QtCore import QTimer
         from teams_transcriber.integrations.wrike_client import (
             WrikeApiError,
             WrikeClient,
@@ -939,15 +951,17 @@ class App:
                 f" — {result.assigned_other} assigned"
                 if result.assigned_other else ""
             )
-            show_in_app_toast(
+            title, body = (
                 "Synced to Wrike",
                 f"Created {n} task{'s' if n != 1 else ''}{extra}",
             )
+            QTimer.singleShot(0, self.window, lambda: show_in_app_toast(title, body))
         except WrikeApiError as exc:
             WrikeSyncRepo(self.db).update(
                 recording_id, status="failed", error_message=str(exc),
             )
-            show_in_app_toast("Wrike sync failed", str(exc))
+            err = str(exc)
+            QTimer.singleShot(0, self.window, lambda: show_in_app_toast("Wrike sync failed", err))
         finally:
             client.close()
 
