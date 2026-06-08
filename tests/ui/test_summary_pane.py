@@ -431,3 +431,40 @@ def test_all_non_header_labels_are_selectable(tmp_path, qapp) -> None:
 
     db.close()
     db2.close()
+
+
+def _find_button(pane, text):
+    from PySide6.QtWidgets import QPushButton
+    for btn in pane.findChildren(QPushButton):
+        if btn.text() == text:
+            return btn
+    return None
+
+
+def test_send_to_wrike_button_hidden_when_no_callable(qapp, db_with_summary):
+    db, rid = db_with_summary
+    pane = SummaryPane(db)               # default: wrike_available=None
+    pane.show_recording(rid)
+    assert _find_button(pane, "Send to Wrike") is None
+    db.close()
+
+
+def test_send_to_wrike_button_hidden_when_callable_returns_false(qapp, db_with_summary):
+    db, rid = db_with_summary
+    pane = SummaryPane(db, wrike_available=lambda: False)
+    pane.show_recording(rid)
+    assert _find_button(pane, "Send to Wrike") is None
+    db.close()
+
+
+def test_send_to_wrike_button_shown_and_emits_signal(qapp, db_with_summary):
+    db, rid = db_with_summary
+    pane = SummaryPane(db, wrike_available=lambda: True)
+    pane.show_recording(rid)
+    btn = _find_button(pane, "Send to Wrike")
+    assert btn is not None
+    received: list[int] = []
+    pane.wrike_sync_requested.connect(received.append)
+    btn.click()
+    assert received == [rid]
+    db.close()

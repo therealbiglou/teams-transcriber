@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from PySide6.QtCore import Qt as _Qt
@@ -45,10 +46,21 @@ class SummaryPane(QScrollArea):
     retry_requested = Signal(int)        # recording_id — re-run from the failed step
     transcript_requested = Signal(int)   # recording_id — open transcript window
     todo_state_changed = Signal(int)     # recording_id — a checkbox toggled
+    wrike_sync_requested = Signal(int)   # recording_id — manually send todos to Wrike
 
-    def __init__(self, db: Database, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        db: Database,
+        *,
+        wrike_available: Callable[[], bool] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         self._db = db
+        # Returns True when Wrike is configured (token present + enabled), so
+        # the "Send to Wrike" button only appears when it can actually do
+        # something. None = never show (the integration's UI is hidden).
+        self._wrike_available = wrike_available
         self.setWidgetResizable(True)
         self.setFrameShape(QScrollArea.Shape.NoFrame)
         # AsNeeded so a single un-wrappable long token doesn't crash visibility —
@@ -198,6 +210,21 @@ class SummaryPane(QScrollArea):
         export_btn.setProperty("role", "primary")
         export_btn.clicked.connect(lambda: self.export_requested.emit(recording_id))
         buttons.addWidget(export_btn)
+
+        # "Send to Wrike" — only shown when the integration is configured.
+        # Sync is idempotent, so re-clicking on an already-synced meeting is
+        # safe (adds any new todos, skips ones already mapped).
+        if self._wrike_available is not None and self._wrike_available():
+            wrike_btn = QPushButton("Send to Wrike")
+            wrike_btn.setToolTip(
+                "Create Wrike tasks for this meeting's todos and action items "
+                "for others (idempotent — clicking again only sends new ones)."
+            )
+            wrike_btn.setProperty("role", "secondary")
+            wrike_btn.clicked.connect(
+                lambda: self.wrike_sync_requested.emit(recording_id),
+            )
+            buttons.addWidget(wrike_btn)
 
         buttons.addStretch(1)
 

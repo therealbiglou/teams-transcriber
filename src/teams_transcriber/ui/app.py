@@ -283,13 +283,14 @@ class App:
         body_layout.setSpacing(16)
         self.history = HistoryList()
         self.history.recording_selected.connect(self._show_summary)
-        self.summary = SummaryPane(self.db)
+        self.summary = SummaryPane(self.db, wrike_available=self._wrike_is_configured)
         self.summary.export_requested.connect(self._export_summary)
         self.summary.delete_requested.connect(self._delete_recording)
         self.summary.notes_requested.connect(self._open_workspace)
         self.summary.retry_requested.connect(self._retry_recording)
         self.summary.transcript_requested.connect(self._show_transcript)
         self.summary.todo_state_changed.connect(self._on_todo_state_changed)
+        self.summary.wrike_sync_requested.connect(self._wrike_open_picker)
         body_layout.addWidget(self.history, 1)
         body_layout.addWidget(self.summary, 1)
 
@@ -791,6 +792,25 @@ class App:
             action_callback=lambda: self._show_summary(recording_id),
         )
         self._refresh_history()
+
+    def _wrike_is_configured(self) -> bool:
+        """True when Wrike sync is enabled AND a token is stored in keyring.
+
+        Used by SummaryPane to decide whether to show the "Send to Wrike"
+        button, and as a guard before opening the picker.
+        """
+        import keyring
+        from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_WRIKE
+        enabled = bool(
+            self.settings._raw.get("integrations", {}).get("wrike_enabled", False)
+        )
+        if not enabled:
+            return False
+        try:
+            token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
+        except Exception:
+            return False
+        return bool(token)
 
     def _on_summary_ready_wrike(self, evt) -> None:
         """Offer to sync this summary's todos to Wrike via a toast + picker."""
