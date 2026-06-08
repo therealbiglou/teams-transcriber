@@ -101,6 +101,15 @@ def _wrike_lru_push(items: list[str], value: str, *, cap: int) -> list[str]:
     return ([value] + rest)[:cap]
 
 
+def _wrike_pick_pending(rows: list) -> int | None:
+    """Return the recording_id of the oldest pending/failed sync, or None."""
+    pending = [r for r in rows if r.status in ("pending", "failed")]
+    if not pending:
+        return None
+    pending.sort(key=lambda r: r.last_attempted_at or "")
+    return pending[0].recording_id
+
+
 def _wrike_close_loop_changes(
     rows: list,                  # list[WrikeTaskRow]
     todo_states: dict[int, bool],
@@ -211,6 +220,22 @@ class App:
 
         self.pipeline.serve()
         self._refresh_history()
+
+        # Offer to retry any pending/failed Wrike syncs (consolidated toast).
+        try:
+            from teams_transcriber.storage.wrike import WrikeSyncRepo
+            pending = WrikeSyncRepo(self.db).list_pending_or_failed()
+            rid = _wrike_pick_pending(pending)
+            if rid is not None:
+                count = len(pending)
+                show_in_app_toast(
+                    "Pending Wrike syncs",
+                    f"{count} meeting{'s' if count != 1 else ''} waiting.",
+                    action_label="Pick folder",
+                    action_callback=lambda r=rid: self._wrike_open_picker(r),
+                )
+        except Exception:
+            logger.exception("pending-Wrike-syncs check failed")
 
         # Background update check on startup.
         if self.settings.auto_check_updates:
