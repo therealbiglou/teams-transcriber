@@ -8,6 +8,7 @@ it. Qt-free.
 
 from __future__ import annotations
 
+import html as _html
 import logging
 import re
 from collections.abc import Callable
@@ -44,7 +45,7 @@ class ChatTokenLimitError(ChatApiError):
 def _strip_html(s: str | None) -> str:
     if not s:
         return ""
-    return _TAG_RE.sub("", s).strip()
+    return _html.unescape(_TAG_RE.sub("", s)).strip()
 
 
 def _fmt_segment(seg: TranscriptSegment) -> str:
@@ -136,6 +137,7 @@ def ask(
     except anthropic.APIError as exc:
         raise ChatApiError(str(exc) or "Anthropic API error") from exc
     except Exception as exc:
+        logger.exception("chat call failed for recording_id=%d", recording_id)
         raise ChatApiError(str(exc) or "chat request failed") from exc
 
     reply_text = ""

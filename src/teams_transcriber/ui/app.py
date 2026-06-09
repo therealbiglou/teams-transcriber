@@ -876,6 +876,12 @@ class App:
             QTimer.singleShot(0, self.window,
                               lambda: self._on_chat_failed(recording_id, err))
             return
+        except Exception as exc:
+            logger.exception("chat worker crashed unexpectedly")
+            err = f"Chat failed: {exc}"
+            QTimer.singleShot(0, self.window,
+                              lambda: self._on_chat_failed(recording_id, err))
+            return
         QTimer.singleShot(0, self.window,
                           lambda: self._on_chat_done(recording_id, reply))
 

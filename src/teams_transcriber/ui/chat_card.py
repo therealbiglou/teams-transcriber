@@ -144,7 +144,7 @@ class ChatCard(QFrame):
         self.send_requested.emit(self._recording_id, text)
 
     def _add_bubble(self, role: str, content: str) -> None:
-        if self._placeholder is not None and self._placeholder.isVisible():
+        if self._placeholder is not None:
             self._placeholder.setVisible(False)
         bubble = QTextEdit()
         bubble.setReadOnly(True)

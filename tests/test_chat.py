@@ -204,3 +204,9 @@ def test_ask_omits_empty_sections(env):
     assert "# Summary" not in text
     assert "# Decisions" not in text
     assert "# Transcript" in text
+
+
+def test_strip_html_decodes_entities():
+    from teams_transcriber.chat import _strip_html
+    assert _strip_html("<p>fish &amp; chips</p>") == "fish & chips"
+    assert _strip_html("a &lt; b") == "a < b"

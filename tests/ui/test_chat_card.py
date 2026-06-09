@@ -84,3 +84,13 @@ def test_append_error_message_renders_text(qapp):
     texts = [b.toPlainText() for b in card._message_container.findChildren(QTextEdit)
              if b is not card._input]
     assert any("Anthropic key invalid" in t for t in texts)
+
+
+def test_placeholder_is_hidden_when_history_renders_at_construction(qapp):
+    """Constructing with non-empty history must hide the empty-state placeholder
+    so it doesn't render alongside the past turns when the card is shown."""
+    card = ChatCard(
+        recording_id=10,
+        history=[_msg("user", "first"), _msg("assistant", "second", mid=2)],
+    )
+    assert card._placeholder.isVisibleTo(card) is False
