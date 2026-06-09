@@ -96,6 +96,10 @@ def _wrike_should_offer_sync(
     return enabled and has_token and not already_synced
 
 
+def _chat_should_send(*, api_key: str, text: str) -> bool:
+    return bool(api_key) and bool(text.strip())
+
+
 def _wrike_lru_push(items: list[str], value: str, *, cap: int) -> list[str]:
     rest = [i for i in items if i != value]
     return ([value] + rest)[:cap]
@@ -284,7 +288,11 @@ class App:
         body_layout.setSpacing(16)
         self.history = HistoryList()
         self.history.recording_selected.connect(self._show_summary)
-        self.summary = SummaryPane(self.db, wrike_available=self._wrike_is_configured)
+        self.summary = SummaryPane(
+            self.db,
+            wrike_available=self._wrike_is_configured,
+            anthropic_key_getter=self._anthropic_key,
+        )
         self.summary.export_requested.connect(self._export_summary)
         self.summary.delete_requested.connect(self._delete_recording)
         self.summary.notes_requested.connect(self._open_workspace)
@@ -292,6 +300,7 @@ class App:
         self.summary.transcript_requested.connect(self._show_transcript)
         self.summary.todo_state_changed.connect(self._on_todo_state_changed)
         self.summary.wrike_sync_requested.connect(self._wrike_open_picker)
+        self.summary.chat_send_requested.connect(self._on_chat_send)
         body_layout.addWidget(self.history, 1)
         body_layout.addWidget(self.summary, 1)
 
@@ -814,6 +823,83 @@ class App:
             action_callback=lambda: self._show_summary(recording_id),
         )
         self._refresh_history()
+
+    def _anthropic_key(self) -> str:
+        """Read the user's Anthropic key from keyring; '' if unset."""
+        import keyring
+        from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_ANTHROPIC
+        try:
+            return keyring.get_password(KEYRING_SERVICE, KEYRING_USER_ANTHROPIC) or ""
+        except Exception:
+            return ""
+
+    def _on_chat_send(self, recording_id: int, text: str) -> None:
+        """Show user turn immediately + dispatch to a background worker."""
+        import threading
+        api_key = self._anthropic_key()
+        if not _chat_should_send(api_key=api_key, text=text):
+            return
+        card = getattr(self.summary, "_chat_card", None)
+        if card is None:
+            return
+        card.append_user_message(text)
+        card.set_pending(True)
+        threading.Thread(
+            target=self._chat_worker,
+            args=(recording_id, text, api_key),
+            daemon=True,
+        ).start()
+
+    def _chat_worker(self, recording_id: int, text: str, api_key: str) -> None:
+        """Worker thread: call chat.ask; hop result back via QTimer with self.window context."""
+        from PySide6.QtCore import QTimer
+        from teams_transcriber.chat import (
+            ChatApiError, ChatAuthError, ChatTokenLimitError, ask,
+        )
+        try:
+            reply = ask(
+                self.db, recording_id, text,
+                api_key=api_key, model=self.settings.ai_model,
+            )
+        except ChatAuthError:
+            err = "Anthropic key invalid — reset in Settings → AI."
+            QTimer.singleShot(0, self.window,
+                              lambda: self._on_chat_failed(recording_id, err))
+            return
+        except ChatTokenLimitError as exc:
+            err = str(exc)
+            QTimer.singleShot(0, self.window,
+                              lambda: self._on_chat_failed(recording_id, err))
+            return
+        except ChatApiError as exc:
+            err = f"Chat failed: {exc}"
+            QTimer.singleShot(0, self.window,
+                              lambda: self._on_chat_failed(recording_id, err))
+            return
+        QTimer.singleShot(0, self.window,
+                          lambda: self._on_chat_done(recording_id, reply))
+
+    def _on_chat_done(self, recording_id: int, reply: str) -> None:
+        """Main-thread callback for a successful chat reply."""
+        # Only update UI if the user is still on this recording — message is
+        # persisted in the DB either way, so it'll show on revisit.
+        if self.summary._current_recording_id != recording_id:
+            return
+        card = getattr(self.summary, "_chat_card", None)
+        if card is None:
+            return
+        card.set_pending(False)
+        card.append_assistant_message(reply)
+
+    def _on_chat_failed(self, recording_id: int, err: str) -> None:
+        """Main-thread callback for a failed chat call."""
+        if self.summary._current_recording_id != recording_id:
+            return
+        card = getattr(self.summary, "_chat_card", None)
+        if card is None:
+            return
+        card.set_pending(False)
+        card.append_error_message(err)
 
     def _wrike_is_configured(self) -> bool:
         """True when Wrike sync is enabled AND a token is stored in keyring.
