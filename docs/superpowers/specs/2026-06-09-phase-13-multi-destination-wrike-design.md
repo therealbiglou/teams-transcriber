@@ -244,22 +244,55 @@ For each row:
 Close-loop (today: `complete_task` on toggle of a my-todo) still works only for
 rows whose `format == "task"` and `kind == "my"`; the filter widens trivially.
 
-### Schema v6 — pure ALTER ADD COLUMN
+### Schema v6 — table rebuild (CHECK constraint widening)
 
-`storage/schema_v6.py`:
+`wrike_tasks.kind` has `CHECK (kind IN ('my', 'other'))` (confirmed by reading
+`storage/schema_v4.py`). SQLite can't ALTER a CHECK constraint, so schema_v6
+follows the Phase 9 v3 precedent: rebuild the table with the widened CHECK +
+the two new columns, copy rows over, drop the old table, rename the new one,
+recreate the index. The `MigrationRunner` already toggles
+`PRAGMA foreign_keys = OFF` around each migration (Phase 9 lesson), so the
+DROP doesn't cascade-delete `wrike_tasks` rows referenced from elsewhere
+(currently nothing references them; defensive nonetheless).
 
 ```python
-SCHEMA_V6 = """
-ALTER TABLE wrike_tasks ADD COLUMN format TEXT NOT NULL DEFAULT 'task';
-ALTER TABLE wrike_tasks ADD COLUMN assignee_id TEXT;
-"""
+# storage/schema_v6.py (sketch)
+_STATEMENTS = (
+    """
+    CREATE TABLE wrike_tasks_new (
+        id                INTEGER PRIMARY KEY,
+        recording_id      INTEGER NOT NULL
+                          REFERENCES recordings(id) ON DELETE CASCADE,
+        kind              TEXT NOT NULL CHECK (kind IN
+                              ('my', 'other', 'summary', 'decisions', 'follow_up')),
+        todo_index        INTEGER NOT NULL,
+        wrike_task_id     TEXT NOT NULL,
+        wrike_folder_id   TEXT NOT NULL,
+        created_at        TEXT NOT NULL,
+        last_synced_done  INTEGER NOT NULL DEFAULT 0,
+        format            TEXT NOT NULL DEFAULT 'task'
+                          CHECK (format IN ('task', 'comment')),
+        assignee_id       TEXT,
+        UNIQUE (recording_id, kind, todo_index)
+    )
+    """,
+    """
+    INSERT INTO wrike_tasks_new
+        (id, recording_id, kind, todo_index, wrike_task_id, wrike_folder_id,
+         created_at, last_synced_done, format, assignee_id)
+    SELECT id, recording_id, kind, todo_index, wrike_task_id, wrike_folder_id,
+           created_at, last_synced_done, 'task', NULL
+    FROM wrike_tasks
+    """,
+    "DROP TABLE wrike_tasks",
+    "ALTER TABLE wrike_tasks_new RENAME TO wrike_tasks",
+    "CREATE INDEX wrike_tasks_recording_idx ON wrike_tasks (recording_id)",
+)
 ```
 
-The `kind` column in `wrike_tasks` is currently TEXT without a CHECK constraint
-(verify before writing the migration; if a CHECK exists, schema_v6 becomes a
-full rebuild instead, following the Phase 9 v3 precedent). New `kind` values
-`{summary, decisions, follow_up}` are added; existing `{my, other}` rows
-keep their values.
+Existing `{my, other}` rows are preserved with `format='task'` and
+`assignee_id=NULL`. New kinds `{summary, decisions, follow_up}` are accepted
+by the widened CHECK.
 
 The `wrike_sync` table is unchanged. Its `folder_id` column is repurposed as
 "last-used folder for this recording" — drives the LRU and is the default
@@ -362,11 +395,7 @@ Existing Phase 11 tests update where they depend on the old single-folder path
 
 ## Open considerations (for plan-time)
 
-- Confirm whether `rapidfuzz` is already in the dependency tree (likely via
-  `faster-whisper`'s `huggingface_hub`); if not, decide hand-rolled vs. adding
-  the dep. The hand-rolled token-sort-ratio is ~30 lines.
-- Verify the `wrike_tasks.kind` column has no CHECK constraint. If it does, the
-  migration becomes a full rebuild (Phase 9 precedent), and the spec stays
-  accurate but the plan grows by ~one task.
-- Decide the exact icon for `kind` badges (or skip icons and use a coloured
-  text label). Plan-time UI detail.
+- `rapidfuzz` is NOT in the dependency tree (verified). Hand-rolled
+  token-sort-ratio in `wrike_assignees.py` (~30 lines). No new dep.
+- `kind` badges: text-only chip labels (no icons) to avoid an asset pipeline.
+  Use the existing `role=chip` theme token for each `SyncKind`.
