@@ -47,12 +47,14 @@ class SummaryPane(QScrollArea):
     transcript_requested = Signal(int)   # recording_id — open transcript window
     todo_state_changed = Signal(int)     # recording_id — a checkbox toggled
     wrike_sync_requested = Signal(int)   # recording_id — manually send todos to Wrike
+    chat_send_requested = Signal(int, str)   # recording_id, user_text
 
     def __init__(
         self,
         db: Database,
         *,
         wrike_available: Callable[[], bool] | None = None,
+        anthropic_key_getter: Callable[[], str] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -61,6 +63,7 @@ class SummaryPane(QScrollArea):
         # the "Send to Wrike" button only appears when it can actually do
         # something. None = never show (the integration's UI is hidden).
         self._wrike_available = wrike_available
+        self._anthropic_key_getter = anthropic_key_getter
         self.setWidgetResizable(True)
         self.setFrameShape(QScrollArea.Shape.NoFrame)
         # AsNeeded so a single un-wrappable long token doesn't crash visibility —
@@ -236,6 +239,31 @@ class SummaryPane(QScrollArea):
         wrapper = QWidget()
         wrapper.setLayout(buttons)
         self._layout.addWidget(wrapper)
+
+        # Chat-with-Claude card — only meaningful when we have transcript
+        # segments to give Claude as context.
+        from teams_transcriber.storage import TranscriptRepo
+        from teams_transcriber.storage.chat import ChatRepo
+        from teams_transcriber.ui.chat_card import ChatCard
+        segments = TranscriptRepo(self._db).list_for_recording(recording_id)
+        if segments:
+            history = ChatRepo(self._db).list_for_recording(recording_id)
+            api_key = (self._anthropic_key_getter or (lambda: ""))()
+            if api_key:
+                self._chat_card = ChatCard(
+                    recording_id, history, enabled=True,
+                )
+            else:
+                self._chat_card = ChatCard(
+                    recording_id, history, enabled=False,
+                    disabled_hint=(
+                        "Set your Anthropic API key in Settings → AI to chat."
+                    ),
+                )
+            self._chat_card.send_requested.connect(self.chat_send_requested.emit)
+            self._layout.addWidget(self._chat_card)
+        else:
+            self._chat_card = None
 
         self._layout.addStretch(1)
 

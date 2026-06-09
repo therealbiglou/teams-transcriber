@@ -7,6 +7,7 @@ import pytest
 
 from teams_transcriber.storage import (
     ActionItemOther,
+    Channel,
     Recording,
     RecordingRepo,
     RecordingSource,
@@ -15,6 +16,8 @@ from teams_transcriber.storage import (
     SummaryRepo,
     TodoItem,
     TodoStateRepo,
+    TranscriptRepo,
+    TranscriptSegment,
     build_database,
 )
 from teams_transcriber.ui.summary_pane import SummaryPane
@@ -45,6 +48,14 @@ def db_with_summary(tmp_path: Path):
         generated_at=datetime.now(UTC).isoformat(),
         model_used="claude-sonnet-4-6",
     ))
+    # Insert a transcript segment so ChatCard is shown.
+    TranscriptRepo(db).append_many([
+        TranscriptSegment(
+            id=None, recording_id=rec.id,
+            start_ms=0, end_ms=5000,
+            channel=Channel.ME, text="Hello from the meeting.",
+        ),
+    ])
     yield db, rec.id
     db.close()
 
@@ -468,3 +479,62 @@ def test_send_to_wrike_button_shown_and_emits_signal(qapp, db_with_summary):
     btn.click()
     assert received == [rid]
     db.close()
+
+
+def test_chat_card_appears_when_transcript_segments_exist(qapp, db_with_summary):
+    db, rid = db_with_summary
+    from teams_transcriber.ui.chat_card import ChatCard
+    pane = SummaryPane(db, anthropic_key_getter=lambda: "k")
+    pane.show_recording(rid)
+    chat = pane.findChild(ChatCard)
+    assert chat is not None
+
+
+def test_chat_card_hidden_when_no_transcript(qapp, tmp_path):
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.storage import (
+        Recording, RecordingRepo, RecordingSource, RecordingStatus,
+        Summary, SummaryRepo, build_database,
+    )
+    from teams_transcriber.ui.chat_card import ChatCard
+    paths = AppPaths(root=tmp_path); paths.ensure_dirs()
+    db = build_database(paths.db_path); db.initialize()
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-06-09T10:00:00+00:00", ended_at=None,
+        source=RecordingSource.MANUAL, detected_title="t", display_title="t",
+        audio_path=None, audio_deleted_at=None, duration_ms=1000,
+        status=RecordingStatus.DONE, error_message=None,
+    ))
+    SummaryRepo(db).upsert(Summary(
+        recording_id=rec.id, title="t", one_line=None, summary="s",
+        key_decisions=[], my_todos=[], action_items_others=[],
+        follow_ups=[], topics=[], generated_at="x", model_used="m",
+    ))
+    pane = SummaryPane(db, anthropic_key_getter=lambda: "k")
+    pane.show_recording(rec.id)
+    assert pane.findChild(ChatCard) is None
+    db.close()
+
+
+def test_chat_card_disabled_when_no_api_key(qapp, db_with_summary):
+    db, rid = db_with_summary
+    from teams_transcriber.ui.chat_card import ChatCard
+    pane = SummaryPane(db, anthropic_key_getter=lambda: "")
+    pane.show_recording(rid)
+    chat = pane.findChild(ChatCard)
+    assert chat is not None and chat._enabled is False
+    assert "Anthropic" in chat._disabled_label.text() or "API key" in chat._disabled_label.text()
+
+
+def test_chat_send_signal_is_re_emitted_from_pane(qapp, db_with_summary):
+    db, rid = db_with_summary
+    pane = SummaryPane(db, anthropic_key_getter=lambda: "k")
+    pane.show_recording(rid)
+    from teams_transcriber.ui.chat_card import ChatCard
+    chat = pane.findChild(ChatCard)
+    assert chat is not None
+    captured: list[tuple[int, str]] = []
+    pane.chat_send_requested.connect(lambda r, t: captured.append((r, t)))
+    chat._input.setPlainText("question?")
+    chat._send_btn.click()
+    assert captured == [(rid, "question?")]
