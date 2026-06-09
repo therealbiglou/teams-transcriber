@@ -29,16 +29,18 @@ from teams_transcriber.storage.models import (
 )
 from teams_transcriber.storage.recordings import RecordingRepo
 from teams_transcriber.storage.retention import AudioRetentionPruner, PruneReport
+from teams_transcriber.storage.chat import ChatMessage, ChatRepo
 from teams_transcriber.storage.schema_v1 import SCHEMA_V1
 from teams_transcriber.storage.schema_v2 import SCHEMA_V2
 from teams_transcriber.storage.schema_v3 import SCHEMA_V3
 from teams_transcriber.storage.schema_v4 import SCHEMA_V4
+from teams_transcriber.storage.schema_v5 import SCHEMA_V5
 from teams_transcriber.storage.summaries import SummaryRepo
 from teams_transcriber.storage.todos import TodoStateRepo
 from teams_transcriber.storage.transcripts import SearchHit, TranscriptRepo
 from teams_transcriber.storage.wrike import WrikeSyncRepo, WrikeSyncRow, WrikeTaskRepo, WrikeTaskRow
 
-ALL_MIGRATIONS: tuple[Migration, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4)
+ALL_MIGRATIONS: tuple[Migration, ...] = (SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5)
 
 
 def build_database(path: Path | str) -> Database:
@@ -51,7 +53,10 @@ def build_database(path: Path | str) -> Database:
 
 __all__ = [
     "ALL_MIGRATIONS",
+    "ChatMessage",
+    "ChatRepo",
     "SCHEMA_V1",
+    "SCHEMA_V5",
     "ActionItemOther",
     "AudioRetentionPruner",
     "Channel",
