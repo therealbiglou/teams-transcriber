@@ -79,12 +79,11 @@ TOOL_SCHEMA: dict[str, Any] = {
                 },
             },
             "follow_ups": {"type": "array", "items": {"type": "string"}},
-            "topics": {"type": "array", "items": {"type": "string"}},
         },
         "required": [
             "title", "one_line", "summary",
             "key_decisions", "my_todos", "action_items_others",
-            "follow_ups", "topics",
+            "follow_ups",
         ],
     },
 }
@@ -278,7 +277,10 @@ class Summarizer:
                 for d in payload["action_items_others"]
             ],
             follow_ups=list(payload["follow_ups"]),
-            topics=list(payload["topics"]),
+            # `topics` was removed from the summarizer prompt — the dataclass
+            # field and DB column remain for back-compat with older rows, but
+            # we no longer ask Claude for them or render them anywhere.
+            topics=[],
             generated_at=datetime.now(UTC).isoformat(),
             model_used=self._settings.ai_model,
         )

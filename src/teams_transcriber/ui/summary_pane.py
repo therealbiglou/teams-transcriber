@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -185,9 +186,6 @@ class SummaryPane(QScrollArea):
             widgets = [QLabel(f"• {f}") for f in summary.follow_ups]
             self._layout.addWidget(_section_card("Follow-ups", widgets))
 
-        if summary.topics:
-            self._layout.addWidget(_topics_row(summary.topics))
-
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
 
@@ -273,15 +271,19 @@ class SummaryPane(QScrollArea):
 
         rows: list[QWidget] = []
         for i, td in enumerate(summary.my_todos):
-            cb = QCheckBox(td.task + (f"  (due {td.due})" if td.due else ""))
+            text = td.task + (f"  (due {td.due})" if td.due else "")
             state = existing.get(i)
-            if state is not None and state.done:
-                cb.setChecked(True)
-            def _on_toggle(checked, idx=i, task=td.task):
-                todo_repo.upsert(summary.recording_id, idx, task, checked)
-                self.todo_state_changed.emit(summary.recording_id)
-            cb.toggled.connect(_on_toggle)
-            rows.append(cb)
+            checked = state is not None and state.done
+
+            def _make_handler(idx: int, task: str) -> Callable[[bool], None]:
+                def _on_toggle(is_checked: bool) -> None:
+                    todo_repo.upsert(summary.recording_id, idx, task, is_checked)
+                    self.todo_state_changed.emit(summary.recording_id)
+                return _on_toggle
+
+            rows.append(_make_todo_row(
+                text, checked=checked, on_toggle=_make_handler(i, td.task),
+            ))
         return _section_card("My todos", rows)
 
     def _copy_markdown(self, summary: Summary, recording: Any) -> None:
@@ -319,35 +321,47 @@ def _section_card(title: str, body_widgets: list[QWidget]) -> QFrame:
             # QLabel with word wrap reports minSizeHint = longest-word-width by
             # default, which can push the column wide for long tokens. Telling
             # the size policy to ignore the natural width lets it shrink.
-            from PySide6.QtWidgets import QSizePolicy
             w.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout.addWidget(w)
     return card
 
 
-def _topics_row(topics: list[str]) -> QFrame:
-    from teams_transcriber.ui.flow_layout import FlowLayout
+def _make_todo_row(
+    text: str,
+    *,
+    checked: bool,
+    on_toggle: Callable[[bool], None],
+) -> QWidget:
+    """A wrap-friendly todo line: small checkbox + wrapping selectable label.
 
-    card = QFrame()
-    card.setProperty("card", True)
-    layout = QVBoxLayout(card)
-    layout.setContentsMargins(20, 16, 20, 16)
-    layout.setSpacing(8)
-    header = _make_selectable(QLabel("Topics"))
-    header.setStyleSheet("font-size: 14px; font-weight: 600;")
-    layout.addWidget(header)
+    `QCheckBox`'s own label does NOT word-wrap — long todo text bleeds past
+    the right edge of the card. Splitting the row into a checkbox + a
+    sibling `QLabel(wordWrap=True)` fixes that; we pin the checkbox to the
+    top so it lines up with the first line of wrapped text.
+    """
+    row = QWidget()
+    h = QHBoxLayout(row)
+    h.setContentsMargins(0, 0, 0, 0)
+    h.setSpacing(8)
 
-    chips_wrapper = QWidget()
-    flow = FlowLayout(chips_wrapper, margin=0, spacing=6)
-    for t in topics:
-        chip = QLabel(t)
-        chip.setProperty("role", "chip")
-        chip.setWordWrap(True)
-        chip.setMaximumWidth(280)
-        _make_selectable(chip)
-        flow.addWidget(chip)
-    layout.addWidget(chips_wrapper)
-    return card
+    cb = QCheckBox()
+    cb.setChecked(checked)
+    cb.toggled.connect(on_toggle)
+    h.addWidget(cb, 0, Qt.AlignmentFlag.AlignTop)
+
+    label = QLabel(text)
+    label.setWordWrap(True)
+    label.setMinimumWidth(0)
+    label.setTextInteractionFlags(
+        Qt.TextInteractionFlag.TextSelectableByMouse
+        | Qt.TextInteractionFlag.TextSelectableByKeyboard,
+    )
+    # Same trick as `_section_card`: Ignored width lets the label shrink
+    # past its natural minSizeHint so the row never pushes the card wider
+    # than the surrounding column.
+    label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+    h.addWidget(label, 1)
+    return row
 
 
 def _fmt_meta_time(iso: str) -> str:

@@ -79,10 +79,6 @@ def to_markdown(summary: Summary, recording: Recording, todo_states: dict[int, b
         lines.append("## Follow-ups")
         lines += [f"- {f}" for f in summary.follow_ups]
         lines.append("")
-    if summary.topics:
-        lines.append("## Topics")
-        lines.append(", ".join(summary.topics))
-        lines.append("")
     notes = _strip_html(recording.manual_notes)
     if notes:
         lines += ["## My notes", notes, ""]
@@ -112,8 +108,6 @@ def to_plaintext(summary: Summary, recording: Recording, todo_states: dict[int, 
         lines.append("Follow-ups")
         lines += [f"  - {f}" for f in summary.follow_ups]
         lines.append("")
-    if summary.topics:
-        lines += ["Topics", "  " + ", ".join(summary.topics), ""]
     notes = _strip_html(recording.manual_notes)
     if notes:
         lines += ["My notes", notes, ""]
@@ -151,9 +145,6 @@ def to_html(summary: Summary, recording: Recording, todo_states: dict[int, bool]
         parts.append("<h2 style='color:#065F46;'>Follow-ups</h2><ul>")
         parts += [f"<li>{e(f)}</li>" for f in summary.follow_ups]
         parts.append("</ul>")
-    if summary.topics:
-        parts.append("<h2 style='color:#065F46;'>Topics</h2>")
-        parts.append(f"<p>{e(', '.join(summary.topics))}</p>")
     # Gate on stripped content (matches md/txt) so notes that are tags-only
     # don't emit an empty "My notes" section. manual_notes is our own
     # NotesEditor HTML, so embed it raw for rich rendering.

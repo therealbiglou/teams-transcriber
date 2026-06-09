@@ -64,10 +64,13 @@ def test_pane_shows_summary(qapp, qtbot, db_with_summary) -> None:
     db, rec_id = db_with_summary
     pane = SummaryPane(db)
     pane.show_recording(rec_id)
-    from PySide6.QtWidgets import QCheckBox
+    from PySide6.QtWidgets import QCheckBox, QLabel
     todos = pane.findChildren(QCheckBox)
     assert len(todos) == 2
-    assert "Do A" in todos[0].text()
+    # Todo text lives in a sibling QLabel (the checkbox itself has no text,
+    # so the label can wrap when long). Verify the text is visible somewhere.
+    all_label_text = " | ".join(lbl.text() for lbl in pane.findChildren(QLabel))
+    assert "Do A" in all_label_text
 
 
 def test_todo_toggle_persists(qapp, qtbot, db_with_summary) -> None:
@@ -79,6 +82,74 @@ def test_todo_toggle_persists(qapp, qtbot, db_with_summary) -> None:
     cbs[0].setChecked(True)
     states = TodoStateRepo(db).list_for_recording(rec_id)
     assert any(s.done and s.task_text == "Do A" for s in states)
+
+
+def test_todo_label_wraps_so_long_text_does_not_bleed(qapp, qtbot, tmp_path) -> None:
+    """My-todos must be a sibling QLabel(wordWrap=True), not the QCheckBox's
+    own label — QCheckBox doesn't wrap natively, so a long task description
+    would bleed past the right edge of the card. This regression-guards the
+    fix: every todo row has a wrap-enabled QLabel carrying the task text."""
+    from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QLabel
+    from teams_transcriber.storage import (
+        Recording,
+        RecordingRepo,
+        RecordingSource,
+        RecordingStatus,
+        Summary,
+        SummaryRepo,
+        TodoItem,
+        build_database,
+    )
+    from teams_transcriber.ui.summary_pane import SummaryPane
+
+    db = build_database(tmp_path / "wrap.db")
+    db.initialize()
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-06-09T10:00:00+00:00",
+        ended_at="2026-06-09T11:00:00+00:00",
+        source=RecordingSource.MANUAL,
+        detected_title="t", display_title="wrap test",
+        audio_path=None, audio_deleted_at=None, duration_ms=60_000,
+        status=RecordingStatus.DONE, error_message=None,
+    ))
+    assert rec.id is not None
+    long_task = (
+        "Follow up with the cross-functional team on the very long "
+        "and detailed action item that spans many words and should wrap."
+    )
+    SummaryRepo(db).upsert(Summary(
+        recording_id=rec.id, title="t", one_line="x", summary="s",
+        my_todos=[TodoItem(task=long_task)],
+        action_items_others=[], key_decisions=[], follow_ups=[], topics=[],
+        model_used="m", generated_at="2026-06-09T10:00:00+00:00",
+    ))
+    pane = SummaryPane(db)
+    pane.show_recording(rec.id)
+
+    # The checkbox itself must carry no text (the wrapping label is the
+    # sibling, not the checkbox's built-in label).
+    checkboxes = [
+        cb for cb in pane.findChildren(QCheckBox)
+        # Skip any unrelated checkbox if other code adds one later.
+        if cb.parent() is not None and isinstance(cb.parent().layout(), QHBoxLayout)
+    ]
+    assert checkboxes, "Expected at least one todo checkbox"
+    for cb in checkboxes:
+        assert cb.text() == "", (
+            "QCheckBox has its own (non-wrapping) label text; "
+            "long todos will bleed off the right edge"
+        )
+
+    # And the wrapping QLabel sibling must be present with wordWrap on.
+    todo_labels = [
+        lbl for lbl in pane.findChildren(QLabel)
+        if long_task in lbl.text()
+    ]
+    assert todo_labels, "Expected a sibling QLabel carrying the todo task text"
+    for lbl in todo_labels:
+        assert lbl.wordWrap(), f"Todo label does not have wordWrap enabled: {lbl.text()!r}"
+
+    db.close()
 
 
 def test_summary_pane_has_view_transcript_button(tmp_path, qapp) -> None:
