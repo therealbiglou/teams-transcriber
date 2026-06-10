@@ -83,7 +83,12 @@ def token_sort_ratio(a: str, b: str) -> float:
     ("Jen" → "Jennifer") score 1.0; near-typos score high; unrelated name tokens
     score 0. This is closer to rapidfuzz's `token_sort_ratio` semantics than a
     plain ``SequenceMatcher`` over the concatenated sorted strings, which cannot
-    surface a first-name-only shorthand."""
+    surface a first-name-only shorthand.
+
+    CALLER CONTRACT — this scorer is ASYMMETRIC: it averages over `a`'s tokens,
+    so `token_sort_ratio("Jen", "Jennifer Smith") == 1.0` but the reversed
+    arguments give 0.5. Always pass the query / spoken name as `a` and the
+    canonical contact full name as `b`."""
     if not a or not b:
         return 0.0
     a_toks = _tokens(a)

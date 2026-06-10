@@ -32,6 +32,12 @@ def test_token_sort_ratio_zero_on_disjoint() -> None:
     assert token_sort_ratio("Mike Stone", "Sarah Kim") < 0.2
 
 
+def test_token_sort_ratio_is_asymmetric_query_first() -> None:
+    # Contract: pass the query as `a`, the canonical name as `b`.
+    assert token_sort_ratio("Jen", "Jennifer Smith") == pytest.approx(1.0)
+    assert token_sort_ratio("Jennifer Smith", "Jen") == pytest.approx(0.5)
+
+
 # --- Resolver behaviour ---
 
 class _FakeBlock:
@@ -173,3 +179,63 @@ def test_resolver_returns_empty_on_empty_items() -> None:
         anthropic_client_factory=lambda _k: _FakeClient(_FakeResp([])),
     )
     assert out == {}
+
+
+def test_resolver_margin_gate_punts_on_ambiguous_tie() -> None:
+    """Two equally-good fuzzy candidates → no confident pick (margin < 0.10)."""
+    contacts = [
+        _contact("100", "Jordan", "Smith"),
+        _contact("200", "Jordan", "Jones"),
+    ]
+    items = [("idx-0", "Jordan")]
+    client = _FakeClient(_FakeResp(content=[]))
+    out = suggest_assignees(
+        items, contacts,
+        meeting_summary="—",
+        api_key="key", model="claude-haiku-4-5-20251001",
+        llm_fallback=False,
+        anthropic_client_factory=lambda _k: client,
+    )
+    assert out == {"idx-0": None}
+
+
+def test_resolver_rejects_hallucinated_contact_id() -> None:
+    """An LLM-returned id that isn't a real contact is discarded → None."""
+    contacts = [_contact("100", "Jennifer", "Smith")]
+    items = [("idx-0", "the eng lead")]
+    fake = _FakeResp(content=[
+        _FakeBlock(
+            name="resolve_assignees",
+            input_={"matches": [{"item_index": 0, "contact_id": "999"}]},
+        ),
+    ])
+    out = suggest_assignees(
+        items, contacts,
+        meeting_summary="—",
+        api_key="key", model="claude-haiku-4-5-20251001",
+        llm_fallback=True,
+        anthropic_client_factory=lambda _k: _FakeClient(fake),
+    )
+    assert out == {"idx-0": None}
+
+
+def test_resolver_handles_json_string_tool_input() -> None:
+    """The tool_use block's `input` may arrive as a JSON string, not a dict."""
+    import json
+
+    contacts = [_contact("100", "Jennifer", "Smith"), _contact("200", "Mike", "Stone")]
+    items = [("idx-0", "the eng lead")]
+    fake = _FakeResp(content=[
+        _FakeBlock(
+            name="resolve_assignees",
+            input_=json.dumps({"matches": [{"item_index": 0, "contact_id": "200"}]}),
+        ),
+    ])
+    out = suggest_assignees(
+        items, contacts,
+        meeting_summary="—",
+        api_key="key", model="claude-haiku-4-5-20251001",
+        llm_fallback=True,
+        anthropic_client_factory=lambda _k: _FakeClient(fake),
+    )
+    assert out == {"idx-0": "200"}
