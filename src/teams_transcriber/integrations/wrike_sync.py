@@ -9,10 +9,11 @@ with the same recording is a no-op for already-mapped todos.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
+from teams_transcriber.integrations.wrike_items import SyncItem
 from teams_transcriber.storage.db import Database
 from teams_transcriber.storage.recordings import RecordingRepo
 from teams_transcriber.storage.summaries import SummaryRepo
@@ -26,6 +27,7 @@ class _ClientProto(Protocol):
     def list_contacts(self) -> list[dict[str, Any]]: ...
     def create_task(self, folder_id: str, payload: dict[str, Any]) -> dict[str, Any]: ...
     def complete_task(self, task_id: str, *, done: bool) -> dict[str, Any]: ...
+    def create_comment(self, *, entity_type: str, entity_id: str, text: str) -> str: ...
 
 
 @dataclass(slots=True)
@@ -182,3 +184,99 @@ def sync_recording(
         res.created_other += 1
 
     return res
+
+
+@dataclass(slots=True)
+class PlanRow:
+    item: SyncItem
+    folder_id: str
+    format: str       # "task" | "comment"
+    assignee_id: str | None
+
+
+@dataclass(slots=True)
+class SyncReport:
+    created_tasks: int = 0
+    created_comments: int = 0
+    skipped_already_synced: int = 0
+    failures: list[tuple[SyncItem, str]] = field(default_factory=list)
+
+
+def _sync_kind_to_db_kind(k: str) -> str:
+    """Database column accepts the SyncKind values directly post-v6."""
+    return k
+
+
+def sync_items(
+    db: Database,
+    recording_id: int,
+    plan: list[PlanRow],
+    *,
+    client: _ClientProto,
+) -> SyncReport:
+    """Run the planner's PlanRow list. Idempotent on (recording_id, kind, index).
+
+    Tasks route to ``create_task`` (with optional responsibles), comments route
+    to ``create_comment`` on the destination folder. The resulting Wrike entity
+    id (task id or comment id) is persisted back to ``wrike_tasks`` along with
+    the per-row ``format`` and ``assignee_id``.
+
+    On per-row failure we accumulate the error and continue with the rest;
+    callers surface partial successes via the report.
+    """
+    rec = RecordingRepo(db).get(recording_id)
+    rec_title = (rec.display_title if rec else None) or "Meeting"
+    started_at = (rec.started_at if rec else "")[:10]
+
+    task_repo = WrikeTaskRepo(db)
+    already = {
+        (r.kind, r.todo_index) for r in task_repo.list_for_recording(recording_id)
+    }
+    report = SyncReport()
+
+    for row in plan:
+        item = row.item
+        db_kind = _sync_kind_to_db_kind(item.kind)
+        if (db_kind, item.index) in already:
+            report.skipped_already_synced += 1
+            continue
+        try:
+            if row.format == "task":
+                payload: dict[str, Any] = {
+                    "title": (
+                        item.text
+                        if len(item.text) <= 100
+                        else item.text[:97] + "…"
+                    ),
+                    "description": _build_description(rec_title, started_at, None),
+                    "status": "Active",
+                }
+                if row.assignee_id:
+                    payload["responsibles"] = [row.assignee_id]
+                created = client.create_task(row.folder_id, payload)
+                ref_id = str(created["id"])
+                report.created_tasks += 1
+            elif row.format == "comment":
+                ref_id = client.create_comment(
+                    entity_type="folder",
+                    entity_id=row.folder_id,
+                    text=item.text,
+                )
+                report.created_comments += 1
+            else:
+                raise ValueError(f"unknown format: {row.format!r}")
+
+            task_repo.insert(WrikeTaskRow(
+                id=None, recording_id=recording_id,
+                kind=db_kind, todo_index=item.index,
+                wrike_task_id=ref_id, wrike_folder_id=row.folder_id,
+                created_at=_now_iso(), last_synced_done=False,
+                format=row.format, assignee_id=row.assignee_id,
+            ))
+        except Exception as exc:  # noqa: BLE001 — accumulate, keep going
+            logger.warning(
+                "sync_items: %s/%d failed: %s", item.kind, item.index, exc,
+            )
+            report.failures.append((item, str(exc)))
+
+    return report

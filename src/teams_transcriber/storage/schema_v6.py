@@ -21,7 +21,8 @@ _STATEMENTS: tuple[str, ...] = (
         recording_id      INTEGER NOT NULL
                           REFERENCES recordings(id) ON DELETE CASCADE,
         kind              TEXT NOT NULL CHECK (kind IN
-                              ('my', 'other', 'summary', 'decisions', 'follow_up')),
+                              ('my', 'other', 'my_todo', 'action_other',
+                               'summary', 'decisions', 'follow_up')),
         todo_index        INTEGER NOT NULL,
         wrike_task_id     TEXT NOT NULL,
         wrike_folder_id   TEXT NOT NULL,
