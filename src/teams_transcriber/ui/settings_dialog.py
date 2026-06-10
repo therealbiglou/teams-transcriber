@@ -279,6 +279,24 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
             bool(self._settings._raw.get("integrations", {}).get("wrike_enabled", False))
         )
         form.addRow("", self.wrike_enable_cb)
+
+        # LLM-assisted assignee resolution.
+        self.wrike_llm_assignee_cb = QCheckBox(
+            "Use Claude to suggest assignees for ambiguous names"
+        )
+        self.wrike_llm_assignee_cb.setToolTip(
+            "When an action-item owner can't be matched to a Wrike contact by "
+            "name, ask Claude to pick the best match. Adds one extra API call "
+            "per sync. Turn off for fuzzy-name-matching only."
+        )
+        self.wrike_llm_assignee_cb.setChecked(
+            bool(
+                self._settings._raw.get("integrations", {}).get(
+                    "wrike_llm_assignee_fallback", True
+                )
+            )
+        )
+        form.addRow("", self.wrike_llm_assignee_cb)
         return w
 
     def _wrike_test_connection(self) -> None:
@@ -534,6 +552,9 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         # Integrations — Wrike enabled flag.
         s._raw.setdefault("integrations", {})["wrike_enabled"] = (
             self.wrike_enable_cb.isChecked()
+        )
+        s._raw.setdefault("integrations", {})["wrike_llm_assignee_fallback"] = (
+            self.wrike_llm_assignee_cb.isChecked()
         )
 
         save_settings(self._paths, s)

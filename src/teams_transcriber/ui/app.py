@@ -131,6 +131,32 @@ def _wrike_close_loop_changes(
     return out
 
 
+def _wrike_open_planner_kwargs(
+    db, recording_id, *, folders, recent_folder_ids, contacts, assignee_suggestions,
+) -> dict:
+    """Assemble WrikeSyncPlanner kwargs. Pure, so the threaded App method stays
+    testable without a QApplication. Converts persisted wrike_tasks DB kinds
+    back to SyncKind for already_synced_keys, because the planner is
+    SyncKind-native (a stored 'my' must lock the planner's 'my_todo' row)."""
+    from teams_transcriber.integrations.wrike_items import recording_to_sync_items
+    from teams_transcriber.integrations.wrike_sync import db_kind_to_sync_kind
+    from teams_transcriber.storage.wrike import WrikeTaskRepo
+
+    items = recording_to_sync_items(db, recording_id)
+    already = {
+        (db_kind_to_sync_kind(r.kind), r.todo_index)
+        for r in WrikeTaskRepo(db).list_for_recording(recording_id)
+    }
+    return {
+        "items": items,
+        "folders": folders,
+        "recent_folder_ids": recent_folder_ids,
+        "contacts": contacts,
+        "assignee_suggestions": assignee_suggestions,
+        "already_synced_keys": already,
+    }
+
+
 def _make_app() -> QApplication:
     existing = QApplication.instance()
     app = existing if isinstance(existing, QApplication) else QApplication([])
@@ -927,10 +953,9 @@ class App:
         return bool(token)
 
     def _on_summary_ready_wrike(self, evt) -> None:
-        """Offer to sync this summary's todos to Wrike via a toast + picker."""
+        """Offer to sync this summary's items to Wrike via a toast + planner."""
         import keyring
         from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_WRIKE
-        from teams_transcriber.storage import SummaryRepo
         from teams_transcriber.storage.wrike import WrikeSyncRepo
 
         token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
@@ -943,60 +968,90 @@ class App:
             enabled=enabled, has_token=bool(token), already_synced=already_synced,
         ):
             return
-        s = SummaryRepo(self.db).get(evt.recording_id)
-        if s is None:
+        from teams_transcriber.integrations.wrike_items import recording_to_sync_items
+        items = recording_to_sync_items(self.db, evt.recording_id)
+        if not items:
             return
-        n = len(s.my_todos) + len(s.action_items_others)
-        if n == 0:
-            return
+        n = len(items)
         WrikeSyncRepo(self.db).upsert(evt.recording_id, status="pending")
         rid = evt.recording_id
         show_in_app_toast(
-            "Send todos to Wrike",
-            f"{n} task{'s' if n != 1 else ''} ready — pick a folder.",
-            action_label="Pick folder",
-            action_callback=lambda: self._wrike_open_picker(rid),
+            "Send to Wrike",
+            f"{n} item{'s' if n != 1 else ''} ready — review and send.",
+            action_label="Review",
+            action_callback=lambda: self._wrike_open_planner(rid),
         )
 
     def _wrike_open_picker(self, recording_id: int) -> None:
-        """Fetch Wrike folders in a worker, then show the picker on the main thread."""
+        """Kept as the connected-signal entry point; delegates to the planner."""
+        self._wrike_open_planner(recording_id)
+
+    def _wrike_open_planner(self, recording_id: int) -> None:
+        """Fetch folders + contacts in a worker, resolve assignees, show planner."""
         import keyring
         import threading
         from PySide6.QtCore import QTimer
         from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_WRIKE
-        from teams_transcriber.integrations.wrike_client import (
-            WrikeClient, WrikeApiError,
-        )
-        from teams_transcriber.storage.wrike import WrikeSyncRepo
+        from teams_transcriber.integrations.wrike_assignees import Contact, suggest_assignees
+        from teams_transcriber.integrations.wrike_client import WrikeApiError, WrikeClient
+        from teams_transcriber.integrations.wrike_items import recording_to_sync_items
+        from teams_transcriber.storage import SummaryRepo
 
         token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
         if not token:
-            show_in_app_toast(
-                "Wrike not configured",
-                "Add a token in Settings → Integrations.",
-            )
+            show_in_app_toast("Wrike not configured", "Add a token in Settings → Integrations.")
+            return
+        items = recording_to_sync_items(self.db, recording_id)
+        if not items:
+            show_in_app_toast("Nothing to send", "This recording has no syncable items.")
             return
 
+        summary = SummaryRepo(self.db).get(recording_id)
+        meeting_summary_text = (summary.summary if summary else "") or ""
+        anthropic_key = self._anthropic_key()
+        llm_enabled = bool(
+            self.settings._raw.get("integrations", {}).get("wrike_llm_assignee_fallback", True)
+        )
+        model = self.settings.ai_model
+
         def _worker() -> None:
-            # PySide6 gotcha: QTimer.singleShot(0, callable) WITHOUT a context
-            # QObject creates the timer on the CALLING thread, which here is
-            # a plain Python worker with no Qt event loop -> the lambda never
-            # fires. The 3-arg form `singleShot(0, qobj, callable)` binds the
-            # timer to qobj's thread (the main GUI thread for self.window),
-            # so it dispatches correctly.
+            # PySide6 gotcha: the 3-arg singleShot(0, qobj, callable) binds the
+            # timer to qobj's (main-GUI) thread; the 2-arg form would create the
+            # timer on this worker thread, which has no event loop.
             client = WrikeClient(token=token)
             try:
                 folders = client.list_folders()
+                need_contacts = any(it.kind == "action_other" for it in items)
+                contacts_raw = client.list_contacts() if need_contacts else []
             except WrikeApiError as exc:
                 QTimer.singleShot(0, self.window, lambda e=str(exc): self._wrike_picker_load_failed(recording_id, e))
                 return
             except Exception as exc:
-                logger.exception("Wrike list_folders failed")
+                logger.exception("Wrike planner preload failed")
                 QTimer.singleShot(0, self.window, lambda e=str(exc): self._wrike_picker_load_failed(recording_id, e))
                 return
             finally:
                 client.close()
-            QTimer.singleShot(0, self.window, lambda: self._wrike_picker_show(recording_id, folders, token))
+
+            contacts = [
+                Contact(id=str(c.get("id")),
+                        first_name=str(c.get("firstName") or "").strip(),
+                        last_name=str(c.get("lastName") or "").strip())
+                for c in contacts_raw
+            ]
+            action_other_items = [
+                (i, it.suggested_who or "")
+                for i, it in enumerate(items) if it.kind == "action_other"
+            ]
+            suggestions = suggest_assignees(
+                action_other_items, contacts,
+                meeting_summary=meeting_summary_text,
+                api_key=anthropic_key, model=model,
+                llm_fallback=llm_enabled and bool(anthropic_key),
+            ) if action_other_items else {}
+
+            QTimer.singleShot(0, self.window, lambda: self._wrike_planner_show(
+                recording_id, folders, contacts, suggestions, token))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -1007,73 +1062,76 @@ class App:
             recording_id, status="failed", error_message=msg,
         )
 
-    def _wrike_picker_show(
-        self, recording_id: int, folders: list, token: str,
+    def _wrike_planner_show(
+        self, recording_id, folders, contacts, assignee_suggestions, token,
     ) -> None:
         import threading
+
         from teams_transcriber.config import save_settings
-        from teams_transcriber.ui.wrike_folder_picker import WrikeFolderPicker
+        from teams_transcriber.ui.wrike_sync_planner import WrikeSyncPlanner
 
         recent_ids = list(
-            self.settings._raw.get("integrations", {})
-            .get("wrike_recent_folder_ids", []) or []
+            self.settings._raw.get("integrations", {}).get("wrike_recent_folder_ids", []) or []
         )
-        dlg = WrikeFolderPicker(
-            folders=folders, recent_folder_ids=recent_ids, parent=self.window,
+        kwargs = _wrike_open_planner_kwargs(
+            self.db, recording_id, folders=folders, recent_folder_ids=recent_ids,
+            contacts=contacts, assignee_suggestions=assignee_suggestions,
         )
-        if dlg.exec() != dlg.DialogCode.Accepted or not dlg.selected_folder_id:
+        dlg = WrikeSyncPlanner(parent=self.window, **kwargs)
+        if dlg.exec() != dlg.DialogCode.Accepted:
             return
-        folder_id = dlg.selected_folder_id
-        new_recent = _wrike_lru_push(recent_ids, folder_id, cap=5)
-        self.settings._raw.setdefault("integrations", {})[
-            "wrike_recent_folder_ids"
-        ] = new_recent
+        plan = dlg.build_plan()
+        if not plan:
+            return
+        primary_folder = max(
+            (r.folder_id for r in plan),
+            key=lambda fid: sum(1 for r in plan if r.folder_id == fid),
+        )
+        new_recent = _wrike_lru_push(recent_ids, primary_folder, cap=5)
+        self.settings._raw.setdefault("integrations", {})["wrike_recent_folder_ids"] = new_recent
         save_settings(self.paths, self.settings)
         threading.Thread(
-            target=self._wrike_run_sync,
-            args=(recording_id, folder_id, token),
+            target=self._wrike_run_plan,
+            args=(recording_id, plan, primary_folder, token),
             daemon=True,
         ).start()
 
-    def _wrike_run_sync(
-        self, recording_id: int, folder_id: str, token: str,
-    ) -> None:
+    def _wrike_run_plan(self, recording_id, plan, primary_folder, token) -> None:
         """Background-thread sync. Updates wrike_sync status + toasts the result.
 
-        Toasts are scheduled on the main thread via QTimer.singleShot with
-        self.window as context — show_in_app_toast creates QWidgets and must
-        not run on a worker thread.
+        Toasts are scheduled on the main thread via the 3-arg QTimer.singleShot
+        with self.window as context — show_in_app_toast creates QWidgets and
+        must not run on a worker thread.
         """
         from PySide6.QtCore import QTimer
-        from teams_transcriber.integrations.wrike_client import (
-            WrikeApiError,
-            WrikeClient,
-        )
-        from teams_transcriber.integrations.wrike_sync import sync_recording
+        from teams_transcriber.integrations.wrike_client import WrikeApiError, WrikeClient
+        from teams_transcriber.integrations.wrike_sync import sync_items
         from teams_transcriber.storage.wrike import WrikeSyncRepo
 
         client = WrikeClient(token=token)
         try:
-            result = sync_recording(
-                self.db, client, recording_id, folder_id=folder_id,
-            )
+            report = sync_items(self.db, recording_id, plan, client=client)
             WrikeSyncRepo(self.db).update(
-                recording_id, status="synced", folder_id=folder_id,
+                recording_id,
+                status="synced" if not report.failures else "failed",
+                folder_id=primary_folder,
+                error_message=(None if not report.failures else f"{len(report.failures)} item(s) failed"),
             )
-            n = result.created_my + result.created_other
-            extra = (
-                f" — {result.assigned_other} assigned"
-                if result.assigned_other else ""
-            )
-            title, body = (
-                "Synced to Wrike",
-                f"Created {n} task{'s' if n != 1 else ''}{extra}",
-            )
+            bits = []
+            if report.created_tasks:
+                bits.append(f"{report.created_tasks} task{'s' if report.created_tasks != 1 else ''}")
+            if report.created_comments:
+                bits.append(f"{report.created_comments} comment{'s' if report.created_comments != 1 else ''}")
+            if report.skipped_already_synced:
+                bits.append(f"{report.skipped_already_synced} already synced")
+            body = ", ".join(bits) or "Nothing to do."
+            title = "Synced to Wrike"
+            if report.failures:
+                title = "Wrike sync — partial failure"
+                body = f"{body} · {len(report.failures)} failed"
             QTimer.singleShot(0, self.window, lambda: show_in_app_toast(title, body))
         except WrikeApiError as exc:
-            WrikeSyncRepo(self.db).update(
-                recording_id, status="failed", error_message=str(exc),
-            )
+            WrikeSyncRepo(self.db).update(recording_id, status="failed", error_message=str(exc))
             err = str(exc)
             QTimer.singleShot(0, self.window, lambda: show_in_app_toast("Wrike sync failed", err))
         finally:
