@@ -202,9 +202,32 @@ class SyncReport:
     failures: list[tuple[SyncItem, str]] = field(default_factory=list)
 
 
-def _sync_kind_to_db_kind(k: str) -> str:
-    """Database column accepts the SyncKind values directly post-v6."""
-    return k
+# The `wrike_tasks.kind` taxonomy predates the multi-destination SyncKind.
+# Phase 11 stored my-todos as 'my' and action-items-for-others as 'other', and
+# two existing behaviors key off those legacy values: the close-loop completion
+# (`app._wrike_close_loop_changes` filters `kind == "my"`) and the
+# "locked when already synced" guard (a recording synced under Phase 11 must
+# show as synced in the new planner). So multi-dest rows REUSE the legacy
+# values — a SyncItem 'my_todo' persists as 'my', 'action_other' as 'other'.
+# The three new singleton kinds (summary/decisions/follow_up) have no legacy
+# equivalent and store verbatim. Callers comparing a SyncItem kind against a
+# persisted row MUST convert through these helpers first.
+_SYNC_KIND_TO_DB = {"my_todo": "my", "action_other": "other"}
+_DB_KIND_TO_SYNC = {v: k for k, v in _SYNC_KIND_TO_DB.items()}
+
+
+def sync_kind_to_db_kind(kind: str) -> str:
+    """Map a `wrike_items.SyncKind` to the stored `wrike_tasks.kind` value."""
+    return _SYNC_KIND_TO_DB.get(kind, kind)
+
+
+def db_kind_to_sync_kind(kind: str) -> str:
+    """Inverse of `sync_kind_to_db_kind`: stored kind -> SyncKind.
+
+    Used when building the planner's already-synced set from persisted rows so
+    it lines up with the SyncKind-keyed items the planner renders.
+    """
+    return _DB_KIND_TO_SYNC.get(kind, kind)
 
 
 def sync_items(
@@ -236,7 +259,7 @@ def sync_items(
 
     for row in plan:
         item = row.item
-        db_kind = _sync_kind_to_db_kind(item.kind)
+        db_kind = sync_kind_to_db_kind(item.kind)
         if (db_kind, item.index) in already:
             report.skipped_already_synced += 1
             continue

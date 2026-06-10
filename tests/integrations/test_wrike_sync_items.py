@@ -74,13 +74,16 @@ def test_sync_items_creates_tasks_and_comments(tmp_path) -> None:
     folders = sorted(f for f, _ in client.tasks)
     assert folders == ["F_PROJ", "F_TODOS"]
     assert client.comments == [("folder", "F_PROJ", "we aligned")]
+    # Persisted kinds use the canonical wrike_tasks taxonomy: a SyncItem
+    # 'my_todo' stores as 'my' and 'action_other' as 'other' (so Phase-11
+    # rows and the close-loop completion keep lining up); singletons verbatim.
     rows = sorted(
         WrikeTaskRepo(db).list_for_recording(rid),
         key=lambda r: (r.kind, r.todo_index),
     )
     assert [(r.kind, r.format, r.assignee_id) for r in rows] == [
-        ("action_other", "task", "200"),
-        ("my_todo", "task", None),
+        ("my", "task", None),          # was SyncItem 'my_todo'
+        ("other", "task", "200"),      # was SyncItem 'action_other'
         ("summary", "comment", None),
     ]
     db.close()
@@ -150,3 +153,31 @@ def test_sync_items_carries_assignee_for_action_other(tmp_path) -> None:
     sync_items(db, rid, plan, client=client)
     folder_id, payload = client.tasks[0]
     assert payload["responsibles"] == ["200"]
+    db.close()
+
+
+def test_sync_items_respects_legacy_phase11_rows(tmp_path) -> None:
+    """A Phase-11 row (kind='my') must lock the equivalent new 'my_todo' item,
+    so re-syncing a meeting first synced under the old single-folder path does
+    not double-create the task."""
+    from teams_transcriber.storage.wrike import WrikeTaskRepo, WrikeTaskRow
+
+    db, rid = _seed_recording(tmp_path)
+    # Simulate a meeting already synced under Phase 11: my-todo 0 -> 'my'.
+    WrikeTaskRepo(db).insert(WrikeTaskRow(
+        id=None, recording_id=rid, kind="my", todo_index=0,
+        wrike_task_id="OLD123", wrike_folder_id="F_OLD",
+        created_at="2026-06-08T00:00:00+00:00", last_synced_done=False,
+    ))
+    plan = [
+        PlanRow(
+            item=SyncItem(kind="my_todo", index=0, text="Email J"),
+            folder_id="F_NEW", format="task", assignee_id=None,
+        ),
+    ]
+    client = _FakeClient()
+    report = sync_items(db, rid, plan, client=client)
+    assert report.created_tasks == 0
+    assert report.skipped_already_synced == 1
+    assert client.tasks == []  # no duplicate task created
+    db.close()
