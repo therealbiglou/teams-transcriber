@@ -64,7 +64,8 @@ def test_items_order_is_stable_and_complete(tmp_path) -> None:
         "follow_up", "follow_up",
     ]
     assert items[0].text == "We aligned on Q3 priorities."
-    assert "Ship in July" in items[1].text and "Hire 2 PMs" in items[1].text
+    # Decisions render as a single bulleted block.
+    assert items[1].text == "- Ship in July\n- Hire 2 PMs"
     assert [i.text for i in items[2:4]] == ["Email Jennifer", "Order banner"]
     assert items[4].suggested_who == "Sarah Kim"
     assert items[5].suggested_who == "the eng lead"
@@ -107,4 +108,33 @@ def test_returns_empty_for_unknown_recording(tmp_path) -> None:
     db = build_database(tmp_path / "empty.db")
     db.initialize()
     assert recording_to_sync_items(db, 9999) == []
+    db.close()
+
+
+def test_due_dates_annotated_in_task_text(tmp_path) -> None:
+    """my_todo and action_other titles append '(due X)' when a due is present."""
+    db = build_database(tmp_path / "due.db")
+    db.initialize()
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-06-09T10:00:00+00:00",
+        ended_at=None, source=RecordingSource.MANUAL,
+        detected_title="t", display_title="due",
+        audio_path=None, audio_deleted_at=None, duration_ms=60_000,
+        status=RecordingStatus.DONE, error_message=None,
+    ))
+    assert rec.id is not None
+    SummaryRepo(db).upsert(Summary(
+        recording_id=rec.id, title="due", one_line=None, summary=None,
+        my_todos=[TodoItem(task="Email Jennifer", due="2026-07-01")],
+        action_items_others=[
+            ActionItemOther(who="Sarah Kim", task="Migration doc", due="2026-07-15"),
+        ],
+        key_decisions=[], follow_ups=[], topics=[],
+        generated_at="2026-06-09T10:00:00+00:00", model_used="m",
+    ))
+    items = recording_to_sync_items(db, rec.id)
+    by_kind = {i.kind: i for i in items}
+    assert by_kind["my_todo"].text == "Email Jennifer (due 2026-07-01)"
+    assert by_kind["action_other"].text == "Migration doc (due 2026-07-15)"
+    assert by_kind["action_other"].suggested_who == "Sarah Kim"
     db.close()
