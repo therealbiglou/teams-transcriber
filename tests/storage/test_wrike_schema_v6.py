@@ -50,7 +50,7 @@ def test_v6_migration_preserves_existing_rows_and_adds_columns(tmp_path) -> None
         conn.execute(
             "INSERT INTO wrike_tasks (recording_id, kind, todo_index, "
             "wrike_task_id, wrike_folder_id, created_at, last_synced_done) "
-            "VALUES (?, 'my', 0, 'TASK123', 'FOLDER1', ?, 0)",
+            "VALUES (?, 'my', 0, 'TASK123', 'FOLDER1', ?, 1)",
             (rec_id, "2026-06-09T10:00:00+00:00"),
         )
         conn.commit()
@@ -60,12 +60,12 @@ def test_v6_migration_preserves_existing_rows_and_adds_columns(tmp_path) -> None
         MigrationRunner([SCHEMA_V6]).run(conn)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
 
-        # Existing row preserved with defaults for new columns.
+        # Existing row preserved (incl. last_synced_done) with defaults for new columns.
         row = conn.execute(
-            "SELECT kind, todo_index, wrike_task_id, format, assignee_id "
+            "SELECT kind, todo_index, wrike_task_id, last_synced_done, format, assignee_id "
             "FROM wrike_tasks WHERE recording_id=?", (rec_id,),
         ).fetchone()
-        assert tuple(row) == ("my", 0, "TASK123", "task", None)
+        assert tuple(row) == ("my", 0, "TASK123", 1, "task", None)
 
         # Widened CHECK accepts the new kinds.
         for kind in ("summary", "decisions", "follow_up"):

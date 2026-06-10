@@ -3,7 +3,7 @@
 `wrike_tasks.kind` had `CHECK (kind IN ('my', 'other'))` from v4. Phase 13
 needs summaries, decisions, follow-ups too, and each row needs its own format
 (task | comment) and assignee. SQLite can't ALTER a CHECK, so we follow the
-Phase 9 v3 precedent: CREATE new, INSERT SELECT, DROP old, RENAME. The
+schema v3 rebuild precedent: CREATE new, INSERT SELECT, DROP old, RENAME. The
 MigrationRunner toggles foreign_keys=OFF around the migration so the DROP
 doesn't cascade-delete child rows and the RENAME doesn't rewrite FK refs.
 """

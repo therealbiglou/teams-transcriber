@@ -23,11 +23,11 @@ class WrikeTaskRow:
     recording_id: int
     kind: str
     todo_index: int
-    wrike_task_id: str
+    wrike_task_id: str  # carries the comment id when format == "comment"
     wrike_folder_id: str
     created_at: str
     last_synced_done: bool
-    format: str = "task"
+    format: str = "task"  # "task" | "comment"
     assignee_id: str | None = None
 
 
