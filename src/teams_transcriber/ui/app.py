@@ -1033,22 +1033,30 @@ class App:
             finally:
                 client.close()
 
-            contacts = [
-                Contact(id=str(c.get("id")),
-                        first_name=str(c.get("firstName") or "").strip(),
-                        last_name=str(c.get("lastName") or "").strip())
-                for c in contacts_raw
-            ]
-            action_other_items = [
-                (i, it.suggested_who or "")
-                for i, it in enumerate(items) if it.kind == "action_other"
-            ]
-            suggestions = suggest_assignees(
-                action_other_items, contacts,
-                meeting_summary=meeting_summary_text,
-                api_key=anthropic_key, model=model,
-                llm_fallback=llm_enabled and bool(anthropic_key),
-            ) if action_other_items else {}
+            # Resolve phase: assignee suggestion can do an LLM call. Guard it so
+            # an unexpected raise surfaces a toast (and marks the sync failed)
+            # instead of leaving the row stuck at "pending" with no feedback.
+            try:
+                contacts = [
+                    Contact(id=str(c.get("id")),
+                            first_name=str(c.get("firstName") or "").strip(),
+                            last_name=str(c.get("lastName") or "").strip())
+                    for c in contacts_raw
+                ]
+                action_other_items = [
+                    (i, it.suggested_who or "")
+                    for i, it in enumerate(items) if it.kind == "action_other"
+                ]
+                suggestions = suggest_assignees(
+                    action_other_items, contacts,
+                    meeting_summary=meeting_summary_text,
+                    api_key=anthropic_key, model=model,
+                    llm_fallback=llm_enabled and bool(anthropic_key),
+                ) if action_other_items else {}
+            except Exception as exc:
+                logger.exception("Wrike assignee resolution failed")
+                QTimer.singleShot(0, self.window, lambda e=str(exc): self._wrike_picker_load_failed(recording_id, e))
+                return
 
             QTimer.singleShot(0, self.window, lambda: self._wrike_planner_show(
                 recording_id, folders, contacts, suggestions, token))
@@ -1131,6 +1139,13 @@ class App:
                 body = f"{body} · {len(report.failures)} failed"
             QTimer.singleShot(0, self.window, lambda: show_in_app_toast(title, body))
         except WrikeApiError as exc:
+            WrikeSyncRepo(self.db).update(recording_id, status="failed", error_message=str(exc))
+            err = str(exc)
+            QTimer.singleShot(0, self.window, lambda: show_in_app_toast("Wrike sync failed", err))
+        except Exception as exc:
+            # sync_items absorbs per-row failures; a raise here is a non-API
+            # error (e.g. DB). Don't let it die silently on the worker thread.
+            logger.exception("Wrike sync_items failed unexpectedly")
             WrikeSyncRepo(self.db).update(recording_id, status="failed", error_message=str(exc))
             err = str(exc)
             QTimer.singleShot(0, self.window, lambda: show_in_app_toast("Wrike sync failed", err))
