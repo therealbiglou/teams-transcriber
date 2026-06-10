@@ -128,3 +128,20 @@ def test_planner_send_disabled_when_no_default_folder(qapp) -> None:
     )
     send_btn = next(b for b in dlg.findChildren(QPushButton) if b.objectName() == "send-btn")
     assert not send_btn.isEnabled()
+
+
+def test_planner_suggested_assignee_flows_into_plan(qapp) -> None:
+    # items[3] is the action_other row; suggestion maps it to contact 200.
+    dlg = WrikeSyncPlanner(
+        items=_items(),
+        folders=_folders(),
+        recent_folder_ids=["F1"],
+        contacts=_contacts(),
+        assignee_suggestions={3: "200"},
+        already_synced_keys=set(),
+    )
+    plan = dlg.build_plan()
+    action = next(r for r in plan if r.item.kind == "action_other")
+    assert action.assignee_id == "200"
+    # Non-action_other rows never carry an assignee.
+    assert all(r.assignee_id is None for r in plan if r.item.kind != "action_other")

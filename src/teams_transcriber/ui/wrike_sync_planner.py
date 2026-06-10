@@ -10,6 +10,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QFrame, QHBoxLayout, QLabel,
     QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
@@ -46,6 +47,20 @@ def _preview(text: str, max_chars: int = 80) -> str:
 
 def _label_to_format(label: str) -> str:
     return "task" if label == "Task" else "comment"
+
+
+class _WidthPinScrollArea(QScrollArea):
+    """Scroll area that caps its inner container to the viewport width on
+    resize, so a long unbroken token can't push the rows past the column edge.
+    This is the project's documented third overflow guard (alongside
+    ScrollBarAsNeeded + per-label Ignored/Preferred size policy)."""
+
+    def resizeEvent(self, e: QResizeEvent) -> None:
+        super().resizeEvent(e)
+        inner = self.widget()
+        viewport = self.viewport()
+        if inner is not None and viewport is not None:
+            inner.setMaximumWidth(viewport.width())
 
 
 class WrikeSyncPlanner(FramelessWindowMixin, QDialog):
@@ -90,7 +105,7 @@ class WrikeSyncPlanner(FramelessWindowMixin, QDialog):
         body = QWidget()
         v = QVBoxLayout(body); v.setContentsMargins(16, 12, 16, 12); v.setSpacing(10)
 
-        scroll = QScrollArea(); scroll.setWidgetResizable(True)
+        scroll = _WidthPinScrollArea(); scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         rows_host = QWidget()
@@ -229,9 +244,16 @@ class WrikeSyncPlanner(FramelessWindowMixin, QDialog):
         for s in self._rows:
             if s["locked"] or not s["checkbox"].isChecked():
                 continue
-            assert s["dest_folder_id"] is not None
+            # Send is disabled while any checked row lacks a folder, so this is
+            # normally unreachable — but guard for real (not via assert, which
+            # -O strips) in case build_plan is ever called from another path.
+            if s["dest_folder_id"] is None:
+                continue
             assignee = None
             if s["assignee_combo"] is not None:
+                # itemData(currentIndex()): the selected contact id, or None for
+                # "Unassigned". A typed-but-unmatched entry has index -1 →
+                # itemData(-1) is None, so it falls through to Unassigned.
                 idx = s["assignee_combo"].currentIndex()
                 assignee = s["assignee_combo"].itemData(idx)
             out.append(PlanRow(
