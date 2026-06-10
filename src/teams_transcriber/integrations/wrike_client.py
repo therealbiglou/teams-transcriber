@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 
@@ -70,7 +70,7 @@ class WrikeClient:
     def create_comment(
         self,
         *,
-        entity_type: str,  # "folder" | "task"
+        entity_type: Literal["folder", "task"],
         entity_id: str,
         text: str,
     ) -> str:
@@ -81,7 +81,12 @@ class WrikeClient:
             )
         path = f"/{entity_type}s/{entity_id}/comments"
         data = self._request("POST", path, json={"text": text})
-        return str(data[0]["id"]) if data else ""
+        # A successful create always returns the new comment; an empty envelope
+        # means something went wrong — surface it rather than persist an empty
+        # ref id as if the comment had been created.
+        if not data:
+            raise WrikeApiError(f"Wrike returned no comment for POST {path}")
+        return str(data[0]["id"])
 
     def complete_task(self, task_id: str, *, done: bool) -> dict[str, Any]:
         status = "Completed" if done else "Active"

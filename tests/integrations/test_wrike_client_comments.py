@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 import pytest
 
-from teams_transcriber.integrations.wrike_client import WrikeClient
+from teams_transcriber.integrations.wrike_client import WrikeApiError, WrikeClient
 
 
 def _transport(handler):
@@ -46,7 +46,22 @@ def test_create_comment_on_task() -> None:
 
 
 def test_create_comment_rejects_bad_entity_type() -> None:
-    client = WrikeClient(token="t", transport=_transport(lambda r: httpx.Response(200, json={"data": []})))
+    # The guard must fire before any network call is attempted.
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("network must not be called for a bad entity_type")
+
+    client = WrikeClient(token="t", transport=_transport(handler))
     with pytest.raises(ValueError):
         client.create_comment(entity_type="project", entity_id="P1", text="x")  # type: ignore[arg-type]
+    client.close()
+
+
+def test_create_comment_raises_on_empty_response() -> None:
+    """An empty data envelope means the comment wasn't created — surface it."""
+    client = WrikeClient(
+        token="t",
+        transport=_transport(lambda r: httpx.Response(200, json={"data": []})),
+    )
+    with pytest.raises(WrikeApiError):
+        client.create_comment(entity_type="folder", entity_id="F1", text="x")
     client.close()
