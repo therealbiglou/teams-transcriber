@@ -67,6 +67,22 @@ class WrikeClient:
         data = self._request("POST", f"/folders/{folder_id}/tasks", json=payload)
         return data[0] if data else {}
 
+    def create_comment(
+        self,
+        *,
+        entity_type: str,  # "folder" | "task"
+        entity_id: str,
+        text: str,
+    ) -> str:
+        """POST /folders/{id}/comments or /tasks/{id}/comments. Returns the comment id."""
+        if entity_type not in ("folder", "task"):
+            raise ValueError(
+                f"entity_type must be 'folder' or 'task', got {entity_type!r}"
+            )
+        path = f"/{entity_type}s/{entity_id}/comments"
+        data = self._request("POST", path, json={"text": text})
+        return str(data[0]["id"]) if data else ""
+
     def complete_task(self, task_id: str, *, done: bool) -> dict[str, Any]:
         status = "Completed" if done else "Active"
         data = self._request("PUT", f"/tasks/{task_id}", json={"status": status})
