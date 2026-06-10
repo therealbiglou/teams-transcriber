@@ -296,6 +296,9 @@ def sync_items(
                 created_at=_now_iso(), last_synced_done=False,
                 format=row.format, assignee_id=row.assignee_id,
             ))
+        # Broad by design: a per-row failure (API error, or a degenerate
+        # insert) is recorded and the batch continues. Programming errors are
+        # surfaced as a row failure rather than crashing the whole sync.
         except Exception as exc:  # noqa: BLE001 — accumulate, keep going
             logger.warning(
                 "sync_items: %s/%d failed: %s", item.kind, item.index, exc,

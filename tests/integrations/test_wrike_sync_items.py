@@ -151,7 +151,7 @@ def test_sync_items_carries_assignee_for_action_other(tmp_path) -> None:
     ]
     client = _FakeClient()
     sync_items(db, rid, plan, client=client)
-    folder_id, payload = client.tasks[0]
+    _folder_id, payload = client.tasks[0]
     assert payload["responsibles"] == ["200"]
     db.close()
 
