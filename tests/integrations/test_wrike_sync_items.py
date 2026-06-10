@@ -181,3 +181,28 @@ def test_sync_items_respects_legacy_phase11_rows(tmp_path) -> None:
     assert report.skipped_already_synced == 1
     assert client.tasks == []  # no duplicate task created
     db.close()
+
+
+def test_sync_items_decisions_and_summary_as_task_use_synthesized_title(tmp_path) -> None:
+    """summary/decisions sent as Task get a short title with the content in the
+    body — not the multi-line block crammed into a truncated title."""
+    db, rid = _seed_recording(tmp_path)  # display_title="Q3 sync"
+    plan = [
+        PlanRow(
+            item=SyncItem(kind="decisions", index=0,
+                          text="- Ship in July\n- Hire 2 PMs"),
+            folder_id="F", format="task", assignee_id=None,
+        ),
+        PlanRow(
+            item=SyncItem(kind="summary", index=0, text="We aligned on Q3."),
+            folder_id="F", format="task", assignee_id=None,
+        ),
+    ]
+    client = _FakeClient()
+    sync_items(db, rid, plan, client=client)
+    payloads = {p["title"]: p for _f, p in client.tasks}
+    assert "Key decisions from Q3 sync" in payloads
+    assert "- Ship in July\n- Hire 2 PMs" in payloads["Key decisions from Q3 sync"]["description"]
+    assert "Summary: Q3 sync" in payloads
+    assert "We aligned on Q3." in payloads["Summary: Q3 sync"]["description"]
+    db.close()

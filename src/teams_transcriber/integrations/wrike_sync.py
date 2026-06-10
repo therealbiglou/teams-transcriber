@@ -230,6 +230,26 @@ def db_kind_to_sync_kind(kind: str) -> str:
     return _DB_KIND_TO_SYNC.get(kind, kind)
 
 
+def _task_title_and_body(
+    item: SyncItem, rec_title: str, started_at: str,
+) -> tuple[str, str]:
+    """Compute (title, description) for a task-format row.
+
+    `summary`/`decisions` carry multi-line content that belongs in the task
+    body, not a truncated title — so synthesize a short title and put the full
+    text in the description (spec: decisions-as-task → "Key decisions from
+    <meeting>" + bulleted body). Todos / action-items / follow-ups are single
+    lines that read well as the title.
+    """
+    base = _build_description(rec_title, started_at, None)
+    if item.kind == "decisions":
+        return f"Key decisions from {rec_title}", f"{base}\n\n{item.text}"
+    if item.kind == "summary":
+        return f"Summary: {rec_title}", f"{base}\n\n{item.text}"
+    title = item.text if len(item.text) <= 100 else item.text[:97] + "…"
+    return title, base
+
+
 def sync_items(
     db: Database,
     recording_id: int,
@@ -265,13 +285,10 @@ def sync_items(
             continue
         try:
             if row.format == "task":
+                title, body = _task_title_and_body(item, rec_title, started_at)
                 payload: dict[str, Any] = {
-                    "title": (
-                        item.text
-                        if len(item.text) <= 100
-                        else item.text[:97] + "…"
-                    ),
-                    "description": _build_description(rec_title, started_at, None),
+                    "title": title,
+                    "description": body,
                     "status": "Active",
                 }
                 if row.assignee_id:
