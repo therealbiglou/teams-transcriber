@@ -216,10 +216,11 @@ class WrikeSyncPlanner(FramelessWindowMixin, QDialog):
         return f["title"] if f else "Pick a folder…"
 
     def _pick_folder(self, dest_btn):
+        from teams_transcriber.ui.scrim import exec_modal
         from teams_transcriber.ui.wrike_folder_picker import WrikeFolderPicker
         recent = [self._default_folder_id] if self._default_folder_id else []
         dlg = WrikeFolderPicker(folders=self._folders, recent_folder_ids=recent, parent=self)
-        if dlg.exec() != QDialog.DialogCode.Accepted or not dlg.selected_folder_id:
+        if exec_modal(dlg) != QDialog.DialogCode.Accepted or not dlg.selected_folder_id:
             return
         fid = dlg.selected_folder_id
         dest_btn.setText(self._folder_label(fid))

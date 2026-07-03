@@ -108,13 +108,13 @@ class ToastBanner(QFrame):
         close_btn.clicked.connect(self._dismiss)
         outer_layout.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignTop)
 
-        # Top-level layout wraps the outer card with no margins so the rounded
-        # corners aren't clipped.
+        # Top-level layout wraps the outer card with margins so the 28px-blur
+        # shadow has room to render instead of being clipped.
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(16, 16, 16, 16)
         layout.addWidget(outer)
 
-        self.setFixedWidth(380)
+        self.setFixedWidth(412)
         self.adjustSize()
 
         # Auto-dismiss timer.

@@ -406,6 +406,7 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         """Download + install the update found by the last check, from Settings."""
         if self._latest_release is None:
             return
+        from teams_transcriber.ui.scrim import exec_modal
         from teams_transcriber.ui.update_dialog import UpdateDialog
         dlg = UpdateDialog(
             version=self._latest_release.tag,
@@ -413,7 +414,7 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
             paths=self._paths,
             parent=self,
         )
-        dlg.exec()
+        exec_modal(dlg)
 
     def _manual_update_check(self) -> None:
         """Runs update_checker.fetch_latest_release synchronously, updates UI."""

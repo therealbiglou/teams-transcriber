@@ -43,6 +43,7 @@ from teams_transcriber.ui.hotkeys import HotkeyManager
 from teams_transcriber.ui.icons import TrayState
 from teams_transcriber.ui.main_window import MainWindow
 from teams_transcriber.ui.qt_bridge import QtEventBridge
+from teams_transcriber.ui.scrim import exec_modal
 from teams_transcriber.ui.workspace_window import WorkspaceWindow
 from teams_transcriber.ui.search_bar import SearchBar
 from teams_transcriber.ui.settings_dialog import SettingsDialog
@@ -253,7 +254,7 @@ class App:
             wizard = FirstRunWizard(
                 settings=self.settings, paths=self.paths, parent=self.window,
             )
-            wizard.exec()
+            exec_modal(wizard)
             # Wizard wrote to disk and synced the registry; reload settings.
             self.settings = load_settings(self.paths)
 
@@ -515,7 +516,7 @@ class App:
             parent=self.window,
         )
         dlg.saved.connect(self._refresh_history)
-        dlg.exec()
+        exec_modal(dlg)
 
     def _on_hotkey_reload(self, new_hotkeys: dict[str, str]) -> None:
         # Reload settings from disk (the dialog already persisted) and re-register.
@@ -736,7 +737,7 @@ class App:
                     child.setCurrentIndex(i)
                     break
         dlg.saved.connect(self._refresh_history)
-        dlg.exec()
+        exec_modal(dlg)
 
     def _open_settings_transcription_tab(self) -> None:
         """Open Settings and jump to the Transcription tab.
@@ -756,7 +757,7 @@ class App:
                     child.setCurrentIndex(i)
                     break
         dlg.saved.connect(self._refresh_history)
-        dlg.exec()
+        exec_modal(dlg)
 
     def _open_settings_ai_tab(self) -> None:
         """Open Settings and jump to the AI tab."""
@@ -772,7 +773,7 @@ class App:
                     child.setCurrentIndex(i)
                     break
         dlg.saved.connect(self._refresh_history)
-        dlg.exec()
+        exec_modal(dlg)
 
     def _retry_recording(self, recording_id: int) -> None:
         """Re-run the failed step (transcription or summary) for a recording."""
@@ -1101,7 +1102,7 @@ class App:
             contacts=contacts, assignee_suggestions=assignee_suggestions,
         )
         dlg = WrikeSyncPlanner(parent=self.window, **kwargs)
-        if dlg.exec() != dlg.DialogCode.Accepted:
+        if exec_modal(dlg) != dlg.DialogCode.Accepted:
             return
         plan = dlg.build_plan()
         if not plan:
@@ -1218,7 +1219,7 @@ class App:
             paths=self.paths,
             parent=self.window,
         )
-        dlg.exec()
+        exec_modal(dlg)
 
     def _open_workspace_for_active(self) -> None:
         if self._active_recording_id is not None:
