@@ -15,6 +15,8 @@ class Scrim(QWidget):
     def __init__(self, host: QWidget) -> None:
         super().__init__(host)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        # Plain QWidget children don't paint stylesheet backgrounds without this.
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setStyleSheet(
             f"background: rgba(31, 41, 55, 0.35); "
             f"border-radius: {RADIUS['window']}px;"
