@@ -193,3 +193,20 @@ def test_workspace_always_on_top_toggle_does_not_crash_offscreen(env, qapp):
     )
     win._on_always_on_top(True)
     win._on_always_on_top(False)
+
+
+def test_placeholder_visible_when_live_streaming_disabled(env, qapp) -> None:
+    """When live=True but transcription_live_enabled=False, the placeholder
+    should be visible in the splitter and the transcript view should be hidden."""
+    paths, db, settings = env
+    settings._raw["transcription"]["live_enabled"] = False
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    rid = _make_recording(db, status=RecordingStatus.RECORDING)
+    win = WorkspaceWindow(
+        db=db, recording_id=rid, bridge=bridge, live=True, settings=settings,
+    )
+    assert win._placeholder is not None
+    assert win._placeholder.parent() is not None      # actually in the widget tree
+    assert win._splitter.indexOf(win._placeholder) != -1
+    assert win.transcript_view.isHidden()

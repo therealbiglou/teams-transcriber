@@ -67,3 +67,15 @@ def test_banner_elides_long_titles(qapp):
     assert b._title_label.toolTip().startswith("Recording: An enormously")
     assert b._title_label.text().endswith("…")
     b.hide_banner()
+
+
+def test_elapsed_width_restored_on_next_recording(qapp):
+    from teams_transcriber.ui.active_recording_banner import ActiveRecordingBanner
+    b = ActiveRecordingBanner()
+    b.show()  # required so isVisible() returns True in offscreen
+    b.show_recording(1, "First")
+    b.set_processing()                    # shrinks the label to 20px
+    b.hide_banner()
+    b.show_recording(2, "Second")
+    assert b._elapsed_label.width() >= 48 or b._elapsed_label.minimumWidth() >= 48
+    b.hide_banner()

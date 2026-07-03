@@ -160,22 +160,24 @@ class WorkspaceWindow(FramelessWindowMixin, QWidget):
         placeholder = QLabel(text)
         placeholder.setStyleSheet("color: #6B7280; padding: 24px; font-size: 13px;")
         placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # Insert above the transcript_view in its parent layout.
-        parent_widget = self.transcript_view.parentWidget()
-        parent_layout = parent_widget.layout() if parent_widget else None
-        if parent_layout is not None:
-            parent_layout.insertWidget(0, placeholder)
+        placeholder.setWordWrap(True)
+        # The transcript view's parent is the QSplitter (no layout()); swap the
+        # view for the placeholder at the same splitter slot instead.
+        idx = self._splitter.indexOf(self.transcript_view)
+        self._splitter.insertWidget(idx, placeholder)
+        self.transcript_view.hide()
         self._placeholder = placeholder
 
     def _on_summary_ready_refresh(self, evt) -> None:
         if evt.recording_id != self._recording_id:
             return
+        if self._placeholder is not None:
+            self._placeholder.deleteLater()
+            self._placeholder = None
+        self.transcript_view.show()
         from teams_transcriber.storage import TranscriptRepo
         segments = TranscriptRepo(self._db).list_for_recording(self._recording_id)
         self.transcript_view.load_segments(segments)
-        if hasattr(self, "_placeholder") and self._placeholder is not None:
-            self._placeholder.deleteLater()
-            self._placeholder = None
 
     def _on_live_segment(self, evt: LiveSegmentAvailable) -> None:
         if evt.recording_id != self._recording_id:

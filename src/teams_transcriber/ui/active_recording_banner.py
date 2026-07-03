@@ -84,6 +84,7 @@ class ActiveRecordingBanner(QFrame):
         else:
             # Processing: amber dot.
             self._dot.setStyleSheet("color: #F59E0B; font-size: 16px;")
+        self._elapsed_label.setFixedWidth(48)   # undo set_processing's shrink
         self._elapsed_label.setText("00:00")
         self._timer.start()
         self.show()
