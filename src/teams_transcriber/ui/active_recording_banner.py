@@ -62,7 +62,8 @@ class ActiveRecordingBanner(QFrame):
 
         self._open_btn = QPushButton("Open workspace")
         self._open_btn.setProperty("role", "secondary")
-        self._open_btn.setFixedHeight(28)
+        # No fixed height: the themed padding needs ~35px; forcing less clips
+        # the label (see tests/ui/test_button_clipping.py).
         self._open_btn.clicked.connect(self._emit_clicked)
         layout.addWidget(self._open_btn, 0, Qt.AlignmentFlag.AlignVCenter)
 

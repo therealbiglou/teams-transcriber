@@ -107,7 +107,6 @@ class NotesEditor(QWidget):
             btn = QPushButton(text)
             btn.setProperty("role", "secondary")
             btn.setToolTip(tooltip)
-            btn.setFixedHeight(30)
             if style:
                 btn.setStyleSheet(btn.styleSheet() + style)
             if shortcut is not None:
