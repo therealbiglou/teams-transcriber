@@ -33,3 +33,13 @@ def test_selected_card_border_keeps_width_constant() -> None:
     # Selection must not change border width (1px→2px causes layout jiggle).
     assert 'QFrame[card="true"][selected="true"]' in qss
     assert "2px solid" not in qss.split('selected="true"')[1].split("}")[0]
+
+
+def test_stylesheet_covers_all_stock_widgets_in_use() -> None:
+    qss = app_stylesheet()
+    for selector in (
+        "QComboBox", "QTabBar::tab", "QSpinBox", "QListWidget",
+        "QGroupBox", "QProgressBar::chunk", "QCheckBox::indicator",
+        "QScrollBar:horizontal", "QToolTip",
+    ):
+        assert selector in qss, f"missing QSS for {selector}"
