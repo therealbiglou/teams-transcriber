@@ -43,3 +43,15 @@ def test_stylesheet_covers_all_stock_widgets_in_use() -> None:
         "QScrollBar:horizontal", "QToolTip",
     ):
         assert selector in qss, f"missing QSS for {selector}"
+
+
+def test_base_push_button_rule_exists_before_role_rules() -> None:
+    """Role-less QPushButtons (dialog OK/Cancel, wizard Back/Next, update
+    Close) must get base theming instead of rendering native. The base rule
+    must appear before the role-specific rules so attribute-selector rules
+    (which are more specific anyway) still win by cascade + specificity."""
+    qss = app_stylesheet()
+    assert "QPushButton {" in qss
+    base_idx = qss.index("QPushButton {")
+    role_idx = qss.index('QPushButton[role="primary"]')
+    assert base_idx < role_idx

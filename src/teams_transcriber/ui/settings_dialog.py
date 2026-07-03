@@ -5,6 +5,39 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import keyring
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
+    QSpinBox,
+    QTabWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from teams_transcriber.config import (
+    KEYRING_SERVICE,
+    KEYRING_USER_ANTHROPIC,
+    KEYRING_USER_WRIKE,
+    Settings,
+    save_settings,
+)
+from teams_transcriber.paths import AppPaths
+from teams_transcriber.ui.frameless import FramelessWindowMixin
+from teams_transcriber.ui.labels import make_selectable
+from teams_transcriber.ui.title_bar import TitleBar
 
 
 def _enumerate_microphones() -> list:
@@ -41,41 +74,6 @@ def _model_cache_candidates(cache_root, model: str) -> list:
     ]
 
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
-    QDialog,
-    QDialogButtonBox,
-    QFormLayout,
-    QFrame,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QListWidget,
-    QListWidgetItem,
-    QPushButton,
-    QSpinBox,
-    QTabWidget,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-)
-
-from teams_transcriber.config import (
-    KEYRING_SERVICE,
-    KEYRING_USER_ANTHROPIC,
-    KEYRING_USER_WRIKE,
-    Settings,
-    save_settings,
-)
-from teams_transcriber.paths import AppPaths
-from teams_transcriber.ui.frameless import FramelessWindowMixin
-from teams_transcriber.ui.labels import make_selectable
-from teams_transcriber.ui.title_bar import TitleBar
-
-
 class SettingsDialog(FramelessWindowMixin, QDialog):
     """Modal settings dialog. Writes to settings.json + keyring on accept."""
 
@@ -95,7 +93,7 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
-        self.resize(700, 540)
+        self.resize(780, 560)
         self._settings = settings
         self._paths = paths
         self._hotkey_reload_callback = hotkey_reload_callback
@@ -143,9 +141,9 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
                              shell_layout=shell)
 
         from teams_transcriber.ui.window_state import restore_window_geometry
-        restore_window_geometry(self, "settings", default_size=(700, 540))
+        restore_window_geometry(self, "settings", default_size=(780, 560))
 
-    def done(self, result: int) -> None:  # noqa: N802
+    def done(self, result: int) -> None:
         from teams_transcriber.ui.window_state import save_window_geometry
         save_window_geometry(self, "settings")
         super().done(result)
@@ -504,6 +502,7 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         """
         import shutil
         from pathlib import Path
+
         from teams_transcriber.ui.confirm_dialog import ConfirmDialog
 
         repo_id = self._settings.transcription_model

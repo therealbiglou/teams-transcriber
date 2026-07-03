@@ -96,6 +96,17 @@ def app_stylesheet() -> str:
         color: {c['text_primary']};
     }}
 
+    QPushButton {{
+        background: {c['card']};
+        color: {c['text_primary']};
+        border: 1px solid {c['border']};
+        border-radius: {r['button']}px;
+        padding: {s['sm']}px {s['lg']}px;
+        font-weight: 500;
+    }}
+    QPushButton:hover {{ background: {c['hover']}; }}
+    QPushButton:disabled {{ color: {c['text_tertiary']}; background: {c['card_alt']}; }}
+
     QPushButton[role="primary"] {{
         background: {c['accent']};
         color: {c['text_on_accent']};
