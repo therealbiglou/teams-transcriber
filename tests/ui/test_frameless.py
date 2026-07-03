@@ -49,3 +49,65 @@ def test_titlebar_full_controls(qapp):
     assert tb.minimize_btn is not None
     assert tb.maximize_btn is not None
     assert tb.close_btn is not None
+
+
+from PySide6.QtWidgets import QVBoxLayout
+
+
+class _ChromeWin(FramelessWindowMixin, QWidget):
+    def __init__(self):
+        super().__init__()
+        self.resize(400, 300)
+        shell = QVBoxLayout(self)
+        frame = QFrame()
+        shell.addWidget(frame)
+        self._init_frameless(frame, shell_layout=shell)
+
+
+def test_shell_layout_gets_chrome_margins(qapp):
+    from teams_transcriber.ui.frameless import CHROME_MARGIN
+    w = _ChromeWin()
+    m = w._shell_layout.contentsMargins()
+    assert (m.left(), m.top(), m.right(), m.bottom()) == (CHROME_MARGIN,) * 4
+
+
+def test_chrome_margins_collapse_when_maximized(qapp):
+    w = _ChromeWin()
+    w.showMaximized()
+    w._apply_chrome()
+    m = w._shell_layout.contentsMargins()
+    assert (m.left(), m.top(), m.right(), m.bottom()) == (0, 0, 0, 0)
+    w.showNormal()
+    w._apply_chrome()
+    assert w._shell_layout.contentsMargins().left() > 0
+
+
+def test_outer_frame_has_window_shadow(qapp):
+    from PySide6.QtWidgets import QGraphicsDropShadowEffect
+    w = _ChromeWin()
+    assert isinstance(w._outer.graphicsEffect(), QGraphicsDropShadowEffect)
+
+
+def test_resize_band_covers_chrome_margin(qapp):
+    from teams_transcriber.ui.frameless import CHROME_MARGIN
+    w = _ChromeWin()
+    w.resize(400, 300)
+    # Anywhere in the transparent margin band is a resize edge.
+    assert w._edge_at(QPoint(CHROME_MARGIN - 2, 150)) == Qt.Edge.LeftEdge
+    assert w._edge_at(QPoint(200, 150)).value == 0
+
+
+def test_legacy_init_without_shell_layout_keeps_old_band(qapp):
+    w = _Win()  # existing helper: no shell_layout
+    assert w._edge_at(QPoint(2, 150)) == Qt.Edge.LeftEdge
+    assert w._edge_at(QPoint(10, 150)).value == 0
+    assert w._outer.graphicsEffect() is None
+
+
+def test_titlebar_set_window_active_dims_title(qapp):
+    from teams_transcriber.ui.title_bar import TitleBar
+    tb = TitleBar(title="X", controls=("close",))
+    tb.set_window_active(False)
+    assert "color" in tb.title_label.styleSheet()
+    tb.set_window_active(True)
+    assert tb.title_label.styleSheet() == ""

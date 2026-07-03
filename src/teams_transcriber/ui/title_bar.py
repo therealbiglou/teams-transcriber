@@ -72,6 +72,13 @@ class TitleBar(QWidget):
         btn.clicked.connect(handler)
         return btn
 
+    def set_window_active(self, active: bool) -> None:
+        """Dim the title when the window is in the background (depth cue)."""
+        from teams_transcriber.ui.theme import COLORS
+        self.title_label.setStyleSheet(
+            "" if active else f"color: {COLORS['text_tertiary']};"
+        )
+
     def set_maximized(self, maximized: bool) -> None:
         if self.maximize_btn is not None:
             self.maximize_btn.setIcon(get_icon(IconName.RESTORE if maximized else IconName.MAXIMIZE))
