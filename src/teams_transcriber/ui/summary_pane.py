@@ -28,14 +28,8 @@ from teams_transcriber.storage import (
     SummaryRepo,
     TodoStateRepo,
 )
-
-
-def _make_selectable(label: "QLabel") -> "QLabel":
-    label.setTextInteractionFlags(
-        _Qt.TextInteractionFlag.TextSelectableByMouse
-        | _Qt.TextInteractionFlag.TextSelectableByKeyboard,
-    )
-    return label
+from teams_transcriber.ui.labels import make_selectable as _make_selectable
+from teams_transcriber.ui.labels import make_todo_row as _make_todo_row
 
 
 class SummaryPane(QScrollArea):
@@ -324,44 +318,6 @@ def _section_card(title: str, body_widgets: list[QWidget]) -> QFrame:
             w.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout.addWidget(w)
     return card
-
-
-def _make_todo_row(
-    text: str,
-    *,
-    checked: bool,
-    on_toggle: Callable[[bool], None],
-) -> QWidget:
-    """A wrap-friendly todo line: small checkbox + wrapping selectable label.
-
-    `QCheckBox`'s own label does NOT word-wrap — long todo text bleeds past
-    the right edge of the card. Splitting the row into a checkbox + a
-    sibling `QLabel(wordWrap=True)` fixes that; we pin the checkbox to the
-    top so it lines up with the first line of wrapped text.
-    """
-    row = QWidget()
-    h = QHBoxLayout(row)
-    h.setContentsMargins(0, 0, 0, 0)
-    h.setSpacing(8)
-
-    cb = QCheckBox()
-    cb.setChecked(checked)
-    cb.toggled.connect(on_toggle)
-    h.addWidget(cb, 0, Qt.AlignmentFlag.AlignTop)
-
-    label = QLabel(text)
-    label.setWordWrap(True)
-    label.setMinimumWidth(0)
-    label.setTextInteractionFlags(
-        Qt.TextInteractionFlag.TextSelectableByMouse
-        | Qt.TextInteractionFlag.TextSelectableByKeyboard,
-    )
-    # Same trick as `_section_card`: Ignored width lets the label shrink
-    # past its natural minSizeHint so the row never pushes the card wider
-    # than the surrounding column.
-    label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-    h.addWidget(label, 1)
-    return row
 
 
 def _fmt_meta_time(iso: str) -> str:
