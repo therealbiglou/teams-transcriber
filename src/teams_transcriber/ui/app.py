@@ -510,11 +510,24 @@ class App:
             watcher.set_paused(paused)
 
     def _open_settings(self) -> None:
+        self._open_settings_tab(None)
+
+    def _open_settings_tab(self, tab: str | None) -> None:
+        """Open Settings, optionally jumping to a named tab."""
+        from PySide6.QtWidgets import QTabWidget
+        from teams_transcriber.ui.scrim import exec_modal
         dlg = SettingsDialog(
             self.settings, self.paths,
             hotkey_reload_callback=self._on_hotkey_reload,
+            update_quit_callback=self._quit_for_update,
             parent=self.window,
         )
+        if tab is not None:
+            for child in dlg.findChildren(QTabWidget):
+                for i in range(child.count()):
+                    if child.tabText(i) == tab:
+                        child.setCurrentIndex(i)
+                        break
         dlg.saved.connect(self._refresh_history)
         exec_modal(dlg)
 
@@ -705,7 +718,7 @@ class App:
             show_in_app_toast(
                 "Recording failed", msg,
                 action_label="Open Settings",
-                action_callback=self._open_settings_audio_tab,
+                action_callback=lambda: self._open_settings_tab("Audio"),
             )
         else:
             show_in_app_toast("Recording failed", msg)
@@ -720,60 +733,8 @@ class App:
             f"'{evt.requested_name}' is not available — using Windows default. "
             "Choose a different device in Settings → Audio.",
             action_label="Open Settings",
-            action_callback=self._open_settings_audio_tab,
+            action_callback=lambda: self._open_settings_tab("Audio"),
         )
-
-    def _open_settings_audio_tab(self) -> None:
-        """Open Settings and jump to the Audio tab."""
-        from PySide6.QtWidgets import QTabWidget
-        dlg = SettingsDialog(
-            self.settings, self.paths,
-            hotkey_reload_callback=self._on_hotkey_reload,
-            parent=self.window,
-        )
-        for child in dlg.findChildren(QTabWidget):
-            for i in range(child.count()):
-                if child.tabText(i) == "Audio":
-                    child.setCurrentIndex(i)
-                    break
-        dlg.saved.connect(self._refresh_history)
-        exec_modal(dlg)
-
-    def _open_settings_transcription_tab(self) -> None:
-        """Open Settings and jump to the Transcription tab.
-
-        Used as the action button on the 'Whisper model couldn't load' toast
-        so users land directly on the Re-download / model picker controls.
-        """
-        from PySide6.QtWidgets import QTabWidget
-        dlg = SettingsDialog(
-            self.settings, self.paths,
-            hotkey_reload_callback=self._on_hotkey_reload,
-            parent=self.window,
-        )
-        for child in dlg.findChildren(QTabWidget):
-            for i in range(child.count()):
-                if child.tabText(i) == "Transcription":
-                    child.setCurrentIndex(i)
-                    break
-        dlg.saved.connect(self._refresh_history)
-        exec_modal(dlg)
-
-    def _open_settings_ai_tab(self) -> None:
-        """Open Settings and jump to the AI tab."""
-        from PySide6.QtWidgets import QTabWidget
-        dlg = SettingsDialog(
-            self.settings, self.paths,
-            hotkey_reload_callback=self._on_hotkey_reload,
-            parent=self.window,
-        )
-        for child in dlg.findChildren(QTabWidget):
-            for i in range(child.count()):
-                if child.tabText(i) == "AI":
-                    child.setCurrentIndex(i)
-                    break
-        dlg.saved.connect(self._refresh_history)
-        exec_modal(dlg)
 
     def _retry_recording(self, recording_id: int) -> None:
         """Re-run the failed step (transcription or summary) for a recording."""
@@ -788,7 +749,7 @@ class App:
                     "Anthropic API key not configured",
                     "Open Settings → AI to add your key, then retry.",
                     action_label="Open Settings",
-                    action_callback=self._open_settings_ai_tab,
+                    action_callback=lambda: self._open_settings_tab("AI"),
                 )
                 return
             self.pipeline.retry_summary(recording_id, api_key=api_key)
@@ -830,7 +791,7 @@ class App:
                 "If your antivirus may be quarantining model.bin, add the "
                 ".cache\\huggingface folder to its exclusions first.",
                 action_label="Open Settings",
-                action_callback=self._open_settings_transcription_tab,
+                action_callback=lambda: self._open_settings_tab("Transcription"),
             )
         else:
             show_in_app_toast("Transcription failed", msg)
@@ -844,7 +805,7 @@ class App:
             show_in_app_toast(
                 "Summary failed", evt.error_message,
                 action_label="Open Settings",
-                action_callback=self._open_settings_ai_tab,
+                action_callback=lambda: self._open_settings_tab("AI"),
             )
         else:
             show_in_app_toast("Summary failed", evt.error_message)
@@ -1211,6 +1172,13 @@ class App:
         from teams_transcriber.config import save_settings
         save_settings(self.paths, self.settings)
 
+    def _quit_for_update(self) -> None:
+        """Clean shutdown before the installer replaces files on disk."""
+        self.hotkeys.stop()
+        self.pipeline.shutdown()
+        self.db.close()
+        self.qapp.exit(0)
+
     def _start_update_download(self, evt) -> None:
         from teams_transcriber.ui.update_dialog import UpdateDialog
         dlg = UpdateDialog(
@@ -1218,6 +1186,7 @@ class App:
             download_url=evt.download_url,
             paths=self.paths,
             parent=self.window,
+            quit_callback=self._quit_for_update,
         )
         exec_modal(dlg)
 
@@ -1279,11 +1248,18 @@ class App:
 
     def _show_transcript(self, recording_id: int) -> None:
         from teams_transcriber.ui.transcript_window import TranscriptWindow
-        win = TranscriptWindow(db=self.db, recording_id=recording_id)
-        win.show()
-        # Keep a reference so it doesn't get garbage-collected.
         self._transcript_windows = getattr(self, "_transcript_windows", {})
+        existing = self._transcript_windows.get(recording_id)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return
+        win = TranscriptWindow(db=self.db, recording_id=recording_id)
+        win.closed.connect(
+            lambda rid: self._transcript_windows.pop(rid, None)
+        )
         self._transcript_windows[recording_id] = win
+        win.show()
 
     def _quit(self) -> None:
         self.hotkeys.stop()

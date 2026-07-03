@@ -67,6 +67,7 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         paths: AppPaths,
         *,
         hotkey_reload_callback: Callable[[dict[str, str]], None] | None = None,
+        update_quit_callback: Callable[[], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -78,6 +79,7 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         self._settings = settings
         self._paths = paths
         self._hotkey_reload_callback = hotkey_reload_callback
+        self._update_quit_callback = update_quit_callback
 
         frame = QFrame()
         frame.setObjectName("OuterFrame")
@@ -424,6 +426,7 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
             download_url=self._latest_release.installer_url,
             paths=self._paths,
             parent=self,
+            quit_callback=self._update_quit_callback,
         )
         exec_modal(dlg)
 

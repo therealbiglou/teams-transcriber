@@ -181,3 +181,15 @@ def test_workspace_is_resizable_with_shared_chrome(env, qapp):
     assert isinstance(win, FramelessWindowMixin)
     assert win._edge_at(QPoint(2, 2)) == (Qt.Edge.LeftEdge | Qt.Edge.TopEdge)
     assert win._pin_btn is not None
+
+
+def test_workspace_always_on_top_toggle_does_not_crash_offscreen(env, qapp):
+    """SetWindowPos may fail under the offscreen platform plugin; the flag-dance
+    fallback must still run without raising."""
+    paths, db, settings = env
+    rid = _make_recording(db, status=RecordingStatus.DONE)
+    win = WorkspaceWindow(
+        db=db, recording_id=rid, bridge=QtEventBridge(EventBus()), live=False,
+    )
+    win._on_always_on_top(True)
+    win._on_always_on_top(False)

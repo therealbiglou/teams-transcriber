@@ -33,3 +33,19 @@ def test_update_dialog_has_shared_chrome(tmp_path, qapp) -> None:
     )
     assert isinstance(dlg, FramelessWindowMixin)
     assert dlg._title_bar.close_btn is not None
+
+
+def test_restart_uses_quit_callback_not_sys_exit(qapp, tmp_path, monkeypatch):
+    import subprocess
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.ui.update_dialog import UpdateDialog
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **kw: None)
+    quits: list[bool] = []
+    dlg = UpdateDialog(
+        version="v9.9.9", download_url="http://localhost/x.exe",
+        paths=AppPaths(root=tmp_path / "TT"),
+        quit_callback=lambda: quits.append(True),
+    )
+    dlg._launch_installer_and_quit()
+    assert quits == [True]

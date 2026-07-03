@@ -183,12 +183,28 @@ class WorkspaceWindow(FramelessWindowMixin, QWidget):
         self.transcript_view.append_segment(evt.segment)
 
     def _on_always_on_top(self, enabled: bool) -> None:
-        flags = self.windowFlags()
-        if enabled:
-            self.setWindowFlags(flags | Qt.WindowType.WindowStaysOnTopHint)
-        else:
-            self.setWindowFlags(flags & ~Qt.WindowType.WindowStaysOnTopHint)
-        self.show()
+        # SetWindowPos toggles topmost without recreating the native window
+        # (setWindowFlags + show() destroys/recreates it: visible flicker,
+        # dropped maximized state). Fall back to the flag dance if it fails.
+        import ctypes
+        HWND_TOPMOST, HWND_NOTOPMOST = -1, -2
+        SWP_NOMOVE, SWP_NOSIZE, SWP_NOACTIVATE = 0x0002, 0x0001, 0x0010
+        try:
+            ok = bool(ctypes.windll.user32.SetWindowPos(
+                int(self.winId()),
+                HWND_TOPMOST if enabled else HWND_NOTOPMOST,
+                0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            ))
+        except Exception:
+            ok = False
+        if not ok:
+            flags = self.windowFlags()
+            if enabled:
+                flags |= Qt.WindowType.WindowStaysOnTopHint
+            else:
+                flags &= ~Qt.WindowType.WindowStaysOnTopHint
+            self.setWindowFlags(flags)
+            self.show()
 
     def show_waiting_for_processing(self) -> None:
         """Indicate that transcription/summarization is paused until close."""

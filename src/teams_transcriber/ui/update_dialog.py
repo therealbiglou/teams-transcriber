@@ -6,6 +6,7 @@ import logging
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, Signal
@@ -71,6 +72,7 @@ class UpdateDialog(FramelessWindowMixin, QDialog):
         download_url: str,
         paths: AppPaths,
         parent: QWidget | None = None,
+        quit_callback: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(f"Update to {version}")
@@ -79,6 +81,7 @@ class UpdateDialog(FramelessWindowMixin, QDialog):
         self.setMouseTracking(True)
         self.setMinimumWidth(440)
         self._installer_path = paths.root / "update" / f"TeamsTranscriberSetup-{version.lstrip('v')}.exe"
+        self._quit_callback = quit_callback
 
         frame = QFrame()
         frame.setObjectName("OuterFrame")
@@ -172,4 +175,10 @@ class UpdateDialog(FramelessWindowMixin, QDialog):
                 f"Installer is at: {self._installer_path}"
             )
             return
-        sys.exit(0)
+        if self._quit_callback is not None:
+            self._quit_callback()
+            return
+        from PySide6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()

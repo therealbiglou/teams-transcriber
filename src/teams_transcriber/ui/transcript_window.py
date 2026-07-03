@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame,
     QVBoxLayout,
@@ -17,6 +17,8 @@ from teams_transcriber.ui.title_bar import TitleBar
 
 class TranscriptWindow(FramelessWindowMixin, QWidget):
     """Frameless themed window showing one recording's full transcript."""
+
+    closed = Signal(int)   # recording_id
 
     def __init__(
         self,
@@ -67,4 +69,5 @@ class TranscriptWindow(FramelessWindowMixin, QWidget):
     def closeEvent(self, ev) -> None:  # noqa: N802
         from teams_transcriber.ui.window_state import save_window_geometry
         save_window_geometry(self, "transcript")
+        self.closed.emit(self._recording_id)
         super().closeEvent(ev)

@@ -58,3 +58,15 @@ def test_transcript_window_movable_resizable(tmp_path, qapp) -> None:
     assert win._title_bar.maximize_btn is not None
 
     db.close()
+
+
+def test_transcript_window_emits_closed(tmp_path, qapp) -> None:
+    from teams_transcriber.ui.transcript_window import TranscriptWindow
+
+    db, rec = _build_db_with_recording(tmp_path)
+    win = TranscriptWindow(db=db, recording_id=rec.id)
+    received: list[int] = []
+    win.closed.connect(received.append)
+    win.close()
+    assert received == [win._recording_id]
+    db.close()
