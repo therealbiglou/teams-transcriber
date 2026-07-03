@@ -356,9 +356,7 @@ class App:
         self.master_todos = MasterTodoView(self.db)
         self._content_stack.addWidget(self.master_todos)     # index 1
         self.master_todos.go_to_summary.connect(self._go_to_summary_from_todos)
-        self.master_todos.todo_toggled.connect(
-            lambda _rid: self._refresh_history(query=self.search.input.text() or None)
-        )
+        self.master_todos.todo_toggled.connect(self._on_master_todo_toggled)
         layout.addWidget(self._content_stack, 1)
 
         self.window.set_content(content)
@@ -400,6 +398,13 @@ class App:
         self._refresh_history(query=self.search.input.text() or None)
         self.master_todos.reload()
         self._wrike_close_loop_sync(rid)
+
+    def _on_master_todo_toggled(self, recording_id: int) -> None:
+        """Master-view toggle: same close-loop as the summary pane's checkbox.
+        No master_todos.reload() here — the toggled checkbox is the sender and
+        reload would delete it mid-signal; the view already shows the new state."""
+        self._refresh_history(query=self.search.input.text() or None)
+        self._wrike_close_loop_sync(recording_id)
 
     def _wrike_close_loop_sync(self, recording_id: int) -> None:
         """Compute which my-todos changed and dispatch a worker to push them."""
