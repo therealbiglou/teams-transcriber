@@ -97,3 +97,20 @@ def test_recording_delete_cascades(db: Database, recording_id: int) -> None:
     repo.upsert(recording_id, todo_index=0, task_text="X", done=True)
     RecordingRepo(db).delete(recording_id)
     assert repo.list_for_recording(recording_id) == []
+
+
+def test_seed_preserves_done_state(db: Database, recording_id: int) -> None:
+    repo = TodoStateRepo(db)
+    repo.upsert(recording_id, 0, "task A", True)     # user checked it off
+    repo.seed(recording_id, 0, "task A (reworded)")  # re-summarization reseeds
+    rows = repo.list_for_recording(recording_id)
+    assert rows[0].done is True             # done survived
+    assert rows[0].task_text == "task A (reworded)"
+    assert rows[0].done_at is not None
+
+
+def test_seed_creates_unchecked_row_when_missing(db: Database, recording_id: int) -> None:
+    repo = TodoStateRepo(db)
+    repo.seed(recording_id, 1, "new task")
+    rows = repo.list_for_recording(recording_id)
+    assert rows[0].done is False

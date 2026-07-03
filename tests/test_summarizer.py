@@ -14,6 +14,7 @@ from teams_transcriber.storage import (
     RecordingSource,
     RecordingStatus,
     SummaryRepo,
+    TodoStateRepo,
     TranscriptRepo,
     TranscriptSegment,
     build_database,
@@ -122,6 +123,34 @@ def test_summarize_writes_summary_and_sets_title(setup_recording) -> None:
     assert summary is not None
     assert summary.title == "Q2 roadmap sync"
     assert summary.my_todos[0].task == "Write API stub"
+
+
+def test_resummarize_preserves_checked_todo(setup_recording) -> None:
+    """Re-running summarize() must not uncheck a todo the user already
+    completed — _persist() should seed (not upsert-clobber) todo_state."""
+    db, rec_id = setup_recording
+    bus = EventBus()
+    settings = Settings()
+
+    client = FakeAnthropic(scripted=[_canned_ok(title="Q2 sync")])
+    s = Summarizer(bus=bus, db=db, settings=settings, client_factory=lambda _key: client)
+    s.summarize(rec_id, api_key="sk-test")
+
+    todo_repo = TodoStateRepo(db)
+    rows = todo_repo.list_for_recording(rec_id)
+    assert len(rows) == 1
+    todo_repo.mark_done(rec_id, todo_index=0, done=True)
+
+    # Re-summarize with reworded task text (e.g. user hit "regenerate summary").
+    client2 = FakeAnthropic(scripted=[_canned_ok(title="Q2 sync (revised)")])
+    s2 = Summarizer(bus=bus, db=db, settings=settings, client_factory=lambda _key: client2)
+    s2.summarize(rec_id, api_key="sk-test")
+
+    rows = todo_repo.list_for_recording(rec_id)
+    assert len(rows) == 1
+    assert rows[0].done is True
+    assert rows[0].done_at is not None
+    assert rows[0].task_text == "Write API stub"
 
 
 def test_summarize_retries_on_transient_error(setup_recording) -> None:
