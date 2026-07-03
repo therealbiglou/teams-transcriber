@@ -111,3 +111,55 @@ def test_titlebar_set_window_active_dims_title(qapp):
     assert "color" in tb.title_label.styleSheet()
     tb.set_window_active(True)
     assert tb.title_label.styleSheet() == ""
+
+
+def test_titlebar_drag_moves_window_via_fallback(qapp):
+    """Offscreen startSystemMove returns False, so the manual fallback must move."""
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QMouseEvent
+    from teams_transcriber.ui.title_bar import TitleBar
+
+    win = QWidget()
+    win.resize(300, 200)
+    tb = TitleBar(win, title="T", controls=("close",))
+    win.move(100, 100)
+
+    press = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress, QPointF(50, 10), QPointF(150, 110),
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    tb.mousePressEvent(press)
+    move = QMouseEvent(
+        QMouseEvent.Type.MouseMove, QPointF(70, 20), QPointF(170, 120),
+        Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    tb.mouseMoveEvent(move)
+    assert win.pos().x() == 120
+    assert win.pos().y() == 110
+
+
+def test_titlebar_drag_restores_maximized_window(qapp):
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QMouseEvent
+    from teams_transcriber.ui.title_bar import TitleBar
+
+    win = _Win()  # FramelessWindowMixin host with toggle_max
+    win.resize(400, 300)
+    tb = TitleBar(win, title="T", controls=("close",))
+    win.showMaximized()
+    assert win.isMaximized()
+    press = QMouseEvent(
+        QMouseEvent.Type.MouseButtonPress, QPointF(50, 10), QPointF(50, 10),
+        Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    tb.mousePressEvent(press)
+    move = QMouseEvent(
+        QMouseEvent.Type.MouseMove, QPointF(60, 15), QPointF(60, 15),
+        Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    tb.mouseMoveEvent(move)
+    assert not win.isMaximized()

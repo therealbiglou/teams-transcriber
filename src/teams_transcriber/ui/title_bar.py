@@ -88,8 +88,28 @@ class TitleBar(QWidget):
             self._drag_anchor = e.globalPosition().toPoint() - self.window().pos()
 
     def mouseMoveEvent(self, e: QMouseEvent) -> None:
-        if self._drag_anchor is not None and not self.window().isMaximized():
-            self.window().move(e.globalPosition().toPoint() - self._drag_anchor)
+        if self._drag_anchor is None:
+            return
+        win = self.window()
+        if win.isMaximized():
+            # Restore first (native title bars do this), keeping the cursor at
+            # the same relative x over the title bar so the drag feels anchored.
+            rel_x = e.position().x() / max(1, self.width())
+            toggle = getattr(win, "toggle_max", None)
+            if callable(toggle):
+                toggle()
+            else:
+                win.showNormal()
+            gp = e.globalPosition().toPoint()
+            win.move(int(gp.x() - win.width() * rel_x), gp.y() - self.height() // 2)
+            self._drag_anchor = gp - win.pos()
+        handle = win.windowHandle()
+        if handle is not None and handle.startSystemMove():
+            # The OS owns the move now (enables Windows Aero Snap / Snap
+            # Layouts); we get no further move events until release.
+            self._drag_anchor = None
+            return
+        win.move(e.globalPosition().toPoint() - self._drag_anchor)
 
     def mouseReleaseEvent(self, e: QMouseEvent) -> None:
         del e
