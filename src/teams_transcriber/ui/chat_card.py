@@ -144,15 +144,14 @@ class ChatCard(QFrame):
         self.send_requested.emit(self._recording_id, text)
 
     def _add_bubble(self, role: str, content: str) -> None:
+        from PySide6.QtCore import QTimer
+        from teams_transcriber.ui.labels import make_selectable, make_wrapping
+
         if self._placeholder is not None:
             self._placeholder.setVisible(False)
-        bubble = QTextEdit()
-        bubble.setReadOnly(True)
-        bubble.setPlainText(content)
-        bubble.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred,
-        )
-        bubble.setMaximumHeight(240)
+        bubble = QLabel(content)
+        make_wrapping(bubble)
+        make_selectable(bubble)
         if role == "user":
             bubble.setStyleSheet(
                 "background: #10B981; color: white; border-radius: 10px; padding: 8px;"
@@ -169,6 +168,9 @@ class ChatCard(QFrame):
             )
         self._msg_layout.addWidget(bubble)
 
-        # Auto-scroll to the new message after the layout updates.
-        bar = self._scroll.verticalScrollBar()
-        bar.setValue(bar.maximum())
+        # Scroll after the layout pass, not before it — bar.maximum() is stale
+        # until the new bubble has a height.
+        def scroll_to_bottom() -> None:
+            bar = self._scroll.verticalScrollBar()
+            bar.setValue(bar.maximum())
+        QTimer.singleShot(0, scroll_to_bottom)
