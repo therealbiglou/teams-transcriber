@@ -133,7 +133,8 @@ class WrikeSyncPlanner(FramelessWindowMixin, QDialog):
         v.addLayout(footer)
 
         inner.addWidget(body, 1)
-        self._init_frameless(frame, resizable=True, title_bar=self._title_bar)
+        self._init_frameless(frame, resizable=True, title_bar=self._title_bar,
+                             shell_layout=shell)
         self._refresh_footer()
 
     def _build_row(self, item_idx, item, suggested_assignee_id):

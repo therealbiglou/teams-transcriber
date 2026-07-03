@@ -145,7 +145,8 @@ class WorkspaceWindow(FramelessWindowMixin, QWidget):
             segments = TranscriptRepo(db).list_for_recording(recording_id)
             self.transcript_view.load_segments(segments)
 
-        self._init_frameless(self._frame, resizable=True, title_bar=self._title_bar)
+        self._init_frameless(self._frame, resizable=True,
+                             title_bar=self._title_bar, shell_layout=outer)
 
     def _set_recording_dot(self, recording: bool) -> None:
         color = "#EF4444" if recording else "#9CA3AF"

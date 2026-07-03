@@ -59,4 +59,5 @@ class TranscriptWindow(FramelessWindowMixin, QWidget):
         body.addWidget(self.transcript_view, 1)
         inner.addLayout(body)
 
-        self._init_frameless(frame, resizable=True, title_bar=self._title_bar)
+        self._init_frameless(frame, resizable=True, title_bar=self._title_bar,
+                             shell_layout=outer)

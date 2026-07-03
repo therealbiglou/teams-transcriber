@@ -118,7 +118,8 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
 
         inner.addWidget(body, 1)
 
-        self._init_frameless(frame, resizable=True, title_bar=self._title_bar)
+        self._init_frameless(frame, resizable=True, title_bar=self._title_bar,
+                             shell_layout=shell)
 
     def _build_general_tab(self) -> QWidget:
         w = QWidget()

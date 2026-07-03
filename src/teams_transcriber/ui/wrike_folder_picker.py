@@ -75,7 +75,8 @@ class WrikeFolderPicker(FramelessWindowMixin, QDialog):
         v.addLayout(btn_row)
 
         inner.addWidget(body, 1)
-        self._init_frameless(frame, resizable=True, title_bar=self._title_bar)
+        self._init_frameless(frame, resizable=True, title_bar=self._title_bar,
+                             shell_layout=shell)
 
     def _apply_filter(self, text: str) -> None:
         needle = text.strip().lower()

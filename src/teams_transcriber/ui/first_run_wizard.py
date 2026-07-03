@@ -121,7 +121,8 @@ class FirstRunWizard(FramelessWindowMixin, QDialog):
 
         inner.addWidget(body, 1)
 
-        self._init_frameless(frame, resizable=True, title_bar=self._title_bar)
+        self._init_frameless(frame, resizable=True, title_bar=self._title_bar,
+                             shell_layout=shell)
         self._update_nav()
 
     # --- pages -----------------------------------------------------------

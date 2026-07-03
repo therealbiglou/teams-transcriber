@@ -114,7 +114,8 @@ class UpdateDialog(FramelessWindowMixin, QDialog):
 
         inner.addWidget(body, 1)
 
-        self._init_frameless(frame, resizable=True, title_bar=self._title_bar)
+        self._init_frameless(frame, resizable=True, title_bar=self._title_bar,
+                             shell_layout=shell)
 
         # Kick off download on a worker thread.
         self._worker = _DownloadWorker(

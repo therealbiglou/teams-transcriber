@@ -58,9 +58,16 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         body_layout.addWidget(self.content, 1)
 
         outer_layout.addWidget(body, 1)
-        self.setCentralWidget(outer)
 
-        self._init_frameless(outer, resizable=True, title_bar=self.title_bar)
+        shell_host = QWidget()
+        shell_host.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        shell = QVBoxLayout(shell_host)
+        shell.setContentsMargins(0, 0, 0, 0)
+        shell.addWidget(outer)
+        self.setCentralWidget(shell_host)
+
+        self._init_frameless(outer, resizable=True, title_bar=self.title_bar,
+                             shell_layout=shell)
 
     def set_content(self, widget: QWidget) -> None:
         """Replace the content area's child widget."""

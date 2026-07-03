@@ -39,3 +39,12 @@ def test_set_content_replaces_widget(qapp, qtbot) -> None:
     # After replacement, only label_two should be in the content layout.
     assert win._content_layout.count() == 1
     assert win._content_layout.itemAt(0).widget() is label_two
+
+
+def test_main_window_has_chrome_shell(qapp):
+    from teams_transcriber.ui.frameless import CHROME_MARGIN
+    from teams_transcriber.ui.main_window import MainWindow
+    w = MainWindow()
+    assert w._shell_layout is not None
+    assert w._shell_layout.contentsMargins().left() == CHROME_MARGIN
+    assert w._outer.graphicsEffect() is not None
