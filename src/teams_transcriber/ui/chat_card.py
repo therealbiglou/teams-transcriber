@@ -173,4 +173,7 @@ class ChatCard(QFrame):
         def scroll_to_bottom() -> None:
             bar = self._scroll.verticalScrollBar()
             bar.setValue(bar.maximum())
-        QTimer.singleShot(0, scroll_to_bottom)
+        # Pass self as the QObject context: Qt drops the callback if the card
+        # is destroyed before the timer fires, so we never touch a deleted
+        # C++ object.
+        QTimer.singleShot(0, self, scroll_to_bottom)
