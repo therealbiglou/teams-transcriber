@@ -182,6 +182,7 @@ class WrikeSyncPlanner(FramelessWindowMixin, QDialog):
             assignee_row.addWidget(assignee_label)
             assignee_cb = QComboBox(); assignee_cb.setObjectName("row-assignee")
             assignee_cb.setEditable(True)
+            assignee_cb.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
             assignee_cb.addItem("Unassigned", userData=None)
             for c in self._contacts:
                 assignee_cb.addItem(c.full_name, userData=c.id)
@@ -254,11 +255,18 @@ class WrikeSyncPlanner(FramelessWindowMixin, QDialog):
                 continue
             assignee = None
             if s["assignee_combo"] is not None:
-                # itemData(currentIndex()): the selected contact id, or None for
-                # "Unassigned". A typed-but-unmatched entry has index -1 →
-                # itemData(-1) is None, so it falls through to Unassigned.
-                idx = s["assignee_combo"].currentIndex()
-                assignee = s["assignee_combo"].itemData(idx)
+                combo = s["assignee_combo"]
+                idx = combo.currentIndex()
+                typed = combo.currentText().strip()
+                # The combo is editable: typing over a selection does NOT
+                # reset currentIndex, so trust the text, not the index. An
+                # exact item match resolves to that contact; anything else
+                # (including a typed name not in contacts) is Unassigned.
+                if idx >= 0 and combo.itemText(idx) == typed:
+                    assignee = combo.itemData(idx)
+                else:
+                    match = combo.findText(typed, Qt.MatchFlag.MatchFixedString)
+                    assignee = combo.itemData(match) if match >= 0 else None
             out.append(PlanRow(
                 item=s["item"], folder_id=s["dest_folder_id"],
                 format=_label_to_format(s["format_combo"].currentText()),

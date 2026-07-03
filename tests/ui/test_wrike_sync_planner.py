@@ -151,6 +151,41 @@ def test_planner_preview_tooltip_has_full_text(qapp) -> None:
     assert preview.toolTip() == long_item_text
 
 
+def test_typed_unmatched_assignee_falls_back_to_unassigned(qapp) -> None:
+    # items[3] is the action_other row; suggestion preselects contact 200.
+    dlg = WrikeSyncPlanner(
+        items=_items(),
+        folders=_folders(),
+        recent_folder_ids=["F1"],
+        contacts=_contacts(),
+        assignee_suggestions={3: "200"},
+        already_synced_keys=set(),
+    )
+    row = dlg._rows[3]
+    combo = row["assignee_combo"]
+    assert combo.currentIndex() > 0            # suggestion preselected
+    combo.setEditText("Bob The Contractor")    # not in contacts
+    plan = dlg.build_plan()
+    target = next(r for r in plan if r.item.kind == "action_other")
+    assert target.assignee_id is None          # NOT the stale suggestion
+
+
+def test_typed_exact_contact_name_resolves(qapp) -> None:
+    dlg = WrikeSyncPlanner(
+        items=_items(),
+        folders=_folders(),
+        recent_folder_ids=["F1"],
+        contacts=_contacts(),
+        assignee_suggestions={},
+        already_synced_keys=set(),
+    )
+    combo = dlg._rows[3]["assignee_combo"]
+    combo.setEditText("Jennifer Smith")        # exact known contact name
+    plan = dlg.build_plan()
+    target = next(r for r in plan if r.item.kind == "action_other")
+    assert target.assignee_id == "100"
+
+
 def test_planner_suggested_assignee_flows_into_plan(qapp) -> None:
     # items[3] is the action_other row; suggestion maps it to contact 200.
     dlg = WrikeSyncPlanner(
