@@ -17,6 +17,7 @@ from teams_transcriber.integrations.wrike_items import SyncItem
 from teams_transcriber.storage.db import Database
 from teams_transcriber.storage.recordings import RecordingRepo
 from teams_transcriber.storage.summaries import SummaryRepo
+from teams_transcriber.storage.todos import TodoStateRepo
 from teams_transcriber.storage.wrike import WrikeTaskRepo, WrikeTaskRow
 
 logger = logging.getLogger(__name__)
@@ -275,6 +276,10 @@ def sync_items(
     already = {
         (r.kind, r.todo_index) for r in task_repo.list_for_recording(recording_id)
     }
+    done_by_index = {
+        s.todo_index: s.done
+        for s in TodoStateRepo(db).list_for_recording(recording_id)
+    }
     report = SyncReport()
 
     for row in plan:
@@ -283,13 +288,18 @@ def sync_items(
         if (db_kind, item.index) in already:
             report.skipped_already_synced += 1
             continue
+        is_done = False
         try:
             if row.format == "task":
                 title, body = _task_title_and_body(item, rec_title, started_at)
+                # A my_todo checked off locally before the send must land in
+                # Wrike as Completed; the close-loop only reacts to future
+                # toggles, so this is the only chance to get parity.
+                is_done = item.kind == "my_todo" and bool(done_by_index.get(item.index))
                 payload: dict[str, Any] = {
                     "title": title,
                     "description": body,
-                    "status": "Active",
+                    "status": "Completed" if is_done else "Active",
                 }
                 if row.assignee_id:
                     payload["responsibles"] = [row.assignee_id]
@@ -310,7 +320,7 @@ def sync_items(
                 id=None, recording_id=recording_id,
                 kind=db_kind, todo_index=item.index,
                 wrike_task_id=ref_id, wrike_folder_id=row.folder_id,
-                created_at=_now_iso(), last_synced_done=False,
+                created_at=_now_iso(), last_synced_done=is_done,
                 format=row.format, assignee_id=row.assignee_id,
             ))
         # Broad by design: a per-row failure (API error, or a degenerate

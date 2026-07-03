@@ -183,6 +183,35 @@ def test_sync_items_respects_legacy_phase11_rows(tmp_path) -> None:
     db.close()
 
 
+def test_sync_sends_completed_for_locally_done_todo(tmp_path) -> None:
+    """A my_todo already checked off locally (before the first sync) must land
+    in Wrike as Completed, and the persisted row must carry
+    last_synced_done=True so the close-loop doesn't push a spurious
+    un-complete on the next poll."""
+    from teams_transcriber.storage import TodoStateRepo
+
+    db, rid = _seed_recording(tmp_path)
+    TodoStateRepo(db).upsert(rid, 0, "task A", True)  # checked off locally
+    plan = [
+        PlanRow(
+            item=SyncItem(kind="my_todo", index=0, text="task A"),
+            folder_id="F_TODOS", format="task", assignee_id=None,
+        ),
+    ]
+    client = _FakeClient()
+    report = sync_items(db, rid, plan, client=client)
+    assert report.created_tasks == 1
+    assert report.failures == []
+
+    _folder_id, payload = client.tasks[0]
+    assert payload["status"] == "Completed"
+
+    rows = WrikeTaskRepo(db).list_for_recording(rid)
+    my_row = next(r for r in rows if r.kind == "my")
+    assert my_row.last_synced_done is True
+    db.close()
+
+
 def test_sync_items_decisions_and_summary_as_task_use_synthesized_title(tmp_path) -> None:
     """summary/decisions sent as Task get a short title with the content in the
     body — not the multi-line block crammed into a truncated title."""
