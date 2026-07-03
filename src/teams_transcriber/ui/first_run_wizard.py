@@ -12,10 +12,11 @@ uses _default_model_downloader which triggers faster-whisper's HF download.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 
 import keyring
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -60,6 +61,30 @@ def _default_model_downloader(progress: Callable[[int], None]) -> None:
         device="cpu", compute_type="int8",
     )
     progress(100)
+
+
+class _DownloadRunner(QObject):
+    """Runs a blocking download on a daemon thread; Qt auto-queues the signal
+    emissions back to the GUI thread, so slots can touch widgets safely."""
+
+    progress = Signal(int)
+    status = Signal(str)
+    finished = Signal(str)   # error message; "" = success
+
+    def __init__(self, fn) -> None:
+        super().__init__()
+        self._fn = fn        # Callable[[_DownloadRunner], None]
+
+    def start(self) -> None:
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self) -> None:
+        try:
+            self._fn(self)
+            self.finished.emit("")
+        except Exception as exc:
+            logger.exception("wizard download failed")
+            self.finished.emit(str(exc))
 
 
 class FirstRunWizard(FramelessWindowMixin, QDialog):
@@ -221,17 +246,28 @@ class FirstRunWizard(FramelessWindowMixin, QDialog):
         self._stack.setCurrentIndex(max(0, self._stack.currentIndex() - 1))
         self._update_nav()
 
+    def _set_nav_enabled(self, enabled: bool) -> None:
+        self._next_btn.setEnabled(enabled)
+        self._back_btn.setEnabled(enabled and self._stack.currentIndex() > 0)
+
     def _kick_model_download(self) -> None:
         self.progress_label.setText("Downloading model...")
-        try:
-            self._model_downloader(self._on_progress)
-            self.progress_label.setText("Model ready.")
-            self.progress_bar.setValue(100)
-        except Exception as exc:
-            logger.exception("model download failed")
+        self._set_nav_enabled(False)
+        runner = _DownloadRunner(lambda r: self._model_downloader(r.progress.emit))
+        runner.progress.connect(self.progress_bar.setValue)
+        runner.finished.connect(self._on_model_download_finished)
+        self._model_runner = runner   # keep a ref so it isn't GC'd mid-download
+        runner.start()
+
+    def _on_model_download_finished(self, error: str) -> None:
+        self._set_nav_enabled(True)
+        if error:
             self.progress_label.setText(
-                f"Model download failed: {exc}. You can retry later from Settings."
+                f"Model download failed: {error}. You can retry later from Settings."
             )
+        else:
+            self.progress_bar.setValue(100)
+            self.progress_label.setText("Model ready.")
 
     def _kick_gpu_runtime_download(self) -> None:
         runtime_base = self._paths.runtime_dir / "nvidia"
@@ -240,31 +276,38 @@ class FirstRunWizard(FramelessWindowMixin, QDialog):
             self.gpu_progress_bar.setValue(100)
             return
         self.gpu_progress_label.setText("Downloading GPU runtime...")
-        try:
-            self._download_gpu_runtime(runtime_base)
-            self.gpu_progress_label.setText("GPU runtime ready.")
-            self.gpu_progress_bar.setValue(100)
-        except Exception as exc:
-            logger.exception("GPU runtime download failed")
-            self.gpu_progress_label.setText(
-                f"GPU runtime download failed: {exc}. "
-                "You can retry on next launch."
-            )
+        self._set_nav_enabled(False)
+        runner = _DownloadRunner(
+            lambda r: self._download_gpu_runtime(runtime_base, r)
+        )
+        runner.progress.connect(self.gpu_progress_bar.setValue)
+        runner.status.connect(self.gpu_progress_label.setText)
+        runner.finished.connect(self._on_gpu_download_finished)
+        self._gpu_runner = runner
+        runner.start()
 
-    def _download_gpu_runtime(self, runtime_base) -> None:
+    def _on_gpu_download_finished(self, error: str) -> None:
+        self._set_nav_enabled(True)
+        if error:
+            self.gpu_progress_label.setText(
+                f"GPU runtime download failed: {error}. You can retry on next launch."
+            )
+        else:
+            self.gpu_progress_bar.setValue(100)
+            self.gpu_progress_label.setText("GPU runtime ready.")
+
+    def _download_gpu_runtime(self, runtime_base, runner: _DownloadRunner) -> None:
+        """Worker-thread body: forwards package progress via runner signals."""
         seen_packages: list[str] = []
 
         def progress(name: str, done: int, total: int) -> None:
             if name not in seen_packages:
                 seen_packages.append(name)
             pct = int(100 * len(seen_packages) / max(1, len(gpu_runtime.REQUIRED_PACKAGES)))
-            self.gpu_progress_bar.setValue(min(99, pct))
-            self.gpu_progress_label.setText(f"Downloading {name}...")
+            runner.progress.emit(min(99, pct))
+            runner.status.emit(f"Downloading {name}...")
 
         gpu_runtime.download_runtime(runtime_base, progress_callback=progress)
-
-    def _on_progress(self, pct: int) -> None:
-        self.progress_bar.setValue(pct)
 
     def _finish(self) -> None:
         key = self.api_key_input.text().strip()
