@@ -6,7 +6,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
-    QHBoxLayout,
     QMainWindow,
     QVBoxLayout,
     QWidget,
@@ -27,7 +26,7 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setMouseTracking(True)
         self.resize(1200, 760)
-        self.setMinimumSize(900, 540)
+        self.setMinimumSize(640, 440)
 
         outer = QFrame()
         outer.setObjectName("OuterFrame")
@@ -43,21 +42,28 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         self.title_bar.close_requested.connect(self.close)
         outer_layout.addWidget(self.title_bar)
 
-        body = QWidget()
-        body_layout = QHBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(0)
+        from PySide6.QtWidgets import QSplitter
+        from teams_transcriber.ui.window_state import (
+            restore_splitter_state, save_splitter_state,
+        )
+
+        self.body_splitter = QSplitter(Qt.Orientation.Horizontal)
+        self.body_splitter.setHandleWidth(6)
+        self.body_splitter.setChildrenCollapsible(False)
         self.sidebar = Sidebar()
-        body_layout.addWidget(self.sidebar)
+        self.body_splitter.addWidget(self.sidebar)
 
         self.content = QWidget()
         self.content.setObjectName("ContentArea")
         self._content_layout = QVBoxLayout(self.content)
         self._content_layout.setContentsMargins(24, 24, 24, 24)
         self._content_layout.setSpacing(16)
-        body_layout.addWidget(self.content, 1)
+        self.body_splitter.addWidget(self.content)
+        self.body_splitter.setStretchFactor(0, 0)
+        self.body_splitter.setStretchFactor(1, 1)
+        self.body_splitter.setSizes([220, 980])
 
-        outer_layout.addWidget(body, 1)
+        outer_layout.addWidget(self.body_splitter, 1)
 
         shell_host = QWidget()
         shell_host.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -71,6 +77,11 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
 
         from teams_transcriber.ui.window_state import restore_window_geometry
         restore_window_geometry(self, "main", default_size=(1200, 760))
+
+        restore_splitter_state(self.body_splitter, "main_body")
+        self.body_splitter.splitterMoved.connect(
+            lambda *_: save_splitter_state(self.body_splitter, "main_body")
+        )
 
     def closeEvent(self, ev) -> None:  # noqa: N802
         from teams_transcriber.ui.window_state import save_window_geometry

@@ -48,3 +48,30 @@ def test_main_window_has_chrome_shell(qapp):
     assert w._shell_layout is not None
     assert w._shell_layout.contentsMargins().left() == CHROME_MARGIN
     assert w._outer.graphicsEffect() is not None
+
+
+def test_sidebar_is_user_resizable_via_splitter(qapp):
+    from PySide6.QtWidgets import QSplitter
+    from teams_transcriber.ui.main_window import MainWindow
+    w = MainWindow()
+    assert isinstance(w.body_splitter, QSplitter)
+    assert w.body_splitter.widget(0) is w.sidebar
+    # Sidebar is no longer fixed-width.
+    assert w.sidebar.minimumWidth() < w.sidebar.maximumWidth()
+
+
+def test_main_window_minimum_allows_half_screen(qapp):
+    from teams_transcriber.ui.main_window import MainWindow
+    w = MainWindow()
+    assert w.minimumWidth() <= 680
+    assert w.minimumHeight() <= 460
+
+
+def test_columns_splitter_builds_resizable_columns(qapp):
+    from PySide6.QtWidgets import QSplitter, QWidget
+    from teams_transcriber.ui.app import _build_columns_splitter
+    left, right = QWidget(), QWidget()
+    sp = _build_columns_splitter(left, right)
+    assert isinstance(sp, QSplitter)
+    assert sp.widget(0) is left and sp.widget(1) is right
+    assert sp.childrenCollapsible() is False

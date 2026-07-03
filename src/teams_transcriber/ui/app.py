@@ -105,6 +105,19 @@ def _wrike_lru_push(items: list[str], value: str, *, cap: int) -> list[str]:
     return ([value] + rest)[:cap]
 
 
+def _build_columns_splitter(history, summary):
+    """History | Summary as a user-resizable splitter (was a fixed 50/50 box)."""
+    from PySide6.QtWidgets import QSplitter
+    sp = QSplitter(Qt.Orientation.Horizontal)
+    sp.setHandleWidth(6)
+    sp.setChildrenCollapsible(False)
+    sp.addWidget(history)
+    sp.addWidget(summary)
+    sp.setStretchFactor(0, 1)
+    sp.setStretchFactor(1, 1)
+    return sp
+
+
 def _wrike_pick_pending(rows: list) -> int | None:
     """Return the recording_id of the oldest pending/failed sync, or None."""
     pending = [r for r in rows if r.status in ("pending", "failed")]
@@ -308,10 +321,6 @@ class App:
         self.active_banner.clicked.connect(self._open_workspace)
         layout.addWidget(self.active_banner)
 
-        body = QWidget()
-        body_layout = QHBoxLayout(body)
-        body_layout.setContentsMargins(0, 0, 0, 0)
-        body_layout.setSpacing(16)
         self.history = HistoryList()
         self.history.recording_selected.connect(self._show_summary)
         self.summary = SummaryPane(
@@ -327,8 +336,14 @@ class App:
         self.summary.todo_state_changed.connect(self._on_todo_state_changed)
         self.summary.wrike_sync_requested.connect(self._wrike_open_picker)
         self.summary.chat_send_requested.connect(self._on_chat_send)
-        body_layout.addWidget(self.history, 1)
-        body_layout.addWidget(self.summary, 1)
+        from teams_transcriber.ui.window_state import (
+            restore_splitter_state, save_splitter_state,
+        )
+        body = _build_columns_splitter(self.history, self.summary)
+        restore_splitter_state(body, "main_columns")
+        body.splitterMoved.connect(
+            lambda *_: save_splitter_state(body, "main_columns")
+        )
 
         from PySide6.QtWidgets import QStackedWidget
         from teams_transcriber.ui.master_todo_view import MasterTodoView
