@@ -16,7 +16,7 @@ def paths(tmp_path: Path) -> AppPaths:
     return p
 
 
-def test_install_button_shown_when_update_available(qapp, paths, monkeypatch) -> None:
+def test_install_button_shown_when_update_available(qapp, qtbot, paths, monkeypatch) -> None:
     from types import SimpleNamespace
     from teams_transcriber import update_checker
     fake = SimpleNamespace(
@@ -29,6 +29,7 @@ def test_install_button_shown_when_update_available(qapp, paths, monkeypatch) ->
     dialog = SettingsDialog(settings, paths)
     assert dialog._install_btn.isHidden() is True          # hidden until a check finds one
     dialog._manual_update_check()
+    qtbot.waitUntil(lambda: "Checking" not in dialog._update_check_result.text(), timeout=3000)
     assert dialog._install_btn.isHidden() is False          # now offered
     assert dialog._latest_release is fake
 

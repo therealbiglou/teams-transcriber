@@ -23,7 +23,6 @@ def _enumerate_speakers() -> list:
         return []
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QApplication,
     QCheckBox,
     QComboBox,
     QDialog,
@@ -272,12 +271,12 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         form.addRow("Wrike API token:", self.wrike_token_input)
 
         # Test connection.
-        test_btn = QPushButton("Test connection")
-        test_btn.setProperty("role", "secondary")
-        test_btn.clicked.connect(self._wrike_test_connection)
+        self._wrike_test_btn = QPushButton("Test connection")
+        self._wrike_test_btn.setProperty("role", "secondary")
+        self._wrike_test_btn.clicked.connect(self._wrike_test_connection)
         self.wrike_status_label = make_selectable(QLabel(""))
         self.wrike_status_label.setWordWrap(True)
-        form.addRow("", test_btn)
+        form.addRow("", self._wrike_test_btn)
         form.addRow("", self.wrike_status_label)
 
         # Enable.
@@ -309,7 +308,12 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         return w
 
     def _wrike_test_connection(self) -> None:
+        import threading
+
+        from PySide6.QtCore import QTimer
+
         from teams_transcriber.integrations import wrike_client as _wc
+
         token = self.wrike_token_input.text().strip() or (
             keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
         )
@@ -317,20 +321,25 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
             self.wrike_status_label.setText("Enter a token first.")
             return
         self.wrike_status_label.setText("Checking…")
-        QApplication.processEvents()
-        client = _wc.WrikeClient(token=token)
-        try:
-            me = client.test_connection()
-            name = (me.get("firstName") or "user") + " " + (me.get("lastName") or "")
-            self.wrike_status_label.setText(
-                f"<span style='color:#065F46;'>✓ Connected as {name.strip()}</span>"
-            )
-        except Exception as exc:
-            self.wrike_status_label.setText(
-                f"<span style='color:#DC2626;'>✗ {exc}</span>"
-            )
-        finally:
-            client.close()
+        self._wrike_test_btn.setEnabled(False)
+
+        def _worker() -> None:
+            client = _wc.WrikeClient(token=token)
+            try:
+                me = client.test_connection()
+                name = (me.get("firstName") or "user") + " " + (me.get("lastName") or "")
+                msg = f"<span style='color:#065F46;'>✓ Connected as {name.strip()}</span>"
+            except Exception as exc:
+                msg = f"<span style='color:#DC2626;'>✗ {exc}</span>"
+            finally:
+                client.close()
+            QTimer.singleShot(0, self, lambda: self._on_wrike_test_done(msg))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_wrike_test_done(self, msg: str) -> None:
+        self.wrike_status_label.setText(msg)
+        self._wrike_test_btn.setEnabled(True)
 
     def _build_shortcuts_tab(self) -> QWidget:
         w = QWidget()
@@ -383,10 +392,10 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         v.addWidget(self._auto_check_cb)
 
         # "Check for updates now" button.
-        check_btn = QPushButton("Check for updates now")
-        check_btn.setProperty("role", "primary")
-        check_btn.clicked.connect(self._manual_update_check)
-        v.addWidget(check_btn)
+        self._check_updates_btn = QPushButton("Check for updates now")
+        self._check_updates_btn.setProperty("role", "primary")
+        self._check_updates_btn.clicked.connect(self._manual_update_check)
+        v.addWidget(self._check_updates_btn)
 
         self._update_check_result = make_selectable(QLabel(""))
         self._update_check_result.setWordWrap(True)
@@ -418,21 +427,36 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         exec_modal(dlg)
 
     def _manual_update_check(self) -> None:
-        """Runs update_checker.fetch_latest_release synchronously, updates UI."""
-        from teams_transcriber import __version__
-        from teams_transcriber.update_checker import (
-            UpdateCheckError,
-            fetch_latest_release,
-            is_update_available,
-        )
-        from datetime import datetime, UTC
+        """Fetch the latest release on a worker thread; UI stays responsive."""
+        import threading
+
+        from PySide6.QtCore import QTimer
+
+        from teams_transcriber.update_checker import UpdateCheckError, fetch_latest_release
 
         self._update_check_result.setText("Checking…")
-        QApplication.processEvents()  # let the label repaint
-        try:
-            latest = fetch_latest_release()
-        except UpdateCheckError as exc:
-            self._update_check_result.setText(f"<span style='color: #DC2626;'>Check failed: {exc}</span>")
+        self._check_updates_btn.setEnabled(False)
+
+        def _worker() -> None:
+            try:
+                latest, err = fetch_latest_release(), ""
+            except UpdateCheckError as exc:
+                latest, err = None, str(exc)
+            QTimer.singleShot(0, self, lambda: self._on_update_check_done(latest, err))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_update_check_done(self, latest, error: str) -> None:
+        from datetime import UTC, datetime
+
+        from teams_transcriber import __version__
+        from teams_transcriber.update_checker import is_update_available
+
+        self._check_updates_btn.setEnabled(True)
+        if error:
+            self._update_check_result.setText(
+                f"<span style='color: #DC2626;'>Check failed: {error}</span>"
+            )
             return
         ts = datetime.now(UTC).strftime("%Y-%m-%d %I:%M %p UTC")
         self._last_check_label.setText(f"Last update check: {ts}")
