@@ -37,7 +37,6 @@ class TranscriptWindow(FramelessWindowMixin, QWidget):
         frame = QFrame()
         frame.setObjectName("OuterFrame")
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(frame)
 
         inner = QVBoxLayout(frame)

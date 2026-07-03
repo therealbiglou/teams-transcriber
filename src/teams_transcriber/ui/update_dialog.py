@@ -83,7 +83,6 @@ class UpdateDialog(FramelessWindowMixin, QDialog):
         frame = QFrame()
         frame.setObjectName("OuterFrame")
         shell = QVBoxLayout(self)
-        shell.setContentsMargins(0, 0, 0, 0)
         shell.addWidget(frame)
 
         inner = QVBoxLayout(frame)

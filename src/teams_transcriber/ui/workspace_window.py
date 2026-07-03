@@ -64,7 +64,6 @@ class WorkspaceWindow(FramelessWindowMixin, QWidget):
         self._frame.setObjectName("OuterFrame")  # mixin styles this
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self._frame)
 
         inner = QVBoxLayout(self._frame)
