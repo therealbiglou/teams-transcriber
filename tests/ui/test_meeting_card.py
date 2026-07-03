@@ -125,3 +125,22 @@ def test_meeting_card_shows_error_message_for_failed_recording(qapp) -> None:
     from PySide6.QtWidgets import QLabel
     label_texts = [c.text() for c in card.findChildren(QLabel)]
     assert any("audio file missing" in t for t in label_texts)
+
+
+def _make_card_with_error() -> MeetingCard:
+    rec = _make_recording(
+        status=RecordingStatus.SUMMARY_FAILED,
+        error_message="boom",
+    )
+    return MeetingCard(rec, one_line="Aligned on X", todo_count=0)
+
+
+def test_card_error_text_is_selectable_and_title_shrinkable(qapp):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QLabel, QSizePolicy
+    card = _make_card_with_error()  # build per this file's existing pattern
+    labels = card.findChildren(QLabel)
+    error = next(lbl for lbl in labels if lbl.text() == "boom")
+    assert error.textInteractionFlags() & Qt.TextInteractionFlag.TextSelectableByMouse
+    title = labels[0]
+    assert title.sizePolicy().horizontalPolicy() == QSizePolicy.Policy.Ignored

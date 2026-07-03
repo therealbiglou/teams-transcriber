@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from teams_transcriber.storage.models import Recording, RecordingStatus
+from teams_transcriber.ui.labels import make_selectable, make_wrapping
 
 
 class MeetingCard(QFrame):
@@ -56,8 +57,7 @@ class MeetingCard(QFrame):
         title_text = recording.display_title or recording.detected_title or "(untitled)"
         title = QLabel(title_text)
         title.setStyleSheet("font-size: 16px; font-weight: 600;")
-        title.setWordWrap(True)
-        title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        make_wrapping(title)
         top.addWidget(title, 1)
 
         chip = _status_chip(recording.status)
@@ -83,12 +83,14 @@ class MeetingCard(QFrame):
             err.setWordWrap(True)
             err.setStyleSheet("color: #DC2626; font-size: 12px;")
             err.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            make_selectable(err)
             outer.addWidget(err)
 
         if one_line:
             ol = QLabel(one_line)
             ol.setWordWrap(True)
             ol.setStyleSheet("color: #374151; font-size: 13px;")
+            make_wrapping(ol)
             outer.addWidget(ol)
 
         if todo_count > 0:

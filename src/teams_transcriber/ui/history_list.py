@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from teams_transcriber.storage.models import Recording
@@ -32,6 +33,14 @@ class HistoryList(QScrollArea):
         self.setWidget(self._container)
         self._cards: dict[int, MeetingCard] = {}
         self._selected_id: int | None = None
+
+    def resizeEvent(self, e: QResizeEvent) -> None:  # noqa: N802
+        # Guard #2: pin the container to the viewport so cards must wrap
+        # instead of overflowing past the (hidden) horizontal scrollbar.
+        super().resizeEvent(e)
+        vp = self.viewport()
+        if vp is not None:
+            self._container.setMaximumWidth(vp.width())
 
     def set_recordings(
         self,

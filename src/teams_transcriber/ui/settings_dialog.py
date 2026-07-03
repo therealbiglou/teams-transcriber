@@ -53,6 +53,7 @@ from teams_transcriber.config import (
 )
 from teams_transcriber.paths import AppPaths
 from teams_transcriber.ui.frameless import FramelessWindowMixin
+from teams_transcriber.ui.labels import make_selectable
 from teams_transcriber.ui.title_bar import TitleBar
 
 
@@ -274,7 +275,7 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         test_btn = QPushButton("Test connection")
         test_btn.setProperty("role", "secondary")
         test_btn.clicked.connect(self._wrike_test_connection)
-        self.wrike_status_label = QLabel("")
+        self.wrike_status_label = make_selectable(QLabel(""))
         self.wrike_status_label.setWordWrap(True)
         form.addRow("", test_btn)
         form.addRow("", self.wrike_status_label)
@@ -373,7 +374,7 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         v.addWidget(version_label)
 
         last_check = self._settings.last_update_check or "Never"
-        self._last_check_label = QLabel(f"Last update check: {last_check}")
+        self._last_check_label = make_selectable(QLabel(f"Last update check: {last_check}"))
         v.addWidget(self._last_check_label)
 
         # Auto-check checkbox.
@@ -387,7 +388,7 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         check_btn.clicked.connect(self._manual_update_check)
         v.addWidget(check_btn)
 
-        self._update_check_result = QLabel("")
+        self._update_check_result = make_selectable(QLabel(""))
         self._update_check_result.setWordWrap(True)
         v.addWidget(self._update_check_result)
 

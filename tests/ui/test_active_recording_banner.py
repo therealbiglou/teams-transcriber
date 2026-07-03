@@ -40,8 +40,10 @@ def test_banner_set_processing_updates_title_prefix(qapp) -> None:
     banner = ActiveRecordingBanner()
     banner.show_recording(7, "My Meeting", status_label="Recording")
     banner.set_processing()
-    assert "Processing" in banner._title_label.text()
-    assert "My Meeting" in banner._title_label.text()
+    # The title is now an ElidedLabel — displayed .text() truncates to fit
+    # the (unshown, unlaid-out) widget's width, so assert on the full text.
+    assert "Processing" in banner._title_label.full_text()
+    assert "My Meeting" in banner._title_label.full_text()
 
 
 def test_banner_set_processing_stops_timer_and_clears_elapsed(qapp) -> None:
@@ -52,3 +54,16 @@ def test_banner_set_processing_stops_timer_and_clears_elapsed(qapp) -> None:
     assert banner._timer.isActive() is False
     # The time label should not be showing a clock-style mm:ss anymore.
     assert ":" not in banner._elapsed_label.text()
+
+
+def test_banner_elides_long_titles(qapp):
+    from teams_transcriber.ui.active_recording_banner import ActiveRecordingBanner
+    b = ActiveRecordingBanner()
+    # 400px: wide enough that the fixed-width siblings (dot, elapsed, "Open
+    # workspace" button, ~306px combined) leave the title some room, but not
+    # enough to fit this title in full — it should elide.
+    b.resize(400, 48)
+    b.show_recording(1, "An enormously long meeting title that cannot fit in the banner at all")
+    assert b._title_label.toolTip().startswith("Recording: An enormously")
+    assert b._title_label.text().endswith("…")
+    b.hide_banner()

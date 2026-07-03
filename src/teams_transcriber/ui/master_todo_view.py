@@ -11,7 +11,7 @@ from datetime import datetime
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import (
-    QCheckBox, QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
+    QHBoxLayout, QLabel, QPushButton, QScrollArea, QSizePolicy,
     QVBoxLayout, QWidget,
 )
 
@@ -112,13 +112,15 @@ class MasterTodoView(QScrollArea):
         header.addWidget(go)
         v.addLayout(header)
 
+        from teams_transcriber.ui.labels import make_selectable, make_todo_row
+        make_selectable(title)
         for i, td in enumerate(summary.my_todos):
-            cb = QCheckBox(td.task + (f"  (due {td.due})" if td.due else ""))
-            cb.setChecked(bool(states.get(i)))
-            cb.toggled.connect(
-                lambda checked, rid=rec.id, idx=i, task=td.task: self._toggle(rid, idx, task, checked)
-            )
-            v.addWidget(cb)
+            text = td.task + (f"  (due {td.due})" if td.due else "")
+
+            def _handler(rid=rec.id, idx=i, task=td.task):
+                return lambda checked: self._toggle(rid, idx, task, checked)
+
+            v.addWidget(make_todo_row(text, checked=bool(states.get(i)), on_toggle=_handler()))
         return card
 
     def _emit_go_to_summary(self, recording_id: int) -> None:

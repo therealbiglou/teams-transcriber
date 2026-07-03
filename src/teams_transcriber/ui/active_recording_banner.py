@@ -50,10 +50,9 @@ class ActiveRecordingBanner(QFrame):
         self._dot.setStyleSheet("color: #EF4444; font-size: 16px;")
         layout.addWidget(self._dot, 0, Qt.AlignmentFlag.AlignVCenter)
 
-        self._title_label = QLabel("")
+        from teams_transcriber.ui.labels import ElidedLabel
+        self._title_label = ElidedLabel()
         self._title_label.setStyleSheet("font-weight: 600; font-size: 13px;")
-        self._title_label.setWordWrap(False)
-        self._title_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout.addWidget(self._title_label, 1, Qt.AlignmentFlag.AlignVCenter)
 
         self._elapsed_label = QLabel("00:00")
@@ -79,7 +78,7 @@ class ActiveRecordingBanner(QFrame):
     def show_recording(self, recording_id: int, title: str, *, status_label: str = "Recording") -> None:
         self._recording_id = recording_id
         self._started_at = time.monotonic()
-        self._title_label.setText(f"{status_label}: {title}")
+        self._title_label.set_full_text(f"{status_label}: {title}")
         if status_label == "Recording":
             self._dot.setStyleSheet("color: #EF4444; font-size: 16px;")
         else:
@@ -94,10 +93,9 @@ class ActiveRecordingBanner(QFrame):
         if self._recording_id is None:
             return
         self._dot.setStyleSheet("color: #F59E0B; font-size: 16px;")
-        title_text = self._title_label.text()
+        title_text = self._title_label.full_text()
         if title_text.startswith("Recording:"):
-            title_text = "Processing:" + title_text[len("Recording:"):]
-            self._title_label.setText(title_text)
+            self._title_label.set_full_text("Processing:" + title_text[len("Recording:"):])
         # Stop ticking — the elapsed timer was measuring recording time, not processing time.
         self._timer.stop()
         # Repurpose the time label as a "Processing..." indicator.

@@ -71,3 +71,12 @@ def test_empty_state(db):
     view.reload()
     assert view.group_count() == 0
     assert view.is_empty() is True
+
+
+def test_master_todos_use_wrapping_rows(db):
+    from PySide6.QtWidgets import QCheckBox, QLabel
+    _add(db, "Meeting", ["one", "two"])
+    view = MasterTodoView(db)
+    view.reload()
+    cbs = view._container.findChildren(QCheckBox)
+    assert cbs and all(cb.text() == "" for cb in cbs)  # text lives in labels now

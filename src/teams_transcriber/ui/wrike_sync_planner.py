@@ -150,6 +150,7 @@ class WrikeSyncPlanner(FramelessWindowMixin, QDialog):
         top.addWidget(kind_chip)
 
         preview = QLabel(_preview(item.text)); preview.setWordWrap(True); preview.setMinimumWidth(0)
+        preview.setToolTip(item.text)
         preview.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         preview.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse

@@ -26,3 +26,10 @@ def test_app_stylesheet_returns_qss_string() -> None:
     # Sanity: stylesheet references the bg color.
     assert COLORS["bg"] in qss
     assert COLORS["accent"] in qss
+
+
+def test_selected_card_border_keeps_width_constant() -> None:
+    qss = app_stylesheet()
+    # Selection must not change border width (1px→2px causes layout jiggle).
+    assert 'QFrame[card="true"][selected="true"]' in qss
+    assert "2px solid" not in qss.split('selected="true"')[1].split("}")[0]

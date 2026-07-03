@@ -77,3 +77,12 @@ def test_history_list_accepts_four_tuple(qapp) -> None:
     rows = [(_rec(1, "2026-05-15T10:00:00+00:00"), "one line", 3, 1)]
     lst.set_recordings(rows)
     assert 1 in lst._cards
+
+
+def test_history_list_pins_container_to_viewport(qapp):
+    from teams_transcriber.ui.history_list import HistoryList
+    hl = HistoryList()
+    hl.resize(300, 400)
+    hl.show()
+    qapp.processEvents()
+    assert hl._container.maximumWidth() <= hl.viewport().width()

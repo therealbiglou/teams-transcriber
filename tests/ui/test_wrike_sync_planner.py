@@ -130,6 +130,27 @@ def test_planner_send_disabled_when_no_default_folder(qapp) -> None:
     assert not send_btn.isEnabled()
 
 
+def test_planner_preview_tooltip_has_full_text(qapp) -> None:
+    from PySide6.QtWidgets import QLabel
+    long_item_text = (
+        "This is a very long item text that will certainly be truncated by "
+        "the preview function because it exceeds the eighty character limit."
+    )
+    items = [SyncItem(kind="summary", index=0, text=long_item_text)]
+    dlg = WrikeSyncPlanner(
+        items=items,
+        folders=_folders(),
+        recent_folder_ids=["F1"],
+        contacts=_contacts(),
+        assignee_suggestions={},
+        already_synced_keys=set(),
+    )
+    preview = next(
+        lbl for lbl in dlg.findChildren(QLabel) if lbl.wordWrap() and lbl.text() != ""
+    )
+    assert preview.toolTip() == long_item_text
+
+
 def test_planner_suggested_assignee_flows_into_plan(qapp) -> None:
     # items[3] is the action_other row; suggestion maps it to contact 200.
     dlg = WrikeSyncPlanner(
