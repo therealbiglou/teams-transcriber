@@ -114,7 +114,9 @@ def test_titlebar_set_window_active_dims_title(qapp):
 
 
 def test_titlebar_drag_moves_window_via_fallback(qapp):
-    """Offscreen startSystemMove returns False, so the manual fallback must move."""
+    """The window is never shown, so windowHandle() is None (and even when
+    shown, offscreen startSystemMove() returns False) — either way the
+    manual move() fallback must move the window."""
     from PySide6.QtCore import QPointF
     from PySide6.QtGui import QMouseEvent
     from teams_transcriber.ui.title_bar import TitleBar
@@ -141,25 +143,48 @@ def test_titlebar_drag_moves_window_via_fallback(qapp):
 
 
 def test_titlebar_drag_restores_maximized_window(qapp):
+    """Dragging a maximized window restores it and re-anchors it so the
+    cursor stays at the same relative x over the (now normal-size) window."""
     from PySide6.QtCore import QPointF
     from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QVBoxLayout
     from teams_transcriber.ui.title_bar import TitleBar
 
     win = _Win()  # FramelessWindowMixin host with toggle_max
     win.resize(400, 300)
     tb = TitleBar(win, title="T", controls=("close",))
+    layout = QVBoxLayout(win)
+    layout.addWidget(tb)
+    layout.addStretch(1)
+    win.show()
+    qapp.processEvents()
     win.showMaximized()
+    qapp.processEvents()
     assert win.isMaximized()
+
     press = QMouseEvent(
         QMouseEvent.Type.MouseButtonPress, QPointF(50, 10), QPointF(50, 10),
         Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton,
         Qt.KeyboardModifier.NoModifier,
     )
     tb.mousePressEvent(press)
+
+    # Title-bar width at the time of the move (still maximized) — the same
+    # value the handler uses to compute the relative cursor anchor.
+    tb_width_at_move = tb.width()
+    move_x, move_y = 60.0, 15.0
     move = QMouseEvent(
-        QMouseEvent.Type.MouseMove, QPointF(60, 15), QPointF(60, 15),
+        QMouseEvent.Type.MouseMove, QPointF(move_x, move_y),
+        QPointF(move_x, move_y),
         Qt.MouseButton.NoButton, Qt.MouseButton.LeftButton,
         Qt.KeyboardModifier.NoModifier,
     )
     tb.mouseMoveEvent(move)
+
     assert not win.isMaximized()
+    # Cursor-anchor math: the restored window is positioned so the cursor's
+    # global x sits at the same relative x it had over the maximized title
+    # bar. Deterministic offscreen, so exact integer equality holds.
+    rel_x_expected = move_x / max(1, tb_width_at_move)
+    assert win.pos().x() == int(move_x - win.width() * rel_x_expected)
+    assert win.pos().y() == int(move_y) - tb.height() // 2
