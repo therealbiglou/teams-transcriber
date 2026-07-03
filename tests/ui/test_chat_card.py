@@ -1,4 +1,5 @@
-from PySide6.QtWidgets import QTextEdit
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel, QTextEdit
 from teams_transcriber.storage.chat import ChatMessage
 from teams_transcriber.ui.chat_card import ChatCard
 
@@ -117,3 +118,16 @@ def test_bubbles_are_autosizing_selectable_labels(qapp):
     )
     # No nested-scroll QTextEdit bubbles remain in the message list.
     assert card._message_container.findChildren(QTextEdit) == []
+
+
+def test_bubble_renders_html_looking_content_as_plain_text(qapp):
+    """QLabel defaults to Qt.AutoText, which would render '<b>' etc as markup.
+    Bubbles must render LLM/user content verbatim."""
+    card = ChatCard(recording_id=10, history=[])
+    raw = "<b>bold</b> & <tags>"
+    card.append_user_message(raw)
+    bubbles = [w for w in card._message_container.findChildren(QLabel)
+               if w.wordWrap()]
+    assert len(bubbles) == 1
+    assert bubbles[0].text() == raw
+    assert bubbles[0].textFormat() == Qt.TextFormat.PlainText

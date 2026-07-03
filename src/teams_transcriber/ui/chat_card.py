@@ -12,8 +12,16 @@ from collections.abc import Iterable
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QKeyEvent
 from PySide6.QtWidgets import (
-    QFrame, QGraphicsDropShadowEffect, QHBoxLayout, QLabel,
-    QPushButton, QScrollArea, QSizePolicy, QTextEdit, QVBoxLayout, QWidget,
+    QFrame,
+    QGraphicsDropShadowEffect,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
 )
 
 from teams_transcriber.storage.chat import ChatMessage
@@ -24,7 +32,7 @@ class _ChatInput(QTextEdit):
 
     submit_requested = Signal()
 
-    def keyPressEvent(self, e: QKeyEvent) -> None:  # noqa: N802
+    def keyPressEvent(self, e: QKeyEvent) -> None:
         if e.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not (
             e.modifiers() & Qt.KeyboardModifier.ShiftModifier
         ):
@@ -145,11 +153,13 @@ class ChatCard(QFrame):
 
     def _add_bubble(self, role: str, content: str) -> None:
         from PySide6.QtCore import QTimer
+
         from teams_transcriber.ui.labels import make_selectable, make_wrapping
 
         if self._placeholder is not None:
             self._placeholder.setVisible(False)
         bubble = QLabel(content)
+        bubble.setTextFormat(Qt.TextFormat.PlainText)
         make_wrapping(bubble)
         make_selectable(bubble)
         if role == "user":

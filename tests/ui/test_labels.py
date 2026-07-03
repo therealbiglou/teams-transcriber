@@ -46,3 +46,21 @@ def test_elided_label_elides_and_tooltips(qapp):
     assert lbl.toolTip() == long
     assert lbl.text() != long
     assert lbl.text().endswith("…")
+
+
+def test_todo_row_label_is_plain_text(qapp):
+    """LLM-generated task text must not be interpreted as HTML markup."""
+    raw = "<b>bold</b> & <tags>"
+    row = make_todo_row(raw, checked=False, on_toggle=lambda _c: None)
+    lbl = row.findChild(QLabel)
+    assert lbl.text() == raw
+    assert lbl.textFormat() == Qt.TextFormat.PlainText
+
+
+def test_elided_label_is_plain_text(qapp):
+    raw = "<b>bold</b> & <tags>"
+    lbl = ElidedLabel()
+    assert lbl.textFormat() == Qt.TextFormat.PlainText
+    lbl.setFixedWidth(400)
+    lbl.set_full_text(raw)
+    assert lbl.text() == raw

@@ -55,6 +55,7 @@ def make_todo_row(
     h.addWidget(cb, 0, Qt.AlignmentFlag.AlignTop)
 
     label = QLabel(text)
+    label.setTextFormat(Qt.TextFormat.PlainText)
     make_wrapping(label)
     make_selectable(label)
     h.addWidget(label, 1)
@@ -67,6 +68,7 @@ class ElidedLabel(QLabel):
     def __init__(self, text: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._full_text = ""
+        self.setTextFormat(Qt.TextFormat.PlainText)
         self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         if text:
             self.set_full_text(text)
@@ -79,7 +81,7 @@ class ElidedLabel(QLabel):
     def full_text(self) -> str:
         return self._full_text
 
-    def resizeEvent(self, e: QResizeEvent) -> None:  # noqa: N802
+    def resizeEvent(self, e: QResizeEvent) -> None:
         super().resizeEvent(e)
         self._update_elide()
 
