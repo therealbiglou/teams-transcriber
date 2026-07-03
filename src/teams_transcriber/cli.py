@@ -29,7 +29,7 @@ def _build_pipeline(paths: AppPaths, *, with_watcher: bool) -> Pipeline:
 
     def _audio_factory() -> Any:
         from teams_transcriber.audio.source import RealAudioSource
-        return RealAudioSource.from_default_devices()
+        return RealAudioSource.from_settings(settings)
 
     watcher = None
     if with_watcher:

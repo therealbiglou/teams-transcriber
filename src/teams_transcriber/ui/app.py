@@ -198,7 +198,9 @@ class App:
         self.tray.show()
 
         def audio_factory() -> Any:
-            return RealAudioSource.from_default_devices()
+            # from_settings resolves the saved mic/loopback (id → name →
+            # Windows default) and records fallbacks for the warning toast.
+            return RealAudioSource.from_settings(self.settings)
 
         watcher = MeetingWatcher(
             bus=self.bus,
