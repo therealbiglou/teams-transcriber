@@ -324,15 +324,16 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         self._wrike_test_btn.setEnabled(False)
 
         def _worker() -> None:
-            client = _wc.WrikeClient(token=token)
             try:
-                me = client.test_connection()
-                name = (me.get("firstName") or "user") + " " + (me.get("lastName") or "")
-                msg = f"<span style='color:#065F46;'>✓ Connected as {name.strip()}</span>"
+                client = _wc.WrikeClient(token=token)
+                try:
+                    me = client.test_connection()
+                    name = (me.get("firstName") or "user") + " " + (me.get("lastName") or "")
+                    msg = f"<span style='color:#065F46;'>✓ Connected as {name.strip()}</span>"
+                finally:
+                    client.close()
             except Exception as exc:
                 msg = f"<span style='color:#DC2626;'>✗ {exc}</span>"
-            finally:
-                client.close()
             QTimer.singleShot(0, self, lambda: self._on_wrike_test_done(msg))
 
         threading.Thread(target=_worker, daemon=True).start()
