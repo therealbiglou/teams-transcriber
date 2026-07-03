@@ -484,14 +484,25 @@ class App:
         else:
             self._start_manual()
 
+    def _marshal(self, fn):
+        """Wrap a callback so it executes on the Qt main thread.
+
+        Global hotkeys fire on the keyboard library's listener thread;
+        creating QWidgets there is undefined behavior. The 3-arg singleShot
+        binds the timer to self.window's (main) thread — same pattern as the
+        worker-thread hops elsewhere in this file.
+        """
+        from PySide6.QtCore import QTimer
+        return lambda: QTimer.singleShot(0, self.window, fn)
+
     def _apply_hotkeys(self, hotkey_map: dict[str, str]) -> None:
         self.hotkeys.reload([
             (hotkey_map.get("toggle_manual_recording", "ctrl+alt+r"),
-             self._toggle_manual),
+             self._marshal(self._toggle_manual)),
             (hotkey_map.get("open_workspace", "ctrl+alt+n"),
-             self._open_workspace_for_active),
+             self._marshal(self._open_workspace_for_active)),
             (hotkey_map.get("toggle_pause_detection", "ctrl+alt+p"),
-             self._toggle_pause_detection),
+             self._marshal(self._toggle_pause_detection)),
         ])
 
     def _toggle_pause_detection(self) -> None:
