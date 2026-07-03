@@ -19,5 +19,6 @@ def test_default_still_has_both_buttons(qapp):
 
 def test_settings_module_does_not_use_qmessagebox():
     import inspect
+
     import teams_transcriber.ui.settings_dialog as sd
     assert "QMessageBox" not in inspect.getsource(sd)

@@ -175,6 +175,7 @@ def test_wizard_kicks_off_gpu_runtime_download_when_not_installed(
 
 def test_nav_disabled_while_download_runs(qapp, qtbot, paths, monkeypatch) -> None:
     import threading
+
     from teams_transcriber.config import load_settings
     from teams_transcriber.ui.first_run_wizard import FirstRunWizard
 
@@ -194,7 +195,8 @@ def test_nav_disabled_while_download_runs(qapp, qtbot, paths, monkeypatch) -> No
         settings=load_settings(paths), paths=paths,
         model_downloader=lambda progress: progress(100),
     )
-    wiz._next(); wiz._next()   # land on GPU page → download starts
+    wiz._next()
+    wiz._next()   # land on GPU page → download starts
     assert not wiz._next_btn.isEnabled()
     gate.set()
     qtbot.waitUntil(lambda: wiz._next_btn.isEnabled(), timeout=3000)

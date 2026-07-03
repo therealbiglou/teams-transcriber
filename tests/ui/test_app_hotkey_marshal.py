@@ -25,6 +25,7 @@ def test_marshal_runs_callback_on_main_thread(qapp, qtbot):
 
 def test_apply_hotkeys_wraps_callbacks(qapp):
     import inspect
+
     from teams_transcriber.ui import app as app_mod
     src = inspect.getsource(app_mod.App._apply_hotkeys)
     assert "_marshal" in src

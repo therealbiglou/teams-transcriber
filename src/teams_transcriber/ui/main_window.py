@@ -43,8 +43,10 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         outer_layout.addWidget(self.title_bar)
 
         from PySide6.QtWidgets import QSplitter
+
         from teams_transcriber.ui.window_state import (
-            restore_splitter_state, save_splitter_state,
+            restore_splitter_state,
+            save_splitter_state,
         )
 
         self.body_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -83,7 +85,7 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
             lambda *_: save_splitter_state(self.body_splitter, "main_body")
         )
 
-    def closeEvent(self, ev) -> None:  # noqa: N802
+    def closeEvent(self, ev) -> None:
         from teams_transcriber.ui.window_state import save_window_geometry
         save_window_geometry(self, "main")
         super().closeEvent(ev)

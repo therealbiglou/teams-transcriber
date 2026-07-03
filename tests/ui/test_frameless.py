@@ -1,5 +1,6 @@
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtWidgets import QFrame, QWidget
+from PySide6.QtWidgets import QFrame, QVBoxLayout, QWidget
+
 from teams_transcriber.ui.frameless import FramelessWindowMixin
 
 
@@ -49,9 +50,6 @@ def test_titlebar_full_controls(qapp):
     assert tb.minimize_btn is not None
     assert tb.maximize_btn is not None
     assert tb.close_btn is not None
-
-
-from PySide6.QtWidgets import QVBoxLayout
 
 
 class _ChromeWin(FramelessWindowMixin, QWidget):
@@ -119,6 +117,7 @@ def test_titlebar_drag_moves_window_via_fallback(qapp):
     manual move() fallback must move the window."""
     from PySide6.QtCore import QPointF
     from PySide6.QtGui import QMouseEvent
+
     from teams_transcriber.ui.title_bar import TitleBar
 
     win = QWidget()
@@ -148,6 +147,7 @@ def test_titlebar_drag_restores_maximized_window(qapp):
     from PySide6.QtCore import QPointF
     from PySide6.QtGui import QMouseEvent
     from PySide6.QtWidgets import QVBoxLayout
+
     from teams_transcriber.ui.title_bar import TitleBar
 
     win = _Win()  # FramelessWindowMixin host with toggle_max

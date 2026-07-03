@@ -1,6 +1,6 @@
 def test_close_loop_only_returns_changed_rows():
-    from teams_transcriber.ui.app import _wrike_close_loop_changes
     from teams_transcriber.storage.wrike import WrikeTaskRow
+    from teams_transcriber.ui.app import _wrike_close_loop_changes
     rows = [
         WrikeTaskRow(id=1, recording_id=10, kind="my", todo_index=0,
                      wrike_task_id="T1", wrike_folder_id="F1",
@@ -17,8 +17,8 @@ def test_close_loop_only_returns_changed_rows():
 
 
 def test_close_loop_ignores_other_kind():
-    from teams_transcriber.ui.app import _wrike_close_loop_changes
     from teams_transcriber.storage.wrike import WrikeTaskRow
+    from teams_transcriber.ui.app import _wrike_close_loop_changes
     rows = [
         WrikeTaskRow(id=1, recording_id=10, kind="other", todo_index=0,
                      wrike_task_id="T1", wrike_folder_id="F1",
@@ -29,8 +29,8 @@ def test_close_loop_ignores_other_kind():
 
 
 def test_close_loop_returns_empty_when_no_changes():
-    from teams_transcriber.ui.app import _wrike_close_loop_changes
     from teams_transcriber.storage.wrike import WrikeTaskRow
+    from teams_transcriber.ui.app import _wrike_close_loop_changes
     rows = [
         WrikeTaskRow(id=1, recording_id=10, kind="my", todo_index=0,
                      wrike_task_id="T1", wrike_folder_id="F1",
@@ -43,6 +43,7 @@ def test_master_todo_toggle_triggers_close_loop(qapp, tmp_path):
     """Master to-do view toggles must run the same Wrike close-loop as the
     summary pane's checkbox (App._on_master_todo_toggled)."""
     from types import SimpleNamespace
+
     from teams_transcriber.paths import AppPaths
     from teams_transcriber.storage import build_database
     from teams_transcriber.ui.app import App
@@ -78,6 +79,7 @@ def test_build_main_content_wires_master_todo_toggle_to_close_loop():
     """Wiring regression guard: _build_main_content must connect
     todo_toggled to _on_master_todo_toggled, not a bare refresh lambda."""
     import inspect
+
     from teams_transcriber.ui.app import App
 
     source = inspect.getsource(App._build_main_content)

@@ -37,6 +37,7 @@ def test_update_dialog_has_shared_chrome(tmp_path, qapp) -> None:
 
 def test_restart_uses_quit_callback_not_sys_exit(qapp, tmp_path, monkeypatch):
     import subprocess
+
     from teams_transcriber.paths import AppPaths
     from teams_transcriber.ui.update_dialog import UpdateDialog
 

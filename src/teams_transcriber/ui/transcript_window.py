@@ -66,7 +66,7 @@ class TranscriptWindow(FramelessWindowMixin, QWidget):
         from teams_transcriber.ui.window_state import restore_window_geometry
         restore_window_geometry(self, "transcript", default_size=(720, 600))
 
-    def closeEvent(self, ev) -> None:  # noqa: N802
+    def closeEvent(self, ev) -> None:
         from teams_transcriber.ui.window_state import save_window_geometry
         save_window_geometry(self, "transcript")
         self.closed.emit(self._recording_id)

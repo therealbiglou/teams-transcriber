@@ -55,5 +55,6 @@ def test_audio_factory_uses_saved_devices(tmp_path, monkeypatch):
 
 def test_ui_app_factory_does_not_use_default_devices_shim():
     import inspect
+
     import teams_transcriber.ui.app as app_mod
     assert "from_default_devices" not in inspect.getsource(app_mod)

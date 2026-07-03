@@ -34,7 +34,7 @@ class HistoryList(QScrollArea):
         self._cards: dict[int, MeetingCard] = {}
         self._selected_id: int | None = None
 
-    def resizeEvent(self, e: QResizeEvent) -> None:  # noqa: N802
+    def resizeEvent(self, e: QResizeEvent) -> None:
         # Guard #2: pin the container to the viewport so cards must wrap
         # instead of overflowing past the (hidden) horizontal scrollbar.
         super().resizeEvent(e)

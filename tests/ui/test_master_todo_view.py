@@ -74,7 +74,7 @@ def test_empty_state(db):
 
 
 def test_master_todos_use_wrapping_rows(db):
-    from PySide6.QtWidgets import QCheckBox, QLabel
+    from PySide6.QtWidgets import QCheckBox
     _add(db, "Meeting", ["one", "two"])
     view = MasterTodoView(db)
     view.reload()

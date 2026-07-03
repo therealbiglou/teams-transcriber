@@ -45,7 +45,7 @@ def _make_recording(db, *, status: RecordingStatus) -> int:
 
 
 def test_workspace_opens_in_live_mode_and_appends_segments(env, qapp) -> None:
-    paths, db, settings = env
+    _paths, db, _settings = env
     bus = EventBus()
     bridge = QtEventBridge(bus)
     rid = _make_recording(db, status=RecordingStatus.RECORDING)
@@ -63,7 +63,7 @@ def test_workspace_opens_in_live_mode_and_appends_segments(env, qapp) -> None:
 
 
 def test_workspace_ignores_segments_for_other_recordings(env, qapp) -> None:
-    paths, db, settings = env
+    _paths, db, _settings = env
     bus = EventBus()
     bridge = QtEventBridge(bus)
     rid = _make_recording(db, status=RecordingStatus.RECORDING)
@@ -81,7 +81,7 @@ def test_workspace_ignores_segments_for_other_recordings(env, qapp) -> None:
 
 
 def test_workspace_past_mode_loads_existing_segments_no_subscription(env, qapp) -> None:
-    paths, db, settings = env
+    _paths, db, _settings = env
     bus = EventBus()
     bridge = QtEventBridge(bus)
     rid = _make_recording(db, status=RecordingStatus.DONE)
@@ -105,7 +105,7 @@ def test_workspace_past_mode_loads_existing_segments_no_subscription(env, qapp) 
 
 
 def test_workspace_stop_button_emits_signal(env, qapp) -> None:
-    paths, db, settings = env
+    _paths, db, _settings = env
     bus = EventBus()
     bridge = QtEventBridge(bus)
     rid = _make_recording(db, status=RecordingStatus.RECORDING)
@@ -117,7 +117,7 @@ def test_workspace_stop_button_emits_signal(env, qapp) -> None:
 
 
 def test_workspace_set_recording_finished_hides_stop_button(env, qapp) -> None:
-    paths, db, settings = env
+    _paths, db, _settings = env
     bus = EventBus()
     bridge = QtEventBridge(bus)
     rid = _make_recording(db, status=RecordingStatus.RECORDING)
@@ -139,7 +139,7 @@ def test_workspace_shows_placeholder_when_live_disabled(env, qapp) -> None:
     from teams_transcriber.ui.qt_bridge import QtEventBridge
     from teams_transcriber.ui.workspace_window import WorkspaceWindow
 
-    paths, db, settings = env
+    _paths, db, settings = env
     settings._raw["transcription"]["live_enabled"] = False
     bus = EventBus()
     bridge = QtEventBridge(bus)
@@ -159,7 +159,7 @@ def test_workspace_shows_placeholder_when_live_disabled(env, qapp) -> None:
 
 
 def test_show_waiting_for_processing_reveals_footer_note(env, qapp):
-    paths, db, settings = env
+    _paths, db, _settings = env
     rid = _make_recording(db, status=RecordingStatus.DONE)
     win = WorkspaceWindow(db=db, recording_id=rid, bridge=QtEventBridge(EventBus()), live=False)
     assert win._waiting_label.text() == ""
@@ -172,7 +172,7 @@ def test_workspace_is_resizable_with_shared_chrome(env, qapp):
 
     from teams_transcriber.ui.frameless import FramelessWindowMixin
 
-    paths, db, settings = env
+    _paths, db, _settings = env
     rid = _make_recording(db, status=RecordingStatus.DONE)
     win = WorkspaceWindow(
         db=db, recording_id=rid, bridge=QtEventBridge(EventBus()), live=False,
@@ -186,7 +186,7 @@ def test_workspace_is_resizable_with_shared_chrome(env, qapp):
 def test_workspace_always_on_top_toggle_does_not_crash_offscreen(env, qapp):
     """SetWindowPos may fail under the offscreen platform plugin; the flag-dance
     fallback must still run without raising."""
-    paths, db, settings = env
+    _paths, db, _settings = env
     rid = _make_recording(db, status=RecordingStatus.DONE)
     win = WorkspaceWindow(
         db=db, recording_id=rid, bridge=QtEventBridge(EventBus()), live=False,
@@ -198,7 +198,7 @@ def test_workspace_always_on_top_toggle_does_not_crash_offscreen(env, qapp):
 def test_placeholder_visible_when_live_streaming_disabled(env, qapp) -> None:
     """When live=True but transcription_live_enabled=False, the placeholder
     should be visible in the splitter and the transcript view should be hidden."""
-    paths, db, settings = env
+    _paths, db, settings = env
     settings._raw["transcription"]["live_enabled"] = False
     bus = EventBus()
     bridge = QtEventBridge(bus)

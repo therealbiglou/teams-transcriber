@@ -32,7 +32,14 @@ from teams_transcriber.events import (
 from teams_transcriber.meeting_watcher import MeetingWatcher, enumerate_windows
 from teams_transcriber.paths import AppPaths
 from teams_transcriber.pipeline import Pipeline
-from teams_transcriber.storage import RecordingRepo, RecordingSource, RecordingStatus, SummaryRepo, TodoStateRepo, build_database
+from teams_transcriber.storage import (
+    RecordingRepo,
+    RecordingSource,
+    RecordingStatus,
+    SummaryRepo,
+    TodoStateRepo,
+    build_database,
+)
 from teams_transcriber.storage.models import Recording
 from teams_transcriber.summarizer import Summarizer
 from teams_transcriber.transcriber import Transcriber
@@ -44,7 +51,6 @@ from teams_transcriber.ui.icons import TrayState
 from teams_transcriber.ui.main_window import MainWindow
 from teams_transcriber.ui.qt_bridge import QtEventBridge
 from teams_transcriber.ui.scrim import exec_modal
-from teams_transcriber.ui.workspace_window import WorkspaceWindow
 from teams_transcriber.ui.search_bar import SearchBar
 from teams_transcriber.ui.settings_dialog import SettingsDialog
 from teams_transcriber.ui.sidebar import SidebarBucket
@@ -52,6 +58,7 @@ from teams_transcriber.ui.summary_pane import SummaryPane
 from teams_transcriber.ui.theme import app_stylesheet
 from teams_transcriber.ui.toast_banner import show_in_app_toast
 from teams_transcriber.ui.tray import AppTray
+from teams_transcriber.ui.workspace_window import WorkspaceWindow
 
 logger = logging.getLogger(__name__)
 
@@ -340,7 +347,8 @@ class App:
         self.summary.wrike_sync_requested.connect(self._wrike_open_picker)
         self.summary.chat_send_requested.connect(self._on_chat_send)
         from teams_transcriber.ui.window_state import (
-            restore_splitter_state, save_splitter_state,
+            restore_splitter_state,
+            save_splitter_state,
         )
         body = _build_columns_splitter(self.history, self.summary)
         restore_splitter_state(body, "main_columns")
@@ -349,6 +357,7 @@ class App:
         )
 
         from PySide6.QtWidgets import QStackedWidget
+
         from teams_transcriber.ui.master_todo_view import MasterTodoView
 
         self._content_stack = QStackedWidget()
@@ -409,6 +418,7 @@ class App:
     def _wrike_close_loop_sync(self, recording_id: int) -> None:
         """Compute which my-todos changed and dispatch a worker to push them."""
         import keyring
+
         from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_WRIKE
         from teams_transcriber.storage import TodoStateRepo
         from teams_transcriber.storage.wrike import WrikeTaskRepo
@@ -440,7 +450,8 @@ class App:
     ) -> None:
         """Background-thread worker: call Wrike API per changed todo."""
         from teams_transcriber.integrations.wrike_client import (
-            WrikeClient, WrikeApiError,
+            WrikeApiError,
+            WrikeClient,
         )
         from teams_transcriber.storage.wrike import WrikeTaskRepo
 
@@ -511,7 +522,7 @@ class App:
         ])
 
     def _toggle_pause_detection(self) -> None:
-        watcher = self.pipeline._meeting_watcher  # noqa: SLF001
+        watcher = self.pipeline._meeting_watcher
         if watcher is None:
             return
         new_paused = not getattr(watcher, "_paused", False)
@@ -533,7 +544,6 @@ class App:
     def _open_settings_tab(self, tab: str | None) -> None:
         """Open Settings, optionally jumping to a named tab."""
         from PySide6.QtWidgets import QTabWidget
-        from teams_transcriber.ui.scrim import exec_modal
         dlg = SettingsDialog(
             self.settings, self.paths,
             hotkey_reload_callback=self._on_hotkey_reload,
@@ -568,6 +578,7 @@ class App:
         the summarizer — useful for transcripts exported from another tool.
         """
         from pathlib import Path
+
         from teams_transcriber.transcript_importer import is_transcript_file
         path, _ = QFileDialog.getOpenFileName(
             self.window, "Import",
@@ -848,6 +859,7 @@ class App:
     def _anthropic_key(self) -> str:
         """Read the user's Anthropic key from keyring; '' if unset."""
         import keyring
+
         from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_ANTHROPIC
         try:
             return keyring.get_password(KEYRING_SERVICE, KEYRING_USER_ANTHROPIC) or ""
@@ -874,8 +886,12 @@ class App:
     def _chat_worker(self, recording_id: int, text: str, api_key: str) -> None:
         """Worker thread: call chat.ask; hop result back via QTimer with self.window context."""
         from PySide6.QtCore import QTimer
+
         from teams_transcriber.chat import (
-            ChatApiError, ChatAuthError, ChatTokenLimitError, ask,
+            ChatApiError,
+            ChatAuthError,
+            ChatTokenLimitError,
+            ask,
         )
         try:
             reply = ask(
@@ -935,6 +951,7 @@ class App:
         button, and as a guard before opening the picker.
         """
         import keyring
+
         from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_WRIKE
         enabled = bool(
             self.settings._raw.get("integrations", {}).get("wrike_enabled", False)
@@ -950,6 +967,7 @@ class App:
     def _on_summary_ready_wrike(self, evt) -> None:
         """Offer to sync this summary's items to Wrike via a toast + planner."""
         import keyring
+
         from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_WRIKE
         from teams_transcriber.storage.wrike import WrikeSyncRepo
 
@@ -983,9 +1001,11 @@ class App:
 
     def _wrike_open_planner(self, recording_id: int) -> None:
         """Fetch folders + contacts in a worker, resolve assignees, show planner."""
-        import keyring
         import threading
+
+        import keyring
         from PySide6.QtCore import QTimer
+
         from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_WRIKE
         from teams_transcriber.integrations.wrike_assignees import Contact, suggest_assignees
         from teams_transcriber.integrations.wrike_client import WrikeApiError, WrikeClient
@@ -1107,6 +1127,7 @@ class App:
         must not run on a worker thread.
         """
         from PySide6.QtCore import QTimer
+
         from teams_transcriber.integrations.wrike_client import WrikeApiError, WrikeClient
         from teams_transcriber.integrations.wrike_sync import sync_items
         from teams_transcriber.storage.wrike import WrikeSyncRepo
