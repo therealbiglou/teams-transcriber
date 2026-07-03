@@ -66,10 +66,26 @@ The packaged installer lands at `dist/TeamsTranscriberSetup-<version>.exe`
 - **Never use OS toasts (`winsdk`)** — use `ui/toast_banner.py::show_in_app_toast(...)`.
   OS toasts require an AppUserModelID we don't have and get buried in
   Action Center.
-- **Main window is frameless** (`FramelessWindowHint` + custom
-  `TitleBar` + drop shadow). Border radius is 16 px windowed, 0 px
-  maximized. Edge drag-resize via `startSystemResize`. Don't introduce
-  a new top-level window with native Windows chrome.
+- **All windows are frameless via `ui/frameless.py::FramelessWindowMixin`** —
+  pass the layout holding the OuterFrame as `shell_layout=` to
+  `_init_frameless(...)`. The mixin owns the 18 px transparent chrome margin
+  (window drop shadow + edge-resize band), active/inactive depth styling,
+  and maximize handling (radius 16 px windowed, 0 px maximized). Title-bar
+  drag uses `startSystemMove` (Aero Snap works); edges use
+  `startSystemResize`. Don't introduce a top-level window with native
+  chrome, and don't manage the shell layout's margins yourself.
+- **Modal dialogs go through `ui/scrim.py::exec_modal(dlg)`** (never bare
+  `dlg.exec()`) so the parent window dims while the modal is open.
+- **Window geometry/splitters persist** via `ui/window_state.py`
+  (`restore_/save_window_geometry`, `restore_/save_splitter_state`,
+  QSettings-backed). New top-level windows should get a key and wire
+  restore-in-`__init__` + save-in-`closeEvent` (QDialogs: override `done()`).
+- **User-visible text goes through `ui/labels.py` helpers**:
+  `make_wrapping` (the three-guard wrap pattern), `make_selectable`,
+  `make_todo_row` (checkbox + wrapping selectable label — QCheckBox labels
+  don't wrap), `ElidedLabel` (single-line elide + full-text tooltip).
+  Set `Qt.TextFormat.PlainText` on labels showing LLM/user content —
+  QLabel's AutoText renders `<tags>` as HTML.
 - **Chip rows use `ui/flow_layout.py::FlowLayout`** so chips wrap.
   Also set `setMaximumWidth(280)` + `setWordWrap(True)` per chip so a
   long single chip can't push the column wide.
@@ -77,12 +93,19 @@ The packaged installer lands at `dist/TeamsTranscriberSetup-<version>.exe`
   (1) `setHorizontalScrollBarPolicy(ScrollBarAsNeeded)`,
   (2) `resizeEvent` on the QScrollArea that pins inner-container
   `setMaximumWidth(viewport.width())`,
-  (3) for wrap-enabled QLabels in constrained columns,
-  `setSizePolicy(Ignored, Preferred)` — the default
-  `minSizeHint = longest-word-width` will otherwise push the column wide.
+  (3) wrap-enabled QLabels use `labels.make_wrapping` (Ignored/Preferred
+  size policy) — the default `minSizeHint = longest-word-width` will
+  otherwise push the column wide.
 - **Theme tokens** live in `ui/theme.py`. Reuse `role` properties
   (`primary`, `secondary`, `ghost`, `danger`) and `chip` style — don't
-  inline-stylesheet new widgets.
+  inline-stylesheet new widgets. Role-less QPushButtons get a themed base
+  style automatically.
+- **Never block the GUI thread** on network or disk-heavy work: run it on
+  a worker thread and hop back with the 3-arg
+  `QTimer.singleShot(0, <qobject>, callable)` (see `app.py` workers), or a
+  QObject + signals runner (see `first_run_wizard._DownloadRunner`).
+  Hotkey callbacks must be wrapped with `App._marshal` — the keyboard
+  library fires them off the Qt main thread.
 
 ## API key handling
 
