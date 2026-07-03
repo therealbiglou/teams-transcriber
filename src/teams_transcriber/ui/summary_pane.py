@@ -5,11 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from PySide6.QtCore import Qt as _Qt
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QResizeEvent
 from PySide6.QtWidgets import (
-    QCheckBox,
     QFrame,
     QGraphicsDropShadowEffect,
     QHBoxLayout,
@@ -330,7 +328,7 @@ def _fmt_meta_time(iso: str) -> str:
         return iso
 
 
-def _failure_status_label(status) -> "QLabel":
+def _failure_status_label(status) -> QLabel:
     from teams_transcriber.storage import RecordingStatus
     label_map = {
         RecordingStatus.RECORDING_FAILED:    "Recording failed",
@@ -343,7 +341,7 @@ def _failure_status_label(status) -> "QLabel":
     return label
 
 
-def _failure_message_label(msg: str) -> "QLabel":
+def _failure_message_label(msg: str) -> QLabel:
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QSizePolicy
     label = QLabel(msg)
