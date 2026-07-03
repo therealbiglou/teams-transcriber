@@ -37,3 +37,36 @@ def test_stop_removes_hotkeys(monkeypatch: pytest.MonkeyPatch) -> None:
     mgr.register("ctrl+alt+r", lambda: None)
     mgr.stop()
     assert removed == [99]
+
+
+def test_hotkey_manager_reload_replaces_bindings(monkeypatch) -> None:
+    """After reload(), only the new bindings should fire."""
+    from teams_transcriber.ui.hotkeys import HotkeyManager
+
+    calls: list[str] = []
+    fake_module_state: dict = {"hotkeys": {}}
+
+    class _FakeKeyboard:
+        def add_hotkey(self, hotkey, callback):
+            fake_module_state["hotkeys"][hotkey] = callback
+            calls.append(f"add:{hotkey}")
+            return hotkey
+
+        def remove_hotkey(self, handle):
+            fake_module_state["hotkeys"].pop(handle, None)
+            calls.append(f"remove:{handle}")
+
+    fake = _FakeKeyboard()
+    mgr = HotkeyManager()
+    monkeypatch.setattr(mgr, "_keyboard", fake)
+
+    mgr.register("ctrl+alt+r", lambda: None)
+    assert "add:ctrl+alt+r" in calls
+
+    mgr.reload([
+        ("ctrl+alt+n", lambda: None),
+        ("ctrl+alt+p", lambda: None),
+    ])
+    assert "remove:ctrl+alt+r" in calls
+    assert "add:ctrl+alt+n" in calls
+    assert "add:ctrl+alt+p" in calls

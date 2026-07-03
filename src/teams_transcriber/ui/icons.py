@@ -85,10 +85,10 @@ def get_icon(name: IconName, *, color: str | None = None) -> QIcon:
 def render_state_icon(state: TrayState, size: int = 32) -> QIcon:
     """Render a tray-icon variant: a solid filled circle in the state's color."""
     color = {
-        TrayState.IDLE:       COLORS["text_tertiary"],
-        TrayState.RECORDING:  COLORS["red"],
-        TrayState.PROCESSING: COLORS["amber"],
-        TrayState.ERROR:      COLORS["red"],
+        TrayState.IDLE:       COLORS["accent"],       # emerald #10B981
+        TrayState.RECORDING:  COLORS["red"],           # red #EF4444
+        TrayState.PROCESSING: COLORS["amber"],         # amber #F59E0B
+        TrayState.ERROR:      COLORS["text_tertiary"], # gray #9CA3AF
     }[state]
     svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">' \
           f'<circle cx="12" cy="12" r="8" fill="{color}"/></svg>'

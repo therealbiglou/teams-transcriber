@@ -29,7 +29,7 @@ def _build_pipeline(paths: AppPaths, *, with_watcher: bool) -> Pipeline:
 
     def _audio_factory() -> Any:
         from teams_transcriber.audio.source import RealAudioSource
-        return RealAudioSource.from_default_devices()
+        return RealAudioSource.from_settings(settings)
 
     watcher = None
     if with_watcher:
@@ -73,6 +73,9 @@ def _cmd_retry_summary(args: argparse.Namespace) -> int:
     pipeline = _build_pipeline(paths, with_watcher=False)
     api_key = load_settings(paths).anthropic_api_key()
     pipeline.retry_summary(args.recording_id, api_key=api_key)
+    # retry_summary is async on the executor now; shutdown() joins it so the
+    # CLI blocks until the summarize call actually finishes.
+    pipeline.shutdown()
     return 0
 
 

@@ -14,14 +14,18 @@ import logging
 import re
 import threading
 import warnings
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+
+import numpy as np
 
 from teams_transcriber.audio.opus_writer import SAMPLE_RATE, OpusWriter
 from teams_transcriber.audio.source import AudioSource
 from teams_transcriber.config import Settings
 from teams_transcriber.events import (
     EventBus,
+    LiveTranscriptionDegraded,
     RecordingFailed,
     RecordingFinalized,
     RecordingStarted,
@@ -56,12 +60,15 @@ class Recorder:
         paths: AppPaths,
         settings: Settings,
         audio_source: AudioSource,
+        audio_chunk_callback: Callable[[np.ndarray], None] | None = None,
     ) -> None:
         self._bus = bus
         self._db = db
         self._paths = paths
         self._settings = settings
         self._source = audio_source
+        self._audio_chunk_callback = audio_chunk_callback
+        self._callback_failures: int = 0
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._recording_id: int | None = None
@@ -143,6 +150,23 @@ class Recorder:
                         break
                     self._writer.write_chunk(chunk)
                     self._frames_written += chunk.shape[0]
+                    cb = self._audio_chunk_callback
+                    if cb is not None:
+                        try:
+                            cb(chunk)
+                        except Exception:
+                            logger.exception("audio_chunk_callback raised")
+                            self._callback_failures += 1
+                            if self._callback_failures >= 3:
+                                logger.warning(
+                                    "disabling audio_chunk_callback after 3 failures",
+                                )
+                                self._audio_chunk_callback = None
+                                if self._recording_id is not None:
+                                    self._bus.publish(LiveTranscriptionDegraded(
+                                        recording_id=self._recording_id,
+                                        reason="audio_chunk_callback failed repeatedly",
+                                    ))
         except Exception as exc:
             logger.exception("recorder loop failed")
             repo = RecordingRepo(self._db)

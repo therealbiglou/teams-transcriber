@@ -9,6 +9,7 @@ from teams_transcriber.audio.source import FakeAudioSource
 from teams_transcriber.config import Settings
 from teams_transcriber.events import (
     EventBus,
+    LiveTranscriptionDegraded,
     RecordingFinalized,
     RecordingStarted,
 )
@@ -156,3 +157,59 @@ def test_recorder_publishes_failure_event_on_run_exception(paths, db_and_repo) -
     row = repo.get(rec_id)
     assert row is not None
     assert row.status == RecordingStatus.RECORDING_FAILED
+
+
+def test_recorder_invokes_audio_chunk_callback(paths, db_and_repo) -> None:
+    """Each captured PCM chunk is forwarded to the callback after OpusWriter.write_chunk."""
+    db, _repo = db_and_repo
+    bus = EventBus()
+    settings = Settings()
+    source = _make_source(seconds=1.5)
+    received: list[np.ndarray] = []
+
+    rec = Recorder(
+        bus=bus, db=db, paths=paths,
+        settings=settings, audio_source=source,
+        audio_chunk_callback=lambda chunk: received.append(chunk.copy()),
+    )
+    rec.start(source_type="manual", detected_title="test")
+    source.run_until_exhausted()
+    rec.stop()
+
+    assert len(received) > 0
+    # Each chunk is (frames, 2) float32 — mic + loopback stacked.
+    assert received[0].ndim == 2
+    assert received[0].shape[1] == 2
+
+
+def test_recorder_swallows_callback_exceptions(paths, db_and_repo) -> None:
+    """A raising callback must not crash the recorder; after 3 consecutive
+    failures the recorder auto-disables the callback and publishes
+    LiveTranscriptionDegraded."""
+    db, _repo = db_and_repo
+    bus = EventBus()
+    settings = Settings()
+    mic = np.zeros(48_000, dtype=np.float32)
+    loop = np.zeros(48_000, dtype=np.float32)
+    source = FakeAudioSource(mic, loop)
+    finalized: list[RecordingFinalized] = []
+    degraded: list[LiveTranscriptionDegraded] = []
+    bus.subscribe(RecordingFinalized, finalized.append)
+    bus.subscribe(LiveTranscriptionDegraded, degraded.append)
+
+    def bomb(_chunk: np.ndarray) -> None:
+        raise RuntimeError("boom")
+
+    rec = Recorder(
+        bus=bus, db=db, paths=paths,
+        settings=settings, audio_source=source,
+        audio_chunk_callback=bomb,
+    )
+    rid = rec.start(source_type="manual", detected_title="test")
+    source.run_until_exhausted()
+    rec.stop()
+
+    assert len(finalized) == 1
+    assert len(degraded) == 1
+    assert degraded[0].recording_id == rid
+    assert degraded[0].reason == "audio_chunk_callback failed repeatedly"

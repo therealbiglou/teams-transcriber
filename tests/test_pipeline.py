@@ -233,6 +233,51 @@ def test_pipeline_recovers_stuck_recordings_on_init(tmp_path: Path) -> None:
     db.close()
 
 
+def test_recover_transcribing_with_segments_resumes_summarization(tmp_path: Path) -> None:
+    """A TRANSCRIBING recording with segments must not just be marked SUMMARIZING —
+    recovery must actually resume summarization on the executor."""
+    from teams_transcriber.storage import Channel, Recording, RecordingSource, TranscriptSegment
+
+    paths = AppPaths(root=tmp_path / "TT")
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    repo = RecordingRepo(db)
+
+    rec = repo.create(Recording(
+        id=None, started_at="2026-05-15T10:00:00+00:00",
+        ended_at="2026-05-15T10:05:00+00:00",
+        source=RecordingSource.TEAMS,
+        detected_title="stuck-with-segments", display_title=None,
+        audio_path=None, audio_deleted_at=None,
+        duration_ms=300_000, status=RecordingStatus.TRANSCRIBING,
+        error_message=None,
+    ))
+    TranscriptRepo(db).append(TranscriptSegment(
+        id=None, recording_id=rec.id, start_ms=0, end_ms=1_000,
+        channel=Channel.ME, text="hello",
+    ))
+
+    class _FakeSummarizer:
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+
+        def summarize(self, recording_id: int, *, api_key: str | None) -> None:
+            self.calls.append(recording_id)
+
+    fake_summarizer = _FakeSummarizer()
+    pipeline = Pipeline(
+        bus=EventBus(), db=db, paths=paths, settings=Settings(),
+        audio_source_factory=lambda: _make_source(0.1),
+        summarizer=fake_summarizer,  # type: ignore[arg-type]
+    )
+    pipeline._executor.shutdown(wait=True)  # drain the submitted work
+
+    assert repo.get(rec.id).status == RecordingStatus.SUMMARIZING
+    assert fake_summarizer.calls == [rec.id]
+    db.close()
+
+
 def test_pipeline_retry_summary_dispatches_to_summarizer(tmp_path: Path) -> None:
     paths = AppPaths(root=tmp_path / "TT")
     paths.ensure_dirs()
@@ -251,7 +296,64 @@ def test_pipeline_retry_summary_dispatches_to_summarizer(tmp_path: Path) -> None
         summarizer=_SummSpy(),  # type: ignore[arg-type]
     )
     pipeline.retry_summary(42, api_key="sk-test")
+    pipeline._executor.shutdown(wait=True)  # drain the submitted work
     assert calls == [(42, "sk-test")]
+    db.close()
+
+
+def test_retry_summary_runs_on_executor_not_caller(tmp_path: Path) -> None:
+    """retry_summary must never run the Anthropic call on the caller (UI) thread."""
+    import threading
+
+    paths = AppPaths(root=tmp_path / "TT")
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+
+    seen_threads: list[int] = []
+
+    class _SummSpy:
+        def summarize(self, recording_id: int, *, api_key: str | None) -> None:
+            seen_threads.append(threading.get_ident())
+
+    pipeline = Pipeline(
+        bus=EventBus(), db=db, paths=paths, settings=Settings(),
+        audio_source_factory=lambda: _make_source(0.1),
+        summarizer=_SummSpy(),  # type: ignore[arg-type]
+    )
+    pipeline.retry_summary(42, api_key="k")
+    pipeline._executor.shutdown(wait=True)  # drain the submitted work
+
+    assert seen_threads and seen_threads[0] != threading.get_ident()
+    db.close()
+
+
+def test_retry_summary_logs_crash_instead_of_swallowing_it(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unexpected raise inside summarize() must not die silently in the
+    Future — it should be logged so it's not invisible in production."""
+    paths = AppPaths(root=tmp_path / "TT")
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+
+    class _BoomSumm:
+        def summarize(self, recording_id: int, *, api_key: str | None) -> None:
+            raise RuntimeError("boom")
+
+    pipeline = Pipeline(
+        bus=EventBus(), db=db, paths=paths, settings=Settings(),
+        audio_source_factory=lambda: _make_source(0.1),
+        summarizer=_BoomSumm(),  # type: ignore[arg-type]
+    )
+    with caplog.at_level("ERROR"):
+        pipeline.retry_summary(42, api_key="sk-test")
+        pipeline._executor.shutdown(wait=True)  # drain the submitted work; raises nothing
+
+    assert any(
+        "42" in r.message and r.exc_info is not None for r in caplog.records
+    )
     db.close()
 
 
@@ -295,4 +397,240 @@ def test_pipeline_runs_post_processing_on_executor(tmp_path: Path, monkeypatch: 
     assert len(transcribe_thread_ids) == 1
     assert transcribe_thread_ids[0] != publisher_thread_id
 
+    db.close()
+
+
+def test_pipeline_starts_and_stops_live_transcriber(tmp_path, monkeypatch) -> None:
+    """When a recording starts, the pipeline starts the LiveTranscriber and
+    forwards captured chunks to its feed(). When the recording ends, it
+    flushes + stops it."""
+    import numpy as np
+    from teams_transcriber.audio.source import FakeAudioSource
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.events import EventBus
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.pipeline import Pipeline
+    from teams_transcriber.storage import build_database
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    settings = load_settings(paths)
+    settings._raw["transcription"]["live_enabled"] = True
+    bus = EventBus()
+
+    mic = np.zeros(48_000, dtype=np.float32)
+    loop = np.zeros(48_000, dtype=np.float32)
+    source = FakeAudioSource(mic, loop)
+
+    feed_calls: list[tuple[str, int]] = []
+
+    class _SpyLive:
+        def __init__(self, *_a, **_kw): pass
+        def start(self, recording_id: int) -> None:
+            feed_calls.append(("start", recording_id))
+        def feed(self, channel, pcm) -> None:
+            feed_calls.append(("feed", pcm.shape[0]))
+        def flush_and_stop(self) -> None:
+            feed_calls.append(("stop", -1))
+
+    monkeypatch.setattr(
+        "teams_transcriber.pipeline.LiveTranscriber", _SpyLive,
+    )
+
+    class _NoopTranscriber:
+        def transcribe(self, rid: int) -> None: pass
+
+    class _NoopSummarizer:
+        def summarize(self, rid: int, *, api_key) -> None: pass
+
+    p = Pipeline(
+        bus=bus, db=db, paths=paths, settings=settings,
+        audio_source_factory=lambda: source,
+        meeting_watcher=None,
+        transcriber=_NoopTranscriber(),
+        summarizer=_NoopSummarizer(),
+    )
+    rid = p.start_manual(detected_title="t")
+    source.run_until_exhausted()
+    p.stop_manual()
+    p.shutdown()
+    db.close()
+
+    starts = [c for c in feed_calls if c[0] == "start"]
+    feeds = [c for c in feed_calls if c[0] == "feed"]
+    stops = [c for c in feed_calls if c[0] == "stop"]
+    assert len(starts) == 1 and starts[0][1] == rid
+    assert len(feeds) > 0
+    assert len(stops) == 1
+
+
+def test_pipeline_stops_live_transcriber_on_recording_failure(tmp_path, monkeypatch) -> None:
+    """When the recorder publishes RecordingFailed, the pipeline must
+    flush + stop the live transcriber to avoid a leaked worker thread."""
+    import numpy as np
+    from teams_transcriber.audio.source import FakeAudioSource
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.events import EventBus, RecordingFailed
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.pipeline import Pipeline
+    from teams_transcriber.storage import build_database
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    settings = load_settings(paths)
+    settings._raw["transcription"]["live_enabled"] = True
+    bus = EventBus()
+
+    mic = np.zeros(48_000, dtype=np.float32)
+    loop = np.zeros(48_000, dtype=np.float32)
+    source = FakeAudioSource(mic, loop)
+
+    stop_calls: list[str] = []
+
+    class _SpyLive:
+        def __init__(self, *_a, **_kw): pass
+        def start(self, recording_id: int) -> None: pass
+        def feed(self, channel, pcm) -> None: pass
+        def flush_and_stop(self) -> None:
+            stop_calls.append("stop")
+
+    monkeypatch.setattr("teams_transcriber.pipeline.LiveTranscriber", _SpyLive)
+
+    class _NoopTranscriber:
+        def transcribe(self, rid: int) -> None: pass
+
+    class _NoopSummarizer:
+        def summarize(self, rid: int, *, api_key) -> None: pass
+
+    p = Pipeline(
+        bus=bus, db=db, paths=paths, settings=settings,
+        audio_source_factory=lambda: source,
+        meeting_watcher=None,
+        transcriber=_NoopTranscriber(),
+        summarizer=_NoopSummarizer(),
+    )
+    rid = p.start_manual(detected_title="t")
+    # Simulate the recorder publishing RecordingFailed.
+    bus.publish(RecordingFailed(recording_id=rid, error_message="simulated"))
+    p.shutdown()
+    db.close()
+
+    # The live transcriber should have been stopped via the failure path,
+    # not via shutdown. Exactly one stop call.
+    assert stop_calls == ["stop"]
+
+
+def test_pipeline_retry_transcription_resets_status_and_enqueues(tmp_path, monkeypatch) -> None:
+    """retry_transcription resets the recording to TRANSCRIBING and re-runs the pipeline post-processing."""
+    import numpy as np
+    from teams_transcriber.audio.source import FakeAudioSource
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.events import EventBus
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.pipeline import Pipeline
+    from teams_transcriber.storage import (
+        Recording,
+        RecordingRepo,
+        RecordingSource,
+        RecordingStatus,
+        build_database,
+    )
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    settings = load_settings(paths)
+    bus = EventBus()
+
+    class _NoopTranscriber:
+        def __init__(self): self.calls = []
+        def transcribe(self, rid): self.calls.append(rid)
+    class _NoopSummarizer:
+        def summarize(self, rid, *, api_key): pass
+
+    transcriber = _NoopTranscriber()
+
+    mic = np.zeros(48_000, dtype=np.float32)
+    loop = np.zeros(48_000, dtype=np.float32)
+
+    p = Pipeline(
+        bus=bus, db=db, paths=paths, settings=settings,
+        audio_source_factory=lambda: FakeAudioSource(mic, loop),
+        meeting_watcher=None,
+        transcriber=transcriber,
+        summarizer=_NoopSummarizer(),
+    )
+
+    # Create a failed recording.
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-05-21T10:00:00+00:00",
+        ended_at=None, source=RecordingSource.MANUAL,
+        detected_title="t", display_title="t",
+        audio_path=None, audio_deleted_at=None, duration_ms=10_000,
+        status=RecordingStatus.TRANSCRIPTION_FAILED,
+        error_message="model.bin missing",
+    ))
+
+    p.retry_transcription(rec.id)
+    p._executor.shutdown(wait=True)
+    db.close()
+
+    # Transcriber was called with our recording id.
+    assert transcriber.calls == [rec.id]
+
+
+def test_recover_stuck_summarizing_with_summary_marks_done(tmp_path) -> None:
+    """If SUMMARIZING row has a Summary, recovery should mark it DONE."""
+    from teams_transcriber.audio.source import FakeAudioSource
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.events import EventBus
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.pipeline import Pipeline
+    from teams_transcriber.storage import (
+        Recording,
+        RecordingRepo,
+        RecordingSource,
+        RecordingStatus,
+        Summary,
+        SummaryRepo,
+        build_database,
+    )
+    import numpy as np
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+
+    # Pre-seed a SUMMARIZING recording WITH a summary row.
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-05-21T10:00:00+00:00",
+        ended_at=None, source=RecordingSource.MANUAL,
+        detected_title="t", display_title="t",
+        audio_path=None, audio_deleted_at=None, duration_ms=60_000,
+        status=RecordingStatus.SUMMARIZING, error_message=None,
+    ))
+    SummaryRepo(db).upsert(Summary(
+        recording_id=rec.id, title="t", one_line="x", summary="y",
+        my_todos=[], action_items_others=[], key_decisions=[],
+        follow_ups=[], topics=[], model_used="m",
+        generated_at="2026-05-21T10:00:00+00:00",
+    ))
+
+    settings = load_settings(paths)
+    Pipeline(
+        bus=EventBus(), db=db, paths=paths, settings=settings,
+        audio_source_factory=lambda: FakeAudioSource(
+            np.zeros(1, dtype=np.float32), np.zeros(1, dtype=np.float32),
+        ),
+        meeting_watcher=None,
+    )  # constructor triggers _recover_stuck_recordings
+
+    fixed = RecordingRepo(db).get(rec.id)
+    assert fixed.status == RecordingStatus.DONE
     db.close()

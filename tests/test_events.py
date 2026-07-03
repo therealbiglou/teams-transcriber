@@ -108,3 +108,71 @@ def test_event_dataclasses_carry_expected_fields() -> None:
     RecordingFailed(recording_id=1, error_message="boom")
     TranscriptionComplete(recording_id=1, segment_count=10)
     SummaryReady(recording_id=1)
+
+
+def test_live_segment_available_event_round_trip() -> None:
+    from teams_transcriber.events import LiveSegmentAvailable
+    from teams_transcriber.storage.models import Channel, TranscriptSegment
+
+    seg = TranscriptSegment(
+        id=1, recording_id=42, start_ms=1000, end_ms=2000,
+        channel=Channel.ME, text="hello",
+    )
+    evt = LiveSegmentAvailable(recording_id=42, segment=seg)
+    assert evt.recording_id == 42
+    assert evt.segment.text == "hello"
+
+
+def test_live_transcription_degraded_event_round_trip() -> None:
+    from teams_transcriber.events import LiveTranscriptionDegraded
+
+    evt = LiveTranscriptionDegraded(recording_id=7, reason="cuda oom")
+    assert evt.recording_id == 7
+    assert evt.reason == "cuda oom"
+
+
+def test_recording_device_fallback_event_round_trip() -> None:
+    from teams_transcriber.events import RecordingDeviceFallback
+
+    evt = RecordingDeviceFallback(recording_id=7, channel="microphone", requested_name="Sony WH-1000")
+    assert evt.recording_id == 7
+    assert evt.channel == "microphone"
+    assert evt.requested_name == "Sony WH-1000"
+
+
+def test_no_audio_devices_error_is_exception() -> None:
+    from teams_transcriber.audio.source import NoAudioDevicesError
+
+    assert issubclass(NoAudioDevicesError, Exception)
+    err = NoAudioDevicesError("no devices")
+    assert str(err) == "no devices"
+
+
+def test_update_available_event_round_trip() -> None:
+    from teams_transcriber.events import UpdateAvailable
+
+    evt = UpdateAvailable(
+        version="v0.5.1",
+        download_url="https://example.com/installer.exe",
+        release_url="https://github.com/therealbiglou/teams-transcriber/releases/tag/v0.5.1",
+    )
+    assert evt.version == "v0.5.1"
+    assert evt.download_url == "https://example.com/installer.exe"
+    assert evt.release_url.endswith("v0.5.1")
+
+
+def test_update_check_completed_event_round_trip() -> None:
+    from teams_transcriber.events import UpdateCheckCompleted
+
+    evt_with_update = UpdateCheckCompleted(
+        latest_version="v0.5.1",
+        checked_at="2026-05-21T12:00:00+00:00",
+    )
+    assert evt_with_update.latest_version == "v0.5.1"
+    assert evt_with_update.checked_at == "2026-05-21T12:00:00+00:00"
+
+    evt_no_update = UpdateCheckCompleted(
+        latest_version=None,
+        checked_at="2026-05-21T12:00:00+00:00",
+    )
+    assert evt_no_update.latest_version is None

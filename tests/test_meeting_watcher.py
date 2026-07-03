@@ -302,6 +302,81 @@ def test_explicit_pattern_still_works_alongside_smart_detection() -> None:
     assert len(detected) == 1
 
 
+def test_watcher_uses_audio_probe_when_non_empty() -> None:
+    """When audio_session_probe returns Teams PIDs, the watcher detects a meeting
+    regardless of whether the title pattern matches."""
+    from teams_transcriber.events import EventBus, MeetingDetected
+    from teams_transcriber.meeting_watcher import MeetingWatcher, WindowInfo
+
+    bus = EventBus()
+    detected: list[MeetingDetected] = []
+    bus.subscribe(MeetingDetected, detected.append)
+
+    windows = [WindowInfo(pid=4321, process_name="ms-teams.exe", title="Random Meeting #2847391")]
+
+    watcher = MeetingWatcher(
+        bus=bus,
+        current_windows=lambda: windows,
+        title_patterns=[],
+        audio_session_probe=lambda: {4321},
+        debounce_polls=1,
+        poll_interval_ms=10,
+    )
+    watcher.step()
+    assert len(detected) == 1
+    assert detected[0].window_title == "Random Meeting #2847391"
+
+
+def test_watcher_falls_back_to_title_when_probe_empty() -> None:
+    """When audio_session_probe returns empty, title-pattern matching still runs."""
+    from teams_transcriber.events import EventBus, MeetingDetected
+    from teams_transcriber.meeting_watcher import MeetingWatcher, WindowInfo
+
+    bus = EventBus()
+    detected: list[MeetingDetected] = []
+    bus.subscribe(MeetingDetected, detected.append)
+
+    windows = [WindowInfo(pid=4321, process_name="ms-teams.exe",
+                          title="Meeting in progress | Microsoft Teams")]
+
+    watcher = MeetingWatcher(
+        bus=bus,
+        current_windows=lambda: windows,
+        title_patterns=["Meeting in progress | Microsoft Teams"],
+        audio_session_probe=lambda: set(),
+        debounce_polls=1,
+        poll_interval_ms=10,
+    )
+    watcher.step()
+    assert len(detected) == 1
+
+
+def test_watcher_probe_skips_nav_view_titles() -> None:
+    """Even when a Teams PID is reported as active, ignore Calendar/Chat/etc. windows."""
+    from teams_transcriber.events import EventBus, MeetingDetected
+    from teams_transcriber.meeting_watcher import MeetingWatcher, WindowInfo
+
+    bus = EventBus()
+    detected: list[MeetingDetected] = []
+    bus.subscribe(MeetingDetected, detected.append)
+
+    windows = [
+        WindowInfo(pid=4321, process_name="ms-teams.exe", title="Calendar | Calendar | Microsoft Teams"),
+        WindowInfo(pid=4321, process_name="ms-teams.exe", title="Chat | Blake | Microsoft Teams"),
+    ]
+
+    watcher = MeetingWatcher(
+        bus=bus,
+        current_windows=lambda: windows,
+        title_patterns=[],
+        audio_session_probe=lambda: {4321},
+        debounce_polls=1,
+        poll_interval_ms=10,
+    )
+    watcher.step()
+    assert detected == []
+
+
 def test_enumerate_windows_returns_list_on_windows() -> None:
     """Smoke: real enumeration returns *some* windows on a real OS.
 

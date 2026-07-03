@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from teams_transcriber.config import Settings
-from teams_transcriber.events import EventBus, SummaryReady
+from teams_transcriber.events import EventBus, SummaryFailed, SummaryReady
 from teams_transcriber.storage import (
     ActionItemOther,
     Database,
@@ -79,12 +79,11 @@ TOOL_SCHEMA: dict[str, Any] = {
                 },
             },
             "follow_ups": {"type": "array", "items": {"type": "string"}},
-            "topics": {"type": "array", "items": {"type": "string"}},
         },
         "required": [
             "title", "one_line", "summary",
             "key_decisions", "my_todos", "action_items_others",
-            "follow_ups", "topics",
+            "follow_ups",
         ],
     },
 }
@@ -125,6 +124,10 @@ class Summarizer:
                 recording_id, RecordingStatus.SUMMARY_FAILED,
                 error_message="Anthropic API key is not configured",
             )
+            self._bus.publish(SummaryFailed(
+                recording_id=recording_id,
+                error_message="Anthropic API key is not configured",
+            ))
             return
 
         transcript = self._build_transcript_text(recording_id)
@@ -133,16 +136,23 @@ class Summarizer:
                 recording_id, RecordingStatus.SUMMARY_FAILED,
                 error_message="transcript is empty",
             )
+            self._bus.publish(SummaryFailed(
+                recording_id=recording_id,
+                error_message="transcript is empty",
+            ))
             return
         if len(transcript) > _TRANSCRIPT_CHAR_LIMIT:
-            rec_repo.update_status(
-                recording_id, RecordingStatus.SUMMARY_FAILED,
-                error_message=(
-                    f"transcript too long for single-shot summarization "
-                    f"({len(transcript):,} chars; limit {_TRANSCRIPT_CHAR_LIMIT:,}). "
-                    "Chunking is not yet implemented."
-                ),
+            msg = (
+                f"transcript too long for single-shot summarization "
+                f"({len(transcript):,} chars; limit {_TRANSCRIPT_CHAR_LIMIT:,}). "
+                "Chunking is not yet implemented."
             )
+            rec_repo.update_status(
+                recording_id, RecordingStatus.SUMMARY_FAILED, error_message=msg,
+            )
+            self._bus.publish(SummaryFailed(
+                recording_id=recording_id, error_message=msg,
+            ))
             return
 
         client = self._client_factory(api_key)
@@ -155,6 +165,9 @@ class Summarizer:
             rec_repo.update_status(
                 recording_id, RecordingStatus.SUMMARY_FAILED, error_message=str(result),
             )
+            self._bus.publish(SummaryFailed(
+                recording_id=recording_id, error_message=str(result),
+            ))
             return
 
         self._persist(recording_id, result)
@@ -264,13 +277,19 @@ class Summarizer:
                 for d in payload["action_items_others"]
             ],
             follow_ups=list(payload["follow_ups"]),
-            topics=list(payload["topics"]),
+            # `topics` was removed from the summarizer prompt — the dataclass
+            # field and DB column remain for back-compat with older rows, but
+            # we no longer ask Claude for them or render them anywhere.
+            topics=[],
             generated_at=datetime.now(UTC).isoformat(),
             model_used=self._settings.ai_model,
         )
         sum_repo.upsert(summary)
-        rec_repo.set_display_title(recording_id, summary.title or "Untitled meeting")
+        # Mark DONE immediately after upsert so that even if the writes below crash
+        # the recording's status reflects reality and won't get stuck as SUMMARIZING.
         rec_repo.update_status(recording_id, RecordingStatus.DONE)
+        rec_repo.set_display_title(recording_id, summary.title or "Untitled meeting")
         # Seed todo_state rows for each my_todo so the UI can toggle them.
+        # seed() (not upsert) so re-summarization keeps existing done flags.
         for i, td in enumerate(summary.my_todos):
-            todo_repo.upsert(recording_id, todo_index=i, task_text=td.task, done=False)
+            todo_repo.seed(recording_id, todo_index=i, task_text=td.task)

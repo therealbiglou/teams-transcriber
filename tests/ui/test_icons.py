@@ -26,3 +26,19 @@ def test_render_state_icon_for_all_states() -> None:
         icon = render_state_icon(state)
         assert isinstance(icon, QIcon)
         assert not icon.pixmap(QSize(32, 32)).isNull()
+
+
+def test_render_state_icon_processing_differs_from_idle(qapp) -> None:
+    from PySide6.QtCore import QBuffer, QIODevice
+
+    def _icon_bytes(state):
+        icon = render_state_icon(state)
+        pixmap = icon.pixmap(32, 32)
+        buffer = QBuffer()
+        buffer.open(QIODevice.OpenModeFlag.ReadWrite)
+        pixmap.save(buffer, "PNG")
+        return bytes(buffer.data())
+
+    idle = _icon_bytes(TrayState.IDLE)
+    processing = _icon_bytes(TrayState.PROCESSING)
+    assert idle != processing, "PROCESSING icon must differ from IDLE"

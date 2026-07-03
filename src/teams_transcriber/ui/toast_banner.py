@@ -17,7 +17,7 @@ import contextlib
 import logging
 from collections.abc import Callable
 
-from PySide6.QtCore import QPropertyAnimation, QRect, Qt, QTimer
+from PySide6.QtCore import QPropertyAnimation, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
@@ -37,6 +37,21 @@ from teams_transcriber.ui.theme import COLORS, RADIUS
 logger = logging.getLogger(__name__)
 
 _ACTIVE_TOASTS: list[ToastBanner] = []
+
+
+def _reflow_toasts() -> None:
+    """Re-stack all live toasts bottom-up on their own screens, closing gaps."""
+    margin = 8
+    offsets: dict[object, int] = {}
+    for t in _ACTIVE_TOASTS:
+        screen = getattr(t, "_screen", None) or QGuiApplication.primaryScreen()
+        if screen is None:
+            continue
+        geom = screen.availableGeometry()
+        off = offsets.get(screen, 0)
+        t.move(geom.right() - t.width() - margin,
+               geom.bottom() - t.height() - margin - off)
+        offsets[screen] = off + t.height() + margin
 
 
 class ToastBanner(QFrame):
@@ -85,6 +100,10 @@ class ToastBanner(QFrame):
         text_col.setSpacing(2)
         title_lbl = QLabel(title)
         title_lbl.setStyleSheet("font-size: 14px; font-weight: 600;")
+        title_lbl.setWordWrap(True)
+        title_lbl.setMinimumWidth(0)
+        title_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self._title_lbl = title_lbl
         text_col.addWidget(title_lbl)
         body_lbl = QLabel(body)
         body_lbl.setWordWrap(True)
@@ -108,14 +127,16 @@ class ToastBanner(QFrame):
         close_btn.clicked.connect(self._dismiss)
         outer_layout.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignTop)
 
-        # Top-level layout wraps the outer card with no margins so the rounded
-        # corners aren't clipped.
+        # Top-level layout wraps the outer card with margins so the 28px-blur
+        # shadow has room to render instead of being clipped.
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(16, 16, 16, 16)
         layout.addWidget(outer)
 
-        self.setFixedWidth(380)
+        self.setFixedWidth(412)
         self.adjustSize()
+
+        self._screen = None
 
         # Auto-dismiss timer.
         self._timer = QTimer(self)
@@ -128,19 +149,19 @@ class ToastBanner(QFrame):
     # --- positioning -------------------------------------------------------
 
     def show_at_bottom_right(self) -> None:
-        screen = self.screen() or QGuiApplication.primaryScreen()
+        active = QApplication.activeWindow()
+        screen = (
+            (active.screen() if active is not None else None)
+            or self.screen()
+            or QGuiApplication.primaryScreen()
+        )
         if screen is None:
             self.show()
             return
-        geom = screen.availableGeometry()
-        margin = 16
-        # Stack above earlier toasts.
-        offset_y = sum(t.height() + 8 for t in _ACTIVE_TOASTS)
-        x = geom.right() - self.width() - margin
-        y = geom.bottom() - self.height() - margin - offset_y
-        self.setGeometry(QRect(x, y, self.width(), self.height()))
+        self._screen = screen
         self.show()
         _ACTIVE_TOASTS.append(self)
+        _reflow_toasts()
 
     # --- dismissal --------------------------------------------------------
 
@@ -149,7 +170,7 @@ class ToastBanner(QFrame):
             return
         with contextlib.suppress(ValueError):
             _ACTIVE_TOASTS.remove(self)
-        # Fade-out animation
+        _reflow_toasts()
         self._fade = QPropertyAnimation(self, b"windowOpacity")
         self._fade.setDuration(180)
         self._fade.setStartValue(1.0)

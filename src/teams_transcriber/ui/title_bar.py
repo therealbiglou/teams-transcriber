@@ -17,8 +17,17 @@ class TitleBar(QWidget):
     minimize_requested = Signal()
     maximize_requested = Signal()
     close_requested = Signal()
+    settings_requested = Signal()
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        title: str = "Teams Transcriber",
+        controls: tuple[str, ...] = ("settings", "min", "max", "close"),
+        extra_left: list[QWidget] | None = None,
+        extra_right: list[QWidget] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setFixedHeight(40)
         self.setObjectName("TitleBar")
@@ -28,17 +37,33 @@ class TitleBar(QWidget):
         layout.setContentsMargins(16, 0, 8, 0)
         layout.setSpacing(8)
 
-        self.title_label = QLabel("Teams Transcriber")
+        for w in (extra_left or []):
+            layout.addWidget(w)
+
+        self.title_label = QLabel(title)
         self.title_label.setProperty("role", "subtitle")
         layout.addWidget(self.title_label)
         layout.addStretch(1)
 
-        self.minimize_btn = self._make_btn(IconName.MINIMIZE, self.minimize_requested.emit)
-        self.maximize_btn = self._make_btn(IconName.MAXIMIZE, self.maximize_requested.emit)
-        self.close_btn = self._make_btn(IconName.CLOSE, self.close_requested.emit)
-        layout.addWidget(self.minimize_btn)
-        layout.addWidget(self.maximize_btn)
-        layout.addWidget(self.close_btn)
+        for w in (extra_right or []):
+            layout.addWidget(w)
+
+        self.settings_btn = None
+        self.minimize_btn = None
+        self.maximize_btn = None
+        self.close_btn = None
+        if "settings" in controls:
+            self.settings_btn = self._make_btn(IconName.SETTINGS, self.settings_requested.emit)
+            layout.addWidget(self.settings_btn)
+        if "min" in controls:
+            self.minimize_btn = self._make_btn(IconName.MINIMIZE, self.minimize_requested.emit)
+            layout.addWidget(self.minimize_btn)
+        if "max" in controls:
+            self.maximize_btn = self._make_btn(IconName.MAXIMIZE, self.maximize_requested.emit)
+            layout.addWidget(self.maximize_btn)
+        if "close" in controls:
+            self.close_btn = self._make_btn(IconName.CLOSE, self.close_requested.emit)
+            layout.addWidget(self.close_btn)
 
     def _make_btn(self, icon: IconName, handler: Callable[[], None]) -> QPushButton:
         btn = QPushButton(get_icon(icon), "")
@@ -47,16 +72,44 @@ class TitleBar(QWidget):
         btn.clicked.connect(handler)
         return btn
 
+    def set_window_active(self, active: bool) -> None:
+        """Dim the title when the window is in the background (depth cue)."""
+        from teams_transcriber.ui.theme import COLORS
+        self.title_label.setStyleSheet(
+            "" if active else f"color: {COLORS['text_tertiary']};"
+        )
+
     def set_maximized(self, maximized: bool) -> None:
-        self.maximize_btn.setIcon(get_icon(IconName.RESTORE if maximized else IconName.MAXIMIZE))
+        if self.maximize_btn is not None:
+            self.maximize_btn.setIcon(get_icon(IconName.RESTORE if maximized else IconName.MAXIMIZE))
 
     def mousePressEvent(self, e: QMouseEvent) -> None:
         if e.button() == Qt.MouseButton.LeftButton:
             self._drag_anchor = e.globalPosition().toPoint() - self.window().pos()
 
     def mouseMoveEvent(self, e: QMouseEvent) -> None:
-        if self._drag_anchor is not None and not self.window().isMaximized():
-            self.window().move(e.globalPosition().toPoint() - self._drag_anchor)
+        if self._drag_anchor is None:
+            return
+        win = self.window()
+        if win.isMaximized():
+            # Restore first (native title bars do this), keeping the cursor at
+            # the same relative x over the title bar so the drag feels anchored.
+            rel_x = e.position().x() / max(1, self.width())
+            toggle = getattr(win, "toggle_max", None)
+            if callable(toggle):
+                toggle()
+            else:
+                win.showNormal()
+            gp = e.globalPosition().toPoint()
+            win.move(int(gp.x() - win.width() * rel_x), gp.y() - self.height() // 2)
+            self._drag_anchor = gp - win.pos()
+        handle = win.windowHandle()
+        if handle is not None and handle.startSystemMove():
+            # The OS owns the move now (enables Windows Aero Snap / Snap
+            # Layouts); we get no further move events until release.
+            self._drag_anchor = None
+            return
+        win.move(e.globalPosition().toPoint() - self._drag_anchor)
 
     def mouseReleaseEvent(self, e: QMouseEvent) -> None:
         del e
@@ -64,4 +117,5 @@ class TitleBar(QWidget):
 
     def mouseDoubleClickEvent(self, e: QMouseEvent) -> None:
         del e
-        self.maximize_requested.emit()
+        if self.maximize_btn is not None:
+            self.maximize_requested.emit()

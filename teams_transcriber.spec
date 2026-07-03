@@ -15,24 +15,26 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 REPO_ROOT = Path(SPECPATH)
 SITE_PACKAGES = REPO_ROOT / ".venv" / "Lib" / "site-packages"
 
+
+def _is_nvidia_path(path: str) -> bool:
+    p = path.replace("\\", "/").lower()
+    return p.startswith("nvidia/") or "/nvidia/" in p
+
+
 # Collect every dep that ships native binaries or data files.
 av_datas, av_binaries, av_hidden = collect_all("av")
 ct2_datas, ct2_binaries, ct2_hidden = collect_all("ctranslate2")
 sd_datas, sd_binaries, sd_hidden = collect_all("soundcard")
 fw_datas, fw_binaries, fw_hidden = collect_all("faster_whisper")
 
-# CUDA wheels — include the entire nvidia/ tree so the runtime path
-# registration in teams_transcriber/__init__.py finds the DLLs.
-NVIDIA_ROOT = SITE_PACKAGES / "nvidia"
-cuda_binaries = []
-if NVIDIA_ROOT.is_dir():
-    for dll in NVIDIA_ROOT.rglob("*.dll"):
-        rel = dll.relative_to(NVIDIA_ROOT)
-        cuda_binaries.append((str(dll), str(Path("nvidia") / rel.parent)))
-
 extra_hidden = [
     "keyring.backends.Windows",
     "win32timezone",
+    # PDF export (summary → PDF) renders via QtPrintSupport's built-in PDF
+    # engine. The static import in ui/pdf_export.py is normally picked up by
+    # PyInstaller's PySide6 hook; pin it explicitly as insurance. (PDF output
+    # uses Qt's PDF engine in Qt6PrintSupport.dll — no printer plugin needed.)
+    "PySide6.QtPrintSupport",
     *collect_submodules("anthropic"),
     *collect_submodules("keyboard"),
 ]
@@ -40,7 +42,7 @@ extra_hidden = [
 a = Analysis(
     [str(REPO_ROOT / "src" / "teams_transcriber" / "__main__.py")],
     pathex=[str(REPO_ROOT / "src")],
-    binaries=av_binaries + ct2_binaries + sd_binaries + fw_binaries + cuda_binaries,
+    binaries=av_binaries + ct2_binaries + sd_binaries + fw_binaries,
     datas=av_datas + ct2_datas + sd_datas + fw_datas,
     hiddenimports=[
         *av_hidden, *ct2_hidden, *sd_hidden, *fw_hidden, *extra_hidden,
@@ -50,6 +52,9 @@ a = Analysis(
     excludes=[],
     noarchive=False,
 )
+
+a.binaries = [b for b in a.binaries if not _is_nvidia_path(b[0])]
+a.datas    = [d for d in a.datas    if not _is_nvidia_path(d[0])]
 
 pyz = PYZ(a.pure, a.zipped_data)
 

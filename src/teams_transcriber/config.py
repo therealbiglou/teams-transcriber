@@ -14,6 +14,7 @@ from teams_transcriber.paths import AppPaths
 
 KEYRING_SERVICE = "teams-transcriber"
 KEYRING_USER_ANTHROPIC = "anthropic_api_key"
+KEYRING_USER_WRIKE = "wrike_api_token"
 
 
 # Default settings — load_settings merges any user-provided file on top of this.
@@ -21,6 +22,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "general": {
         "auto_launch": True,
         "pause_on_startup": False,
+        "auto_check_updates": True,
+        "last_update_check": None,
     },
     "audio": {
         "mic_device": None,
@@ -42,7 +45,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "model": "large-v3-turbo",
         "compute_type": "int8_float16",
         "language": "en",
+        "live_enabled": False,  # Phase 6: live transcription is opt-in.
         "live_dual_channel": False,  # Phase 2 ships post-mode only; live is Phase 2.5.
+        "live_flush_interval_ms": 10_000,
+        "live_max_wait_ms": 15_000,
     },
     "ai": {
         "provider": "anthropic",
@@ -52,7 +58,12 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     },
     "hotkeys": {
         "toggle_manual_recording": "ctrl+alt+r",
+        "open_workspace": "ctrl+alt+n",
         "toggle_pause_detection": "ctrl+alt+p",
+    },
+    "integrations": {
+        "wrike_enabled": False,
+        "wrike_recent_folder_ids": [],
     },
 }
 
@@ -85,16 +96,38 @@ class Settings:
     def auto_launch(self, value: bool) -> None:
         self._raw["general"]["auto_launch"] = bool(value)
 
+    @property
+    def auto_check_updates(self) -> bool:
+        return bool(self._raw["general"].get("auto_check_updates", True))
+
+    @property
+    def last_update_check(self) -> str | None:
+        v = self._raw["general"].get("last_update_check")
+        return v if isinstance(v, str) else None
+
     # --- audio
     @property
-    def mic_device(self) -> str | None:
+    def audio_mic_device(self) -> dict | None:
+        """Saved microphone selection as {id, name} or None for Windows default."""
         value = self._raw["audio"].get("mic_device")
-        return None if value is None else str(value)
+        return value if isinstance(value, dict) else None
+
+    @property
+    def audio_loopback_device(self) -> dict | None:
+        """Saved system audio (loopback) source as {id, name} or None for default."""
+        value = self._raw["audio"].get("loopback_device")
+        return value if isinstance(value, dict) else None
+
+    # Backwards-compatible legacy accessors — return the id from the dict, or None.
+    @property
+    def mic_device(self) -> str | None:
+        d = self.audio_mic_device
+        return d["id"] if d is not None else None
 
     @property
     def loopback_device(self) -> str | None:
-        value = self._raw["audio"].get("loopback_device")
-        return None if value is None else str(value)
+        d = self.audio_loopback_device
+        return d["id"] if d is not None else None
 
     @property
     def audio_retention_days(self) -> int:
@@ -135,8 +168,20 @@ class Settings:
         return str(self._raw["transcription"]["language"])
 
     @property
+    def transcription_live_enabled(self) -> bool:
+        return bool(self._raw["transcription"].get("live_enabled", False))
+
+    @property
     def transcription_live_dual_channel(self) -> bool:
         return bool(self._raw["transcription"]["live_dual_channel"])
+
+    @property
+    def transcription_live_flush_interval_ms(self) -> int:
+        return int(self._raw["transcription"]["live_flush_interval_ms"])
+
+    @property
+    def transcription_live_max_wait_ms(self) -> int:
+        return int(self._raw["transcription"]["live_max_wait_ms"])
 
     # --- ai
     @property
@@ -154,6 +199,11 @@ class Settings:
     @property
     def ai_max_retries(self) -> int:
         return int(self._raw["ai"]["max_retries"])
+
+    # --- hotkeys
+    @property
+    def hotkeys(self) -> dict[str, str]:
+        return dict(self._raw["hotkeys"])
 
     def anthropic_api_key(self) -> str | None:
         """Resolve the Anthropic API key. Env var wins over keyring (useful for CI/tests)."""

@@ -12,9 +12,12 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from teams_transcriber.storage.models import TranscriptSegment
 
 # --- Event dataclasses ----------------------------------------------------
 
@@ -59,8 +62,53 @@ class TranscriptionComplete(Event):
 
 
 @dataclass(slots=True, frozen=True)
+class TranscriptionFailed(Event):
+    recording_id: int
+    error_message: str
+
+
+@dataclass(slots=True, frozen=True)
 class SummaryReady(Event):
     recording_id: int
+
+
+@dataclass(slots=True, frozen=True)
+class SummaryFailed(Event):
+    recording_id: int
+    error_message: str
+
+
+@dataclass(slots=True, frozen=True)
+class LiveSegmentAvailable(Event):
+    recording_id: int
+    segment: "TranscriptSegment"
+
+
+@dataclass(slots=True, frozen=True)
+class LiveTranscriptionDegraded(Event):
+    recording_id: int
+    reason: str
+
+
+@dataclass(slots=True, frozen=True)
+class RecordingDeviceFallback(Event):
+    recording_id: int
+    channel: str          # "microphone" or "system audio"
+    requested_name: str   # name of the saved-but-unavailable device
+
+
+@dataclass(slots=True, frozen=True)
+class UpdateAvailable(Event):
+    version: str
+    download_url: str
+    release_url: str
+
+
+@dataclass(slots=True, frozen=True)
+class UpdateCheckCompleted(Event):
+    """Refreshes the Settings → About 'last checked' display."""
+    latest_version: str | None  # None if no newer version available
+    checked_at: str             # ISO 8601 UTC
 
 
 # --- EventBus -------------------------------------------------------------

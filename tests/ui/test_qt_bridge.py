@@ -59,3 +59,115 @@ def test_cross_thread_publish_arrives_on_main_thread(qapp, qtbot) -> None:
     t.join()
 
     assert received_on == [main_tid]
+
+
+def test_bridge_emits_live_segment_available(qapp) -> None:
+    from teams_transcriber.events import EventBus, LiveSegmentAvailable
+    from teams_transcriber.storage.models import Channel, TranscriptSegment
+    from teams_transcriber.ui.qt_bridge import QtEventBridge
+
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    received: list[LiveSegmentAvailable] = []
+    bridge.live_segment_available.connect(received.append)
+
+    seg = TranscriptSegment(
+        id=None, recording_id=1, start_ms=0, end_ms=1500,
+        channel=Channel.ME, text="bridge me",
+    )
+    bus.publish(LiveSegmentAvailable(recording_id=1, segment=seg))
+    qapp.processEvents()
+    assert received and received[0].segment.text == "bridge me"
+
+
+def test_bridge_emits_live_transcription_degraded(qapp) -> None:
+    from teams_transcriber.events import EventBus, LiveTranscriptionDegraded
+    from teams_transcriber.ui.qt_bridge import QtEventBridge
+
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    received: list[LiveTranscriptionDegraded] = []
+    bridge.live_transcription_degraded.connect(received.append)
+
+    bus.publish(LiveTranscriptionDegraded(recording_id=5, reason="ouch"))
+    qapp.processEvents()
+    assert received and received[0].reason == "ouch"
+
+
+def test_bridge_emits_recording_device_fallback(qapp) -> None:
+    from teams_transcriber.events import EventBus, RecordingDeviceFallback
+    from teams_transcriber.ui.qt_bridge import QtEventBridge
+
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    received: list[RecordingDeviceFallback] = []
+    bridge.recording_device_fallback.connect(received.append)
+
+    bus.publish(RecordingDeviceFallback(
+        recording_id=42, channel="microphone", requested_name="Sony Headset",
+    ))
+    qapp.processEvents()
+    assert received and received[0].requested_name == "Sony Headset"
+
+
+def test_bridge_emits_summary_failed(qapp) -> None:
+    from teams_transcriber.events import EventBus, SummaryFailed
+    from teams_transcriber.ui.qt_bridge import QtEventBridge
+
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    received: list[SummaryFailed] = []
+    bridge.summary_failed.connect(received.append)
+
+    bus.publish(SummaryFailed(recording_id=11, error_message="boom"))
+    qapp.processEvents()
+    assert received and received[0].error_message == "boom"
+
+
+def test_bridge_emits_transcription_failed(qapp) -> None:
+    from teams_transcriber.events import EventBus, TranscriptionFailed
+    from teams_transcriber.ui.qt_bridge import QtEventBridge
+
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    received: list[TranscriptionFailed] = []
+    bridge.transcription_failed.connect(received.append)
+
+    bus.publish(TranscriptionFailed(recording_id=7, error_message="ouch"))
+    qapp.processEvents()
+    assert received and received[0].error_message == "ouch"
+
+
+def test_bridge_emits_update_available(qapp) -> None:
+    from teams_transcriber.events import EventBus, UpdateAvailable
+    from teams_transcriber.ui.qt_bridge import QtEventBridge
+
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    received: list[UpdateAvailable] = []
+    bridge.update_available.connect(received.append)
+
+    bus.publish(UpdateAvailable(
+        version="v0.5.1",
+        download_url="https://example.com/installer.exe",
+        release_url="https://github.com/therealbiglou/teams-transcriber/releases/tag/v0.5.1",
+    ))
+    qapp.processEvents()
+    assert received and received[0].version == "v0.5.1"
+
+
+def test_bridge_emits_update_check_completed(qapp) -> None:
+    from teams_transcriber.events import EventBus, UpdateCheckCompleted
+    from teams_transcriber.ui.qt_bridge import QtEventBridge
+
+    bus = EventBus()
+    bridge = QtEventBridge(bus)
+    received: list[UpdateCheckCompleted] = []
+    bridge.update_check_completed.connect(received.append)
+
+    bus.publish(UpdateCheckCompleted(
+        latest_version="v0.5.1",
+        checked_at="2026-05-21T12:00:00+00:00",
+    ))
+    qapp.processEvents()
+    assert received and received[0].latest_version == "v0.5.1"

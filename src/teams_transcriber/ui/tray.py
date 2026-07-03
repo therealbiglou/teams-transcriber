@@ -16,7 +16,7 @@ class AppTray(QSystemTrayIcon):
     stop_manual_requested = Signal()
     open_window_requested = Signal()
     pause_detection_toggled = Signal(bool)
-    notes_requested = Signal()       # add notes to current recording
+    open_workspace_requested = Signal()  # open workspace for current recording
     quit_requested = Signal()
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -47,9 +47,9 @@ class AppTray(QSystemTrayIcon):
         menu.addAction(self.stop_action)
 
         self.notes_action = QAction(
-            get_icon(IconName.COPY), "Add notes to current recording…", self,
+            get_icon(IconName.COPY), "Open workspace…", self,
         )
-        self.notes_action.triggered.connect(self.notes_requested.emit)
+        self.notes_action.triggered.connect(self.open_workspace_requested.emit)
         self.notes_action.setEnabled(False)
         menu.addAction(self.notes_action)
 
@@ -84,10 +84,12 @@ class AppTray(QSystemTrayIcon):
         }
         self.setToolTip(f"Teams Transcriber — {labels[state]}")
 
-        # Menu state: only allow stop and notes when recording.
-        self.start_action.setEnabled(state == TrayState.IDLE)
+        # Menu state per the design table:
+        # Start: IDLE or ERROR. Stop: RECORDING only.
+        # Open workspace: RECORDING or PROCESSING.
+        self.start_action.setEnabled(state in (TrayState.IDLE, TrayState.ERROR))
         self.stop_action.setEnabled(state == TrayState.RECORDING)
-        self.notes_action.setEnabled(state == TrayState.RECORDING)
+        self.notes_action.setEnabled(state in (TrayState.RECORDING, TrayState.PROCESSING))
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:

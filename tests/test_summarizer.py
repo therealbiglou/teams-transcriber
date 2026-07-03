@@ -14,6 +14,7 @@ from teams_transcriber.storage import (
     RecordingSource,
     RecordingStatus,
     SummaryRepo,
+    TodoStateRepo,
     TranscriptRepo,
     TranscriptSegment,
     build_database,
@@ -122,6 +123,34 @@ def test_summarize_writes_summary_and_sets_title(setup_recording) -> None:
     assert summary is not None
     assert summary.title == "Q2 roadmap sync"
     assert summary.my_todos[0].task == "Write API stub"
+
+
+def test_resummarize_preserves_checked_todo(setup_recording) -> None:
+    """Re-running summarize() must not uncheck a todo the user already
+    completed — _persist() should seed (not upsert-clobber) todo_state."""
+    db, rec_id = setup_recording
+    bus = EventBus()
+    settings = Settings()
+
+    client = FakeAnthropic(scripted=[_canned_ok(title="Q2 sync")])
+    s = Summarizer(bus=bus, db=db, settings=settings, client_factory=lambda _key: client)
+    s.summarize(rec_id, api_key="sk-test")
+
+    todo_repo = TodoStateRepo(db)
+    rows = todo_repo.list_for_recording(rec_id)
+    assert len(rows) == 1
+    todo_repo.mark_done(rec_id, todo_index=0, done=True)
+
+    # Re-summarize with reworded task text (e.g. user hit "regenerate summary").
+    client2 = FakeAnthropic(scripted=[_canned_ok(title="Q2 sync (revised)")])
+    s2 = Summarizer(bus=bus, db=db, settings=settings, client_factory=lambda _key: client2)
+    s2.summarize(rec_id, api_key="sk-test")
+
+    rows = todo_repo.list_for_recording(rec_id)
+    assert len(rows) == 1
+    assert rows[0].done is True
+    assert rows[0].done_at is not None
+    assert rows[0].task_text == "Write API stub"
 
 
 def test_summarize_retries_on_transient_error(setup_recording) -> None:
@@ -237,3 +266,81 @@ def test_summarize_marks_failed_when_tool_input_is_malformed(setup_recording) ->
     rec = RecordingRepo(db).get(rec_id)
     assert rec is not None
     assert rec.status == RecordingStatus.SUMMARY_FAILED
+
+
+def test_summarizer_publishes_summary_failed_on_empty_transcript(tmp_path) -> None:
+    """When the transcript is empty, summarize() publishes SummaryFailed."""
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.events import EventBus, SummaryFailed
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.storage import (
+        Recording,
+        RecordingRepo,
+        RecordingSource,
+        RecordingStatus,
+        build_database,
+    )
+    from teams_transcriber.summarizer import Summarizer
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    settings = load_settings(paths)
+    bus = EventBus()
+    received: list[SummaryFailed] = []
+    bus.subscribe(SummaryFailed, received.append)
+
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-05-20T10:00:00+00:00",
+        ended_at=None, source=RecordingSource.MANUAL,
+        detected_title="t", display_title="t", audio_path=None,
+        audio_deleted_at=None, duration_ms=None,
+        status=RecordingStatus.SUMMARIZING, error_message=None,
+    ))
+    summ = Summarizer(bus=bus, db=db, settings=settings)
+    summ.summarize(rec.id, api_key="sk-fake-not-used-empty-transcript-short-circuits-first")
+    db.close()
+
+    assert len(received) == 1
+    assert "empty" in received[0].error_message.lower()
+    assert received[0].recording_id == rec.id
+
+
+def test_summarizer_publishes_summary_failed_on_missing_api_key(tmp_path) -> None:
+    """When api_key is None, summarize() publishes SummaryFailed."""
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.events import EventBus, SummaryFailed
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.storage import (
+        Recording,
+        RecordingRepo,
+        RecordingSource,
+        RecordingStatus,
+        build_database,
+    )
+    from teams_transcriber.summarizer import Summarizer
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    settings = load_settings(paths)
+    bus = EventBus()
+    received: list[SummaryFailed] = []
+    bus.subscribe(SummaryFailed, received.append)
+
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-05-20T10:00:00+00:00",
+        ended_at=None, source=RecordingSource.MANUAL,
+        detected_title="t", display_title="t", audio_path=None,
+        audio_deleted_at=None, duration_ms=None,
+        status=RecordingStatus.SUMMARIZING, error_message=None,
+    ))
+    summ = Summarizer(bus=bus, db=db, settings=settings)
+    summ.summarize(rec.id, api_key=None)
+    db.close()
+
+    assert len(received) == 1
+    assert "api key" in received[0].error_message.lower()
+    assert received[0].recording_id == rec.id

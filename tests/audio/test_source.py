@@ -92,3 +92,163 @@ def test_real_source_handles_short_chunks() -> None:
         assert total >= 1600
     finally:
         src.close()
+
+
+def test_from_settings_id_match() -> None:
+    """When saved id matches a real device, use it."""
+    from teams_transcriber.audio.source import RealAudioSource
+
+    class _Dev:
+        def __init__(self, id_, name): self.id = id_; self.name = name
+
+    fake_mics = [_Dev("{mic-a}", "Mic A"), _Dev("{mic-b}", "Mic B")]
+    fake_speakers = [_Dev("{spk-a}", "Spk A"), _Dev("{spk-b}", "Spk B")]
+
+    def get_microphone(id_, include_loopback=False):
+        for d in fake_mics + fake_speakers:
+            if d.id == id_:
+                return d
+        return None
+
+    class _Settings:
+        audio_mic_device = {"id": "{mic-b}", "name": "Mic B"}
+        audio_loopback_device = {"id": "{spk-a}", "name": "Spk A"}
+
+    result = RealAudioSource._resolve_devices(
+        _Settings(),
+        all_mics=fake_mics,
+        all_speakers=fake_speakers,
+        get_microphone=get_microphone,
+        default_mic=fake_mics[0],
+        default_speaker=fake_speakers[1],
+    )
+    assert result.mic.id == "{mic-b}"
+    assert result.loopback.id == "{spk-a}"
+    assert result.fallbacks == []
+
+
+def test_from_settings_name_fallback_when_id_missing() -> None:
+    """When saved id doesn't exist but name matches, use the name match (no fallback toast — same device renamed/reseated)."""
+    from teams_transcriber.audio.source import RealAudioSource
+
+    class _Dev:
+        def __init__(self, id_, name): self.id = id_; self.name = name
+
+    fake_mics = [_Dev("{mic-new}", "Sony Headset")]
+    fake_speakers = [_Dev("{spk-x}", "Speakers X")]
+
+    def get_microphone(id_, include_loopback=False):
+        for d in fake_mics + fake_speakers:
+            if d.id == id_:
+                return d
+        return None
+
+    class _Settings:
+        audio_mic_device = {"id": "{mic-OLD}", "name": "Sony Headset"}
+        audio_loopback_device = None
+
+    result = RealAudioSource._resolve_devices(
+        _Settings(),
+        all_mics=fake_mics,
+        all_speakers=fake_speakers,
+        get_microphone=get_microphone,
+        default_mic=fake_mics[0],
+        default_speaker=fake_speakers[0],
+    )
+    assert result.mic.id == "{mic-new}"
+    assert result.fallbacks == []
+
+
+def test_from_settings_full_default_fallback() -> None:
+    """When neither id nor name match, fall back to default and report it."""
+    from teams_transcriber.audio.source import RealAudioSource
+
+    class _Dev:
+        def __init__(self, id_, name): self.id = id_; self.name = name
+
+    fake_mics = [_Dev("{mic-current}", "Current Mic")]
+    fake_speakers = [_Dev("{spk-current}", "Current Speakers")]
+
+    def get_microphone(id_, include_loopback=False):
+        for d in fake_mics + fake_speakers:
+            if d.id == id_:
+                return d
+        return None
+
+    class _Settings:
+        audio_mic_device = {"id": "{mic-gone}", "name": "Vanished Mic"}
+        audio_loopback_device = {"id": "{spk-gone}", "name": "Vanished Speakers"}
+
+    result = RealAudioSource._resolve_devices(
+        _Settings(),
+        all_mics=fake_mics,
+        all_speakers=fake_speakers,
+        get_microphone=get_microphone,
+        default_mic=fake_mics[0],
+        default_speaker=fake_speakers[0],
+    )
+    assert result.mic.id == "{mic-current}"
+    assert result.loopback.id == "{spk-current}"
+    assert set(result.fallbacks) == {("microphone", "Vanished Mic"),
+                                      ("system audio", "Vanished Speakers")}
+
+
+def test_from_settings_no_devices_at_all_raises() -> None:
+    """When no defaults exist either, raise NoAudioDevicesError."""
+    from teams_transcriber.audio.source import NoAudioDevicesError, RealAudioSource
+
+    class _Settings:
+        audio_mic_device = None
+        audio_loopback_device = None
+
+    import pytest
+    with pytest.raises(NoAudioDevicesError):
+        RealAudioSource._resolve_devices(
+            _Settings(),
+            all_mics=[],
+            all_speakers=[],
+            get_microphone=lambda *_a, **_kw: None,
+            default_mic=None,
+            default_speaker=None,
+        )
+
+
+def test_from_settings_calls_all_microphones_with_correct_kwarg(monkeypatch) -> None:
+    """Regression — soundcard.all_microphones takes include_loopback, not
+    exclude_monitors. Calling with a non-existent kwarg raises TypeError at
+    runtime; this test guards against re-introducing it."""
+    import sys
+    from types import SimpleNamespace
+
+    captured_kwargs: list[dict] = []
+
+    # Strict signature — only `include_loopback` is accepted. Any other kwarg
+    # (e.g., exclude_monitors) triggers TypeError, which from_settings would
+    # surface as a build/test failure.
+    def fake_all_microphones(*, include_loopback=False):
+        captured_kwargs.append({"include_loopback": include_loopback})
+        return []  # empty — exercise the no-mic raise path
+
+    fake_sc = SimpleNamespace(
+        all_microphones=fake_all_microphones,
+        all_speakers=lambda: [],
+        default_microphone=lambda: None,
+        default_speaker=lambda: None,
+        get_microphone=lambda *_a, **_kw: None,
+    )
+    monkeypatch.setitem(sys.modules, "soundcard", fake_sc)
+
+    from teams_transcriber.audio.source import NoAudioDevicesError
+
+    class _Settings:
+        audio_mic_device = None
+        audio_loopback_device = None
+
+    # Expected to raise NoAudioDevicesError because we return empty lists —
+    # which is fine; we just need to confirm all_microphones was called with
+    # the right kwarg before the raise.
+    import pytest
+    with pytest.raises(NoAudioDevicesError):
+        RealAudioSource.from_settings(_Settings())
+
+    assert captured_kwargs == [{"include_loopback": False}]

@@ -48,3 +48,12 @@ class HotkeyManager:
             except Exception:
                 logger.exception("failed to remove hotkey %s", h)
         self._registered.clear()
+
+    def reload(self, bindings) -> None:
+        """Atomically replace all registered hotkeys with `bindings`.
+
+        `bindings` is an iterable of (hotkey_str, callback) tuples.
+        """
+        self.stop()
+        for hotkey, callback in bindings:
+            self.register(hotkey, callback)

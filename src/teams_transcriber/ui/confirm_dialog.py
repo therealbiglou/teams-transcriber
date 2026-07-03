@@ -33,7 +33,7 @@ class ConfirmDialog(QDialog):
         title: str,
         body: str,
         confirm_label: str = "OK",
-        cancel_label: str = "Cancel",
+        cancel_label: str | None = "Cancel",
         danger: bool = False,
         parent: QWidget | None = None,
     ) -> None:
@@ -76,10 +76,11 @@ class ConfirmDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
 
-        cancel_btn = QPushButton(cancel_label)
-        cancel_btn.setProperty("role", "secondary")
-        cancel_btn.clicked.connect(self.reject)
-        btn_row.addWidget(cancel_btn)
+        if cancel_label is not None:
+            cancel_btn = QPushButton(cancel_label)
+            cancel_btn.setProperty("role", "secondary")
+            cancel_btn.clicked.connect(self.reject)
+            btn_row.addWidget(cancel_btn)
 
         confirm_btn = QPushButton(confirm_label)
         confirm_btn.setProperty("role", "danger" if danger else "primary")
@@ -89,12 +90,13 @@ class ConfirmDialog(QDialog):
 
         card_layout.addLayout(btn_row)
 
-        # Outer layout — no margins so the rounded corners aren't clipped.
+        # Outer layout — margins give the 40px-blur shadow room to render
+        # instead of being clipped at the widget edge.
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setContentsMargins(20, 20, 20, 20)
         outer.addWidget(card)
 
-        self.setFixedWidth(440)
+        self.setFixedWidth(480)
         self.adjustSize()
 
     # Drag-to-move from anywhere on the dialog (since it's frameless and has no titlebar).
@@ -124,7 +126,7 @@ class ConfirmDialog(QDialog):
         title: str,
         body: str,
         confirm_label: str = "OK",
-        cancel_label: str = "Cancel",
+        cancel_label: str | None = "Cancel",
         danger: bool = False,
     ) -> bool:
         """Convenience: show modal, return True if user clicked confirm."""
@@ -133,4 +135,22 @@ class ConfirmDialog(QDialog):
             confirm_label=confirm_label, cancel_label=cancel_label,
             danger=danger, parent=parent,
         )
-        return dlg.exec() == QDialog.DialogCode.Accepted
+        from teams_transcriber.ui.scrim import exec_modal
+        return exec_modal(dlg) == QDialog.DialogCode.Accepted
+
+    @classmethod
+    def info(
+        cls,
+        parent: QWidget | None,
+        *,
+        title: str,
+        body: str,
+        ok_label: str = "OK",
+    ) -> None:
+        """Themed replacement for QMessageBox.information — single OK button."""
+        from teams_transcriber.ui.scrim import exec_modal
+        dlg = cls(
+            title=title, body=body,
+            confirm_label=ok_label, cancel_label=None, parent=parent,
+        )
+        exec_modal(dlg)

@@ -6,6 +6,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QResizeEvent
 from PySide6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from teams_transcriber.storage.models import Recording
@@ -33,16 +34,24 @@ class HistoryList(QScrollArea):
         self._cards: dict[int, MeetingCard] = {}
         self._selected_id: int | None = None
 
+    def resizeEvent(self, e: QResizeEvent) -> None:
+        # Guard #2: pin the container to the viewport so cards must wrap
+        # instead of overflowing past the (hidden) horizontal scrollbar.
+        super().resizeEvent(e)
+        vp = self.viewport()
+        if vp is not None:
+            self._container.setMaximumWidth(vp.width())
+
     def set_recordings(
         self,
-        rows: Iterable[tuple[Recording, str | None, int]],
+        rows: Iterable[tuple[Recording, str | None, int, int]],
     ) -> None:
-        """Replace the list. Each item is (Recording, one_line, todo_count)."""
+        """Replace the list. Each item is (Recording, one_line, todo_count, todos_done)."""
         self._clear()
 
         rows_list = list(rows)
         now = datetime.now().astimezone()
-        groups: dict[str, list[tuple[Recording, str | None, int]]] = {}
+        groups: dict[str, list[tuple[Recording, str | None, int, int]]] = {}
         for row in rows_list:
             groups.setdefault(_bucket_label(row[0].started_at, now), []).append(row)
 
@@ -55,9 +64,9 @@ class HistoryList(QScrollArea):
             header.setProperty("role", "muted")
             header.setStyleSheet("font-weight: 600; padding-top: 4px;")
             self._layout.insertWidget(self._layout.count() - 1, header)
-            for rec, one_line, todo_count in items:
+            for rec, one_line, todo_count, todos_done in items:
                 assert rec.id is not None
-                card = MeetingCard(rec, one_line=one_line, todo_count=todo_count)
+                card = MeetingCard(rec, one_line=one_line, todo_count=todo_count, todos_done=todos_done)
                 card.clicked.connect(self._on_card_clicked)
                 self._cards[rec.id] = card
                 self._layout.insertWidget(self._layout.count() - 1, card)
@@ -109,9 +118,9 @@ def _bucket_label(started_at: str, now: datetime) -> str:
 
 
 def filter_for_bucket(
-    rows: list[tuple[Recording, str | None, int]],
+    rows: list[tuple[Recording, str | None, int, int]],
     bucket: SidebarBucket,
-) -> list[tuple[Recording, str | None, int]]:
+) -> list[tuple[Recording, str | None, int, int]]:
     """Apply sidebar filtering on top of the day-bucket grouping."""
     if bucket == SidebarBucket.ALL:
         return rows

@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-__version__ = "0.1.0"
+__version__ = "0.9.0"
 
 
 def _nvidia_root() -> Path | None:
@@ -53,4 +53,26 @@ def _register_nvidia_dll_dirs() -> None:
         os.environ["PATH"] = os.pathsep.join([*added, os.environ.get("PATH", "")])
 
 
+def _register_downloaded_gpu_runtime() -> None:
+    """Register DLLs from the per-user GPU runtime cache (Phase 7).
+
+    When the installer doesn't ship NVIDIA libs, they live in
+    %LOCALAPPDATA%\\TeamsTranscriber\\runtime\\nvidia\\ after the first-run
+    wizard. Calling this is a no-op when the runtime isn't yet installed.
+    """
+    if not sys.platform.startswith("win"):
+        return
+    try:
+        from teams_transcriber.paths import AppPaths
+        from teams_transcriber.runtime.gpu_runtime import register_runtime
+    except Exception:
+        return
+    try:
+        paths = AppPaths()
+        register_runtime(paths.runtime_dir / "nvidia")
+    except Exception:
+        pass
+
+
 _register_nvidia_dll_dirs()
+_register_downloaded_gpu_runtime()

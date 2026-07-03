@@ -42,3 +42,16 @@ def test_ensure_dirs_is_idempotent(tmp_path: Path) -> None:
 def test_first_run_marker_path_lives_under_config(tmp_path: Path) -> None:
     paths = AppPaths(root=tmp_path / "TT")
     assert paths.first_run_marker_path == tmp_path / "TT" / "config" / ".first-run-complete"
+
+
+def test_runtime_dir_under_root() -> None:
+    """runtime_dir is under root and ensure_dirs creates it."""
+    import tempfile
+    from pathlib import Path
+    from teams_transcriber.paths import AppPaths
+
+    with tempfile.TemporaryDirectory() as tmp:
+        p = AppPaths(root=Path(tmp))
+        assert p.runtime_dir == p.root / "runtime"
+        p.ensure_dirs()
+        assert p.runtime_dir.is_dir()

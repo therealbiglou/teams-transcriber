@@ -1,15 +1,19 @@
-"""Settings dialog with sections: General, Audio, Detection, Transcription, AI."""
+"""Settings dialog with sections: General, Audio, Detection, Transcription, AI, Shortcuts."""
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import keyring
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -26,13 +30,51 @@ from PySide6.QtWidgets import (
 from teams_transcriber.config import (
     KEYRING_SERVICE,
     KEYRING_USER_ANTHROPIC,
+    KEYRING_USER_WRIKE,
     Settings,
     save_settings,
 )
 from teams_transcriber.paths import AppPaths
+from teams_transcriber.ui.frameless import FramelessWindowMixin
+from teams_transcriber.ui.labels import make_selectable
+from teams_transcriber.ui.title_bar import TitleBar
 
 
-class SettingsDialog(QDialog):
+def _enumerate_microphones() -> list:
+    try:
+        import soundcard
+        return list(soundcard.all_microphones(include_loopback=False))
+    except Exception:
+        return []
+
+
+def _enumerate_speakers() -> list:
+    try:
+        import soundcard
+        return list(soundcard.all_speakers())
+    except Exception:
+        return []
+
+
+def _model_cache_candidates(cache_root, model: str) -> list:
+    """Cached HF snapshot dirs for exactly this Whisper model.
+
+    HF cache dirs look like `models--<org>--faster-whisper-<model>`. endswith
+    keeps 'large-v3' from also matching 'large-v3-turbo'; the replace() form
+    covers a fully-qualified `org/repo` model value."""
+    from pathlib import Path
+    cache_root = Path(cache_root)
+    if not cache_root.is_dir():
+        return []
+    marker_suffix = f"faster-whisper-{model}"
+    marker_full = model.replace("/", "--") if "/" in model else ""
+    return [
+        d for d in sorted(cache_root.iterdir())
+        if d.is_dir() and (d.name.endswith(marker_suffix) or (marker_full and marker_full in d.name))
+    ]
+
+
+class SettingsDialog(FramelessWindowMixin, QDialog):
     """Modal settings dialog. Writes to settings.json + keyring on accept."""
 
     saved = Signal()
@@ -41,29 +83,70 @@ class SettingsDialog(QDialog):
         self,
         settings: Settings,
         paths: AppPaths,
+        *,
+        hotkey_reload_callback: Callable[[dict[str, str]], None] | None = None,
+        update_quit_callback: Callable[[], None] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.resize(700, 540)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setMouseTracking(True)
+        self.resize(780, 560)
         self._settings = settings
         self._paths = paths
+        self._hotkey_reload_callback = hotkey_reload_callback
+        self._update_quit_callback = update_quit_callback
 
-        outer = QVBoxLayout(self)
+        frame = QFrame()
+        frame.setObjectName("OuterFrame")
+        shell = QVBoxLayout(self)
+        shell.addWidget(frame)
+
+        inner = QVBoxLayout(frame)
+        inner.setContentsMargins(0, 0, 0, 0)
+        inner.setSpacing(0)
+
+        self._title_bar = TitleBar(title="Settings", controls=("max", "close"))
+        self._title_bar.maximize_requested.connect(self.toggle_max)
+        self._title_bar.close_requested.connect(self.reject)
+        inner.addWidget(self._title_bar)
+
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+        body_layout.setContentsMargins(16, 12, 16, 16)
+
         self._tabs = QTabWidget()
         self._tabs.addTab(self._build_general_tab(), "General")
         self._tabs.addTab(self._build_audio_tab(), "Audio")
         self._tabs.addTab(self._build_detection_tab(), "Detection")
         self._tabs.addTab(self._build_transcription_tab(), "Transcription")
         self._tabs.addTab(self._build_ai_tab(), "AI")
-        outer.addWidget(self._tabs)
+        self._tabs.addTab(self._build_integrations_tab(), "Integrations")
+        self._tabs.addTab(self._build_shortcuts_tab(), "Shortcuts")
+        self._tabs.addTab(self._build_about_tab(), "About")
+        body_layout.addWidget(self._tabs)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self._on_accept)
         buttons.rejected.connect(self.reject)
-        outer.addWidget(buttons)
+        body_layout.addWidget(buttons)
+
+        inner.addWidget(body, 1)
+
+        self._init_frameless(frame, resizable=True, title_bar=self._title_bar,
+                             shell_layout=shell)
+
+        from teams_transcriber.ui.window_state import restore_window_geometry
+        restore_window_geometry(self, "settings", default_size=(780, 560))
+
+    def done(self, result: int) -> None:
+        from teams_transcriber.ui.window_state import save_window_geometry
+        save_window_geometry(self, "settings")
+        super().done(result)
 
     def _build_general_tab(self) -> QWidget:
         w = QWidget()
@@ -76,6 +159,36 @@ class SettingsDialog(QDialog):
     def _build_audio_tab(self) -> QWidget:
         w = QWidget()
         form = QFormLayout(w)
+
+        self._mic_combo = QComboBox()
+        self._mic_combo.addItem("Use Windows default", userData=None)
+        for mic in _enumerate_microphones():
+            self._mic_combo.addItem(mic.name, userData={"id": mic.id, "name": mic.name})
+
+        self._loopback_combo = QComboBox()
+        self._loopback_combo.addItem("Use Windows default", userData=None)
+        for spk in _enumerate_speakers():
+            self._loopback_combo.addItem(spk.name, userData={"id": spk.id, "name": spk.name})
+
+        # Preselect from settings.
+        saved_mic = self._settings.audio_mic_device
+        if saved_mic is not None:
+            for i in range(self._mic_combo.count()):
+                d = self._mic_combo.itemData(i)
+                if d and d.get("id") == saved_mic.get("id"):
+                    self._mic_combo.setCurrentIndex(i)
+                    break
+        saved_loop = self._settings.audio_loopback_device
+        if saved_loop is not None:
+            for i in range(self._loopback_combo.count()):
+                d = self._loopback_combo.itemData(i)
+                if d and d.get("id") == saved_loop.get("id"):
+                    self._loopback_combo.setCurrentIndex(i)
+                    break
+
+        form.addRow("Microphone:", self._mic_combo)
+        form.addRow("System audio source:", self._loopback_combo)
+
         self.retention_spin = QSpinBox()
         self.retention_spin.setRange(0, 3650)
         self.retention_spin.setSuffix(" days")
@@ -125,6 +238,15 @@ class SettingsDialog(QDialog):
         if idx >= 0:
             self.compute_combo.setCurrentIndex(idx)
         form.addRow("Compute type:", self.compute_combo)
+
+        self._live_enabled_check = QCheckBox("Stream transcription during recording (experimental)")
+        self._live_enabled_check.setChecked(self._settings.transcription_live_enabled)
+        form.addRow("", self._live_enabled_check)
+
+        self._redownload_model_btn = QPushButton("Re-download Whisper model")
+        self._redownload_model_btn.setProperty("role", "secondary")
+        self._redownload_model_btn.clicked.connect(self._redownload_model)
+        form.addRow("", self._redownload_model_btn)
         return w
 
     def _build_ai_tab(self) -> QWidget:
@@ -151,6 +273,285 @@ class SettingsDialog(QDialog):
         form.addRow("Custom prompt addendum:", self.addendum_input)
         return w
 
+    def _build_integrations_tab(self) -> QWidget:
+        w = QWidget()
+        form = QFormLayout(w)
+
+        # Token (keyring-backed).
+        self.wrike_token_input = QLineEdit()
+        self.wrike_token_input.setEchoMode(QLineEdit.EchoMode.Password)
+        try:
+            existing = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
+        except Exception:
+            existing = ""
+        if existing:
+            self.wrike_token_input.setPlaceholderText(f"(stored: {existing[:6]}…)")
+        else:
+            self.wrike_token_input.setPlaceholderText("Paste your Wrike Permanent Access Token")
+        form.addRow("Wrike API token:", self.wrike_token_input)
+
+        # Test connection.
+        self._wrike_test_btn = QPushButton("Test connection")
+        self._wrike_test_btn.setProperty("role", "secondary")
+        self._wrike_test_btn.clicked.connect(self._wrike_test_connection)
+        self.wrike_status_label = make_selectable(QLabel(""))
+        self.wrike_status_label.setWordWrap(True)
+        form.addRow("", self._wrike_test_btn)
+        form.addRow("", self.wrike_status_label)
+
+        # Enable.
+        self.wrike_enable_cb = QCheckBox(
+            "Send meeting todos to Wrike automatically when a summary is ready"
+        )
+        self.wrike_enable_cb.setChecked(
+            bool(self._settings._raw.get("integrations", {}).get("wrike_enabled", False))
+        )
+        form.addRow("", self.wrike_enable_cb)
+
+        # LLM-assisted assignee resolution.
+        self.wrike_llm_assignee_cb = QCheckBox(
+            "Use Claude to suggest assignees for ambiguous names"
+        )
+        self.wrike_llm_assignee_cb.setToolTip(
+            "When an action-item owner can't be matched to a Wrike contact by "
+            "name, ask Claude to pick the best match. Adds one extra API call "
+            "per sync. Turn off for fuzzy-name-matching only."
+        )
+        self.wrike_llm_assignee_cb.setChecked(
+            bool(
+                self._settings._raw.get("integrations", {}).get(
+                    "wrike_llm_assignee_fallback", True
+                )
+            )
+        )
+        form.addRow("", self.wrike_llm_assignee_cb)
+        return w
+
+    def _wrike_test_connection(self) -> None:
+        import threading
+
+        from PySide6.QtCore import QTimer
+
+        from teams_transcriber.integrations import wrike_client as _wc
+
+        token = self.wrike_token_input.text().strip() or (
+            keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
+        )
+        if not token:
+            self.wrike_status_label.setText("Enter a token first.")
+            return
+        self.wrike_status_label.setText("Checking…")
+        self._wrike_test_btn.setEnabled(False)
+
+        def _worker() -> None:
+            try:
+                client = _wc.WrikeClient(token=token)
+                try:
+                    me = client.test_connection()
+                    name = (me.get("firstName") or "user") + " " + (me.get("lastName") or "")
+                    msg = f"<span style='color:#065F46;'>✓ Connected as {name.strip()}</span>"
+                finally:
+                    client.close()
+            except Exception as exc:
+                msg = f"<span style='color:#DC2626;'>✗ {exc}</span>"
+            QTimer.singleShot(0, self, lambda: self._on_wrike_test_done(msg))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_wrike_test_done(self, msg: str) -> None:
+        self.wrike_status_label.setText(msg)
+        self._wrike_test_btn.setEnabled(True)
+
+    def _build_shortcuts_tab(self) -> QWidget:
+        w = QWidget()
+        outer = QVBoxLayout(w)
+        shortcuts_group = QGroupBox("Shortcuts")
+        shortcuts_form = QFormLayout(shortcuts_group)
+        self._hotkey_inputs: dict[str, QLineEdit] = {}
+        for key, label, default in [
+            ("toggle_manual_recording", "Toggle recording",        "ctrl+alt+r"),
+            ("open_workspace",          "Open workspace",          "ctrl+alt+n"),
+            ("toggle_pause_detection",  "Pause/unpause detection", "ctrl+alt+p"),
+        ]:
+            row = QHBoxLayout()
+            line = QLineEdit(self._settings.hotkeys.get(key, default))
+            line.setPlaceholderText(default)
+            row.addWidget(line, 1)
+            reset = QPushButton("Reset")
+            reset.setProperty("role", "ghost")
+            reset.setFixedWidth(60)
+            reset.clicked.connect(lambda _checked=False, ln=line, d=default: ln.setText(d))
+            row.addWidget(reset)
+            wrapper = QWidget()
+            wrapper.setLayout(row)
+            shortcuts_form.addRow(label, wrapper)
+            self._hotkey_inputs[key] = line
+        outer.addWidget(shortcuts_group)
+        outer.addStretch(1)
+        return w
+
+    def _build_about_tab(self) -> QWidget:
+        from teams_transcriber import __version__
+
+        w = QWidget()
+        v = QVBoxLayout(w)
+        v.setSpacing(12)
+
+        title = QLabel("<h2>Teams Transcriber</h2>")
+        v.addWidget(title)
+
+        version_label = QLabel(f"Version: <b>{__version__}</b>")
+        v.addWidget(version_label)
+
+        last_check = self._settings.last_update_check or "Never"
+        self._last_check_label = make_selectable(QLabel(f"Last update check: {last_check}"))
+        v.addWidget(self._last_check_label)
+
+        # Auto-check checkbox.
+        self._auto_check_cb = QCheckBox("Automatically check for updates on startup")
+        self._auto_check_cb.setChecked(self._settings.auto_check_updates)
+        v.addWidget(self._auto_check_cb)
+
+        # "Check for updates now" button.
+        self._check_updates_btn = QPushButton("Check for updates now")
+        self._check_updates_btn.setProperty("role", "primary")
+        self._check_updates_btn.clicked.connect(self._manual_update_check)
+        v.addWidget(self._check_updates_btn)
+
+        self._update_check_result = make_selectable(QLabel(""))
+        self._update_check_result.setWordWrap(True)
+        v.addWidget(self._update_check_result)
+
+        # Shown only when a check finds a newer version; installs in-app.
+        self._latest_release = None
+        self._install_btn = QPushButton("Install update")
+        self._install_btn.setProperty("role", "primary")
+        self._install_btn.setVisible(False)
+        self._install_btn.clicked.connect(self._install_update)
+        v.addWidget(self._install_btn)
+
+        v.addStretch(1)
+        return w
+
+    def _install_update(self) -> None:
+        """Download + install the update found by the last check, from Settings."""
+        if self._latest_release is None:
+            return
+        from teams_transcriber.ui.scrim import exec_modal
+        from teams_transcriber.ui.update_dialog import UpdateDialog
+        dlg = UpdateDialog(
+            version=self._latest_release.tag,
+            download_url=self._latest_release.installer_url,
+            paths=self._paths,
+            parent=self,
+            quit_callback=self._update_quit_callback,
+        )
+        exec_modal(dlg)
+
+    def _manual_update_check(self) -> None:
+        """Fetch the latest release on a worker thread; UI stays responsive."""
+        import threading
+
+        from PySide6.QtCore import QTimer
+
+        from teams_transcriber.update_checker import UpdateCheckError, fetch_latest_release
+
+        self._update_check_result.setText("Checking…")
+        self._check_updates_btn.setEnabled(False)
+
+        def _worker() -> None:
+            try:
+                latest, err = fetch_latest_release(), ""
+            except UpdateCheckError as exc:
+                latest, err = None, str(exc)
+            QTimer.singleShot(0, self, lambda: self._on_update_check_done(latest, err))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_update_check_done(self, latest, error: str) -> None:
+        from datetime import UTC, datetime
+
+        from teams_transcriber import __version__
+        from teams_transcriber.update_checker import is_update_available
+
+        self._check_updates_btn.setEnabled(True)
+        if error:
+            self._update_check_result.setText(
+                f"<span style='color: #DC2626;'>Check failed: {error}</span>"
+            )
+            return
+        ts = datetime.now(UTC).strftime("%Y-%m-%d %I:%M %p UTC")
+        self._last_check_label.setText(f"Last update check: {ts}")
+        if is_update_available(__version__, latest):
+            self._latest_release = latest
+            self._update_check_result.setText(
+                f"<b>Update available: {latest.tag}</b><br>"
+                f"<a href='{latest.html_url}'>View release notes</a>"
+            )
+            self._update_check_result.setOpenExternalLinks(True)
+            self._install_btn.setVisible(True)
+        else:
+            self._latest_release = None
+            self._install_btn.setVisible(False)
+            self._update_check_result.setText("You're on the latest version.")
+
+    def _redownload_model(self) -> None:
+        """Wipe the cached Whisper model snapshot dir and re-download.
+
+        Used to recover from broken downloads (missing model.bin etc.).
+        """
+        import shutil
+        from pathlib import Path
+
+        from teams_transcriber.ui.confirm_dialog import ConfirmDialog
+
+        repo_id = self._settings.transcription_model
+        cache_root = Path.home() / ".cache" / "huggingface" / "hub"
+        candidates = _model_cache_candidates(cache_root, repo_id)
+
+        if not candidates:
+            ConfirmDialog.info(
+                self, title="Model cache not found",
+                body=(
+                    f"Could not find a cached Whisper model under {cache_root}.\n"
+                    "The model will download fresh on next transcription."
+                ),
+            )
+            return
+
+        names = "\n".join(f"  • {d.name}" for d in candidates)
+        ok = ConfirmDialog.ask(
+            self, title="Re-download Whisper model?",
+            body=(
+                "This will delete the following cached model directories "
+                "so they re-download (~3 GB) on next transcription:\n\n"
+                f"{names}"
+            ),
+            confirm_label="Re-download", cancel_label="Cancel", danger=True,
+        )
+        if not ok:
+            return
+
+        deleted_any = False
+        for d in candidates:
+            try:
+                shutil.rmtree(d)
+                deleted_any = True
+            except OSError as exc:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Could not delete %s: %s", d, exc,
+                )
+        if deleted_any:
+            ConfirmDialog.info(
+                self, title="Done",
+                body=(
+                    "Model cache cleared. The model will re-download on the "
+                    "next transcription. Use Retry on any failed recordings "
+                    "to trigger it now."
+                ),
+            )
+
     def _add_pattern(self) -> None:
         text = self.pattern_input.text().strip()
         if not text:
@@ -165,7 +566,12 @@ class SettingsDialog(QDialog):
     def _on_accept(self) -> None:
         s = self._settings
         s._raw["general"]["auto_launch"] = self.auto_launch_cb.isChecked()
+        # General — auto_check_updates (new).
+        s._raw["general"]["auto_check_updates"] = self._auto_check_cb.isChecked()
         s._raw["audio"]["retention_days"] = self.retention_spin.value()
+        # Audio device selections — Phase 6.
+        s._raw["audio"]["mic_device"] = self._mic_combo.currentData()
+        s._raw["audio"]["loopback_device"] = self._loopback_combo.currentData()
         patterns: list[str] = []
         for i in range(self.pattern_list.count()):
             item = self.pattern_list.item(i)
@@ -174,8 +580,27 @@ class SettingsDialog(QDialog):
         s._raw["detection"]["title_patterns"] = patterns
         s._raw["transcription"]["model"] = self.model_combo.currentText()
         s._raw["transcription"]["compute_type"] = self.compute_combo.currentText()
+        s._raw["transcription"]["live_enabled"] = self._live_enabled_check.isChecked()
         s._raw["ai"]["model"] = self.ai_model_combo.currentText()
         s._raw["ai"]["custom_prompt_addendum"] = self.addendum_input.toPlainText()
+
+        # Hotkeys — Phase 5.
+        s._raw["hotkeys"] = dict(s._raw.get("hotkeys", {}))
+        new_hotkeys: dict[str, str] = {}
+        for key, line in self._hotkey_inputs.items():
+            value = line.text().strip()
+            if not value:
+                value = s._raw["hotkeys"].get(key, "")
+            new_hotkeys[key] = value
+            s._raw["hotkeys"][key] = value
+
+        # Integrations — Wrike enabled flag.
+        s._raw.setdefault("integrations", {})["wrike_enabled"] = (
+            self.wrike_enable_cb.isChecked()
+        )
+        s._raw.setdefault("integrations", {})["wrike_llm_assignee_fallback"] = (
+            self.wrike_llm_assignee_cb.isChecked()
+        )
 
         save_settings(self._paths, s)
 
@@ -189,5 +614,16 @@ class SettingsDialog(QDialog):
         if new_key:
             keyring.set_password(KEYRING_SERVICE, KEYRING_USER_ANTHROPIC, new_key)
 
+        # Wrike token to keyring.
+        new_wrike_token = self.wrike_token_input.text().strip()
+        if new_wrike_token:
+            keyring.set_password(KEYRING_SERVICE, KEYRING_USER_WRIKE, new_wrike_token)
+        # (Empty input means "keep what's stored"; if the user wants to clear the
+        # token they can do it from the keyring directly. Matches the Anthropic
+        # key pattern.)
+
         self.saved.emit()
         self.accept()
+
+        if self._hotkey_reload_callback is not None:
+            self._hotkey_reload_callback(new_hotkeys)

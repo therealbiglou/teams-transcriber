@@ -73,7 +73,7 @@ def app_stylesheet() -> str:
         border: 1px solid {c['border_soft']};
     }}
     QFrame[card="true"][selected="true"] {{
-        border: 2px solid {c['accent']};
+        border: 1px solid {c['accent']};
     }}
 
     QFrame[role="sidebar"] {{
@@ -95,6 +95,17 @@ def app_stylesheet() -> str:
         background: {c['card']};
         color: {c['text_primary']};
     }}
+
+    QPushButton {{
+        background: {c['card']};
+        color: {c['text_primary']};
+        border: 1px solid {c['border']};
+        border-radius: {r['button']}px;
+        padding: {s['sm']}px {s['lg']}px;
+        font-weight: 500;
+    }}
+    QPushButton:hover {{ background: {c['hover']}; }}
+    QPushButton:disabled {{ color: {c['text_tertiary']}; background: {c['card_alt']}; }}
 
     QPushButton[role="primary"] {{
         background: {c['accent']};
@@ -215,5 +226,107 @@ def app_stylesheet() -> str:
     QMenu::separator {{
         height: 1px; background: {c['border_soft']};
         margin: {s['xs']}px {s['sm']}px;
+    }}
+
+    QComboBox {{
+        background: {c['card']}; color: {c['text_primary']};
+        border: 1px solid {c['border']}; border-radius: {r['input']}px;
+        padding: {s['xs']}px {s['md']}px; min-height: 24px;
+    }}
+    QComboBox:focus {{ border: 1px solid {c['accent']}; }}
+    QComboBox::drop-down {{ border: none; width: 24px; }}
+    QComboBox QAbstractItemView {{
+        background: {c['card']}; color: {c['text_primary']};
+        border: 1px solid {c['border']}; border-radius: {r['button']}px;
+        selection-background-color: {c['hover']};
+        selection-color: {c['text_primary']};
+        outline: none;
+    }}
+
+    QTabWidget::pane {{
+        border: 1px solid {c['border_soft']};
+        border-radius: {r['card']}px;
+        top: -1px;
+    }}
+    QTabBar::tab {{
+        background: transparent; color: {c['text_secondary']};
+        padding: {s['sm']}px {s['lg']}px; border: none;
+        border-top-left-radius: {r['button']}px;
+        border-top-right-radius: {r['button']}px;
+    }}
+    QTabBar::tab:selected {{
+        background: {c['card']}; color: {c['text_primary']}; font-weight: 600;
+    }}
+    QTabBar::tab:hover:!selected {{ background: {c['hover']}; }}
+
+    QSpinBox {{
+        background: {c['card']}; color: {c['text_primary']};
+        border: 1px solid {c['border']}; border-radius: {r['input']}px;
+        padding: {s['xs']}px {s['sm']}px;
+    }}
+    QSpinBox:focus {{ border: 1px solid {c['accent']}; }}
+
+    QListWidget {{
+        background: {c['card']};
+        border: 1px solid {c['border']}; border-radius: {r['input']}px;
+        padding: {s['xs']}px;
+        outline: none;
+    }}
+    QListWidget::item {{
+        padding: {s['xs']}px {s['sm']}px; border-radius: {r['button']}px;
+        color: {c['text_primary']};
+    }}
+    QListWidget::item:selected {{
+        background: {c['accent_soft']}; color: {c['text_primary']};
+    }}
+    QListWidget::item:hover:!selected {{ background: {c['hover']}; }}
+
+    QGroupBox {{
+        border: 1px solid {c['border_soft']}; border-radius: {r['card']}px;
+        margin-top: {s['md']}px; font-weight: 600;
+    }}
+    QGroupBox::title {{
+        subcontrol-origin: margin; left: {s['md']}px; padding: 0 {s['xs']}px;
+        color: {c['text_primary']};
+    }}
+
+    QProgressBar {{
+        background: {c['card_alt']};
+        border: 1px solid {c['border_soft']}; border-radius: {r['button']}px;
+        min-height: 14px; text-align: center; font-size: 11px;
+        color: {c['text_secondary']};
+    }}
+    QProgressBar::chunk {{
+        background: {c['accent']}; border-radius: {r['button']}px;
+    }}
+
+    QCheckBox::indicator, QRadioButton::indicator {{
+        width: 16px; height: 16px;
+        border: 1px solid {c['border']}; border-radius: 4px;
+        background: {c['card']};
+    }}
+    QRadioButton::indicator {{ border-radius: 8px; }}
+    QCheckBox::indicator:hover, QRadioButton::indicator:hover {{
+        border-color: {c['accent']};
+    }}
+    QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
+        background: {c['accent']}; border-color: {c['accent']};
+    }}
+
+    QScrollBar:horizontal {{
+        background: transparent; height: 10px; margin: 0;
+    }}
+    QScrollBar::handle:horizontal {{
+        background: {c['border']}; border-radius: 5px; min-width: 30px;
+    }}
+    QScrollBar::handle:horizontal:hover {{
+        background: {c['text_tertiary']};
+    }}
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
+
+    QToolTip {{
+        background: {c['text_primary']}; color: #FFFFFF;
+        border: none; padding: {s['xs']}px {s['sm']}px;
+        border-radius: 4px; font-size: 12px;
     }}
     """

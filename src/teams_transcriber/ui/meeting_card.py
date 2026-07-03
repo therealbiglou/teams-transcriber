@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from teams_transcriber.storage.models import Recording, RecordingStatus
+from teams_transcriber.ui.labels import make_selectable, make_wrapping
 
 
 class MeetingCard(QFrame):
@@ -29,6 +30,7 @@ class MeetingCard(QFrame):
         recording: Recording,
         one_line: str | None,
         todo_count: int,
+        todos_done: int = 0,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -55,8 +57,7 @@ class MeetingCard(QFrame):
         title_text = recording.display_title or recording.detected_title or "(untitled)"
         title = QLabel(title_text)
         title.setStyleSheet("font-size: 16px; font-weight: 600;")
-        title.setWordWrap(True)
-        title.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        make_wrapping(title)
         top.addWidget(title, 1)
 
         chip = _status_chip(recording.status)
@@ -72,17 +73,31 @@ class MeetingCard(QFrame):
         meta.setWordWrap(True)
         outer.addWidget(meta)
 
+        # When the recording is in any failed state, surface the actual reason.
+        if recording.status in (
+            RecordingStatus.RECORDING_FAILED,
+            RecordingStatus.TRANSCRIPTION_FAILED,
+            RecordingStatus.SUMMARY_FAILED,
+        ) and recording.error_message:
+            err = QLabel(recording.error_message)
+            err.setWordWrap(True)
+            err.setStyleSheet("color: #DC2626; font-size: 12px;")
+            err.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            make_selectable(err)
+            outer.addWidget(err)
+
         if one_line:
             ol = QLabel(one_line)
             ol.setWordWrap(True)
             ol.setStyleSheet("color: #374151; font-size: 13px;")
+            make_wrapping(ol)
             outer.addWidget(ol)
 
         if todo_count > 0:
             footer = QHBoxLayout()
-            todo_chip = QLabel(f"{todo_count} todo{'s' if todo_count != 1 else ''}")
+            todo_chip = QLabel(_todo_chip_text(todo_count, todos_done))
             todo_chip.setProperty("role", "chip")
-            todo_chip.setProperty("variant", "success")
+            todo_chip.setProperty("variant", _todo_chip_variant(todo_count, todos_done))
             style = todo_chip.style()
             if style is not None:
                 style.unpolish(todo_chip)
@@ -113,11 +128,25 @@ class MeetingCard(QFrame):
                 self._shadow.setOffset(0, 1)
 
 
+def _todo_chip_text(total: int, done: int) -> str:
+    noun = "todo" if total == 1 else "todos"
+    return f"{total} {noun} | {done} complete"
+
+
+def _todo_chip_variant(total: int, done: int) -> str:
+    if done >= total:
+        return "success"
+    if done == 0:
+        return "error"
+    return "warn"
+
+
 def _status_chip(status: RecordingStatus) -> QLabel | None:
     label_variant: dict[RecordingStatus, tuple[str, str]] = {
         RecordingStatus.RECORDING:           ("Recording", "warn"),
         RecordingStatus.TRANSCRIBING:        ("Transcribing", "warn"),
         RecordingStatus.SUMMARIZING:         ("Summarizing", "warn"),
+        RecordingStatus.WAITING_FOR_NOTES:   ("Waiting for notes", "warn"),
         RecordingStatus.DONE:                ("", ""),
         RecordingStatus.RECORDING_FAILED:    ("Failed", "error"),
         RecordingStatus.TRANSCRIPTION_FAILED: ("Failed", "error"),
@@ -134,7 +163,7 @@ def _status_chip(status: RecordingStatus) -> QLabel | None:
 
 def _fmt_time(iso: str) -> str:
     try:
-        dt = datetime.fromisoformat(iso)
+        dt = datetime.fromisoformat(iso).astimezone()  # convert UTC → local
         return dt.strftime("%b %d, %I:%M %p").lstrip("0").replace(" 0", " ")
     except ValueError:
         return iso

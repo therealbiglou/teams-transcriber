@@ -49,6 +49,22 @@ class TodoStateRepo:
             )
             conn.commit()
 
+    def seed(self, recording_id: int, todo_index: int, task_text: str) -> None:
+        """Ensure a row exists for a (re-)generated todo WITHOUT touching its
+        done state — done flags must survive re-summarization (the module
+        contract). Only the task text is refreshed on conflict."""
+        with self._db.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO todo_state (recording_id, todo_index, task_text, done, done_at)
+                VALUES (?, ?, ?, 0, NULL)
+                ON CONFLICT(recording_id, todo_index) DO UPDATE SET
+                    task_text = excluded.task_text
+                """,
+                (recording_id, todo_index, task_text),
+            )
+            conn.commit()
+
     def mark_done(
         self,
         recording_id: int,

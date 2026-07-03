@@ -28,6 +28,17 @@ def _isolate_keyring_and_registry(monkeypatch):
     )
 
 
+def test_wizard_has_shared_chrome(qapp, qtbot, paths: AppPaths) -> None:
+    from teams_transcriber.ui.frameless import FramelessWindowMixin
+
+    settings = load_settings(paths)
+    wizard = FirstRunWizard(
+        settings=settings, paths=paths, model_downloader=lambda cb: None,
+    )
+    assert isinstance(wizard, FramelessWindowMixin)
+    assert wizard._title_bar.close_btn is not None
+
+
 def test_finish_writes_marker_file(qapp, qtbot, paths: AppPaths) -> None:
     settings = load_settings(paths)
     wizard = FirstRunWizard(
@@ -91,3 +102,101 @@ def test_finish_syncs_autolaunch(
     wizard.auto_launch_cb.setChecked(True)
     wizard._finish()
     assert calls == ["enable"]
+
+
+def test_wizard_skips_gpu_runtime_download_when_already_installed(
+    qapp, qtbot, paths, monkeypatch,
+) -> None:
+    """If is_runtime_installed returns True, the wizard doesn't kick off a download."""
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.ui.first_run_wizard import FirstRunWizard
+
+    paths.ensure_dirs()
+    settings = load_settings(paths)
+
+    download_calls: list[str] = []
+
+    def fake_download(runtime_base, progress_callback=None):
+        download_calls.append("invoked")
+
+    monkeypatch.setattr(
+        "teams_transcriber.runtime.gpu_runtime.is_runtime_installed",
+        lambda _base: True,
+    )
+    monkeypatch.setattr(
+        "teams_transcriber.runtime.gpu_runtime.download_runtime",
+        fake_download,
+    )
+
+    wiz = FirstRunWizard(
+        settings=settings, paths=paths,
+        model_downloader=lambda progress: progress(100),
+    )
+    wiz._next()  # welcome → setup
+    wiz._next()  # setup → gpu runtime (should not invoke download_runtime)
+    assert download_calls == []
+
+
+def test_wizard_kicks_off_gpu_runtime_download_when_not_installed(
+    qapp, qtbot, paths, monkeypatch,
+) -> None:
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.ui.first_run_wizard import FirstRunWizard
+
+    paths.ensure_dirs()
+    settings = load_settings(paths)
+
+    download_calls: list[str] = []
+
+    def fake_download(runtime_base, progress_callback=None):
+        download_calls.append("invoked")
+        if progress_callback:
+            progress_callback("nvidia-cublas-cu12", 0, 100)
+            progress_callback("nvidia-cublas-cu12", 100, 100)
+
+    monkeypatch.setattr(
+        "teams_transcriber.runtime.gpu_runtime.is_runtime_installed",
+        lambda _base: False,
+    )
+    monkeypatch.setattr(
+        "teams_transcriber.runtime.gpu_runtime.download_runtime",
+        fake_download,
+    )
+
+    wiz = FirstRunWizard(
+        settings=settings, paths=paths,
+        model_downloader=lambda progress: progress(100),
+    )
+    wiz._next()  # welcome → setup
+    wiz._next()  # setup → gpu runtime → auto-kick download (now async)
+    qtbot.waitUntil(lambda: download_calls == ["invoked"], timeout=3000)
+    qtbot.waitUntil(lambda: wiz.gpu_progress_bar.value() == 100, timeout=3000)
+
+
+def test_nav_disabled_while_download_runs(qapp, qtbot, paths, monkeypatch) -> None:
+    import threading
+
+    from teams_transcriber.config import load_settings
+    from teams_transcriber.ui.first_run_wizard import FirstRunWizard
+
+    gate = threading.Event()
+
+    def slow_download(runtime_base, progress_callback=None):
+        gate.wait(timeout=5)
+
+    monkeypatch.setattr(
+        "teams_transcriber.runtime.gpu_runtime.is_runtime_installed",
+        lambda _base: False,
+    )
+    monkeypatch.setattr(
+        "teams_transcriber.runtime.gpu_runtime.download_runtime", slow_download,
+    )
+    wiz = FirstRunWizard(
+        settings=load_settings(paths), paths=paths,
+        model_downloader=lambda progress: progress(100),
+    )
+    wiz._next()
+    wiz._next()   # land on GPU page → download starts
+    assert not wiz._next_btn.isEnabled()
+    gate.set()
+    qtbot.waitUntil(lambda: wiz._next_btn.isEnabled(), timeout=3000)
