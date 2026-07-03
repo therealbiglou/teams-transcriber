@@ -233,6 +233,51 @@ def test_pipeline_recovers_stuck_recordings_on_init(tmp_path: Path) -> None:
     db.close()
 
 
+def test_recover_transcribing_with_segments_resumes_summarization(tmp_path: Path) -> None:
+    """A TRANSCRIBING recording with segments must not just be marked SUMMARIZING —
+    recovery must actually resume summarization on the executor."""
+    from teams_transcriber.storage import Channel, Recording, RecordingSource, TranscriptSegment
+
+    paths = AppPaths(root=tmp_path / "TT")
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    repo = RecordingRepo(db)
+
+    rec = repo.create(Recording(
+        id=None, started_at="2026-05-15T10:00:00+00:00",
+        ended_at="2026-05-15T10:05:00+00:00",
+        source=RecordingSource.TEAMS,
+        detected_title="stuck-with-segments", display_title=None,
+        audio_path=None, audio_deleted_at=None,
+        duration_ms=300_000, status=RecordingStatus.TRANSCRIBING,
+        error_message=None,
+    ))
+    TranscriptRepo(db).append(TranscriptSegment(
+        id=None, recording_id=rec.id, start_ms=0, end_ms=1_000,
+        channel=Channel.ME, text="hello",
+    ))
+
+    class _FakeSummarizer:
+        def __init__(self) -> None:
+            self.calls: list[int] = []
+
+        def summarize(self, recording_id: int, *, api_key: str | None) -> None:
+            self.calls.append(recording_id)
+
+    fake_summarizer = _FakeSummarizer()
+    pipeline = Pipeline(
+        bus=EventBus(), db=db, paths=paths, settings=Settings(),
+        audio_source_factory=lambda: _make_source(0.1),
+        summarizer=fake_summarizer,  # type: ignore[arg-type]
+    )
+    pipeline._executor.shutdown(wait=True)  # drain the submitted work
+
+    assert repo.get(rec.id).status == RecordingStatus.SUMMARIZING
+    assert fake_summarizer.calls == [rec.id]
+    db.close()
+
+
 def test_pipeline_retry_summary_dispatches_to_summarizer(tmp_path: Path) -> None:
     paths = AppPaths(root=tmp_path / "TT")
     paths.ensure_dirs()
@@ -251,7 +296,35 @@ def test_pipeline_retry_summary_dispatches_to_summarizer(tmp_path: Path) -> None
         summarizer=_SummSpy(),  # type: ignore[arg-type]
     )
     pipeline.retry_summary(42, api_key="sk-test")
+    pipeline._executor.shutdown(wait=True)  # drain the submitted work
     assert calls == [(42, "sk-test")]
+    db.close()
+
+
+def test_retry_summary_runs_on_executor_not_caller(tmp_path: Path) -> None:
+    """retry_summary must never run the Anthropic call on the caller (UI) thread."""
+    import threading
+
+    paths = AppPaths(root=tmp_path / "TT")
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+
+    seen_threads: list[int] = []
+
+    class _SummSpy:
+        def summarize(self, recording_id: int, *, api_key: str | None) -> None:
+            seen_threads.append(threading.get_ident())
+
+    pipeline = Pipeline(
+        bus=EventBus(), db=db, paths=paths, settings=Settings(),
+        audio_source_factory=lambda: _make_source(0.1),
+        summarizer=_SummSpy(),  # type: ignore[arg-type]
+    )
+    pipeline.retry_summary(42, api_key="k")
+    pipeline._executor.shutdown(wait=True)  # drain the submitted work
+
+    assert seen_threads and seen_threads[0] != threading.get_ident()
     db.close()
 
 

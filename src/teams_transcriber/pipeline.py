@@ -83,8 +83,13 @@ class Pipeline:
             self._live_transcriber = None
 
     def retry_summary(self, recording_id: int, *, api_key: str | None) -> None:
-        """Public entry point for re-running summarization on an existing recording."""
-        self._summarizer.summarize(recording_id, api_key=api_key)
+        """Re-run summarization on the post-processing executor. Never on the
+        caller thread — the UI invokes this from a Qt slot and the Anthropic
+        call would freeze the event loop."""
+        future = self._executor.submit(
+            self._summarizer.summarize, recording_id, api_key=api_key,
+        )
+        self._pending_futures.append(future)
 
     def import_audio_file(self, src_path: str) -> int:
         """Import an external audio file as a recording and start processing.
@@ -304,8 +309,13 @@ class Pipeline:
                 continue
             segments = tr_repo.list_for_recording(rec.id)
             if segments:
-                logger.info("recover: %d had segments, marking SUMMARIZING", rec.id)
+                logger.info("recover: %d had segments, resuming summarization", rec.id)
                 rec_repo.update_status(rec.id, RecordingStatus.SUMMARIZING)
+                future = self._executor.submit(
+                    self._summarizer.summarize, rec.id,
+                    api_key=self._settings.anthropic_api_key(),
+                )
+                self._pending_futures.append(future)
                 continue
             logger.warning("recovering stuck TRANSCRIBING %d (no segments)", rec.id)
             rec_repo.update_status(
