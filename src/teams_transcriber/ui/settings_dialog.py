@@ -120,6 +120,14 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         self._init_frameless(frame, resizable=True, title_bar=self._title_bar,
                              shell_layout=shell)
 
+        from teams_transcriber.ui.window_state import restore_window_geometry
+        restore_window_geometry(self, "settings", default_size=(700, 540))
+
+    def done(self, result: int) -> None:  # noqa: N802
+        from teams_transcriber.ui.window_state import save_window_geometry
+        save_window_geometry(self, "settings")
+        super().done(result)
+
     def _build_general_tab(self) -> QWidget:
         w = QWidget()
         form = QFormLayout(w)

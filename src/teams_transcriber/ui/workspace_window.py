@@ -147,6 +147,9 @@ class WorkspaceWindow(FramelessWindowMixin, QWidget):
         self._init_frameless(self._frame, resizable=True,
                              title_bar=self._title_bar, shell_layout=outer)
 
+        from teams_transcriber.ui.window_state import restore_window_geometry
+        restore_window_geometry(self, "workspace", default_size=(1100, 700))
+
     def _set_recording_dot(self, recording: bool) -> None:
         color = "#EF4444" if recording else "#9CA3AF"
         self._dot.setStyleSheet(f"color: {color}; font-size: 14px;")
@@ -202,6 +205,8 @@ class WorkspaceWindow(FramelessWindowMixin, QWidget):
             pass
 
     def closeEvent(self, ev) -> None:  # noqa: N802
+        from teams_transcriber.ui.window_state import save_window_geometry
+        save_window_geometry(self, "workspace")
         self.notes_editor.flush_now()
         try:
             self._bridge.live_segment_available.disconnect(self._on_live_segment)

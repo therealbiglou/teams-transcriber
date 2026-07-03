@@ -69,6 +69,14 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         self._init_frameless(outer, resizable=True, title_bar=self.title_bar,
                              shell_layout=shell)
 
+        from teams_transcriber.ui.window_state import restore_window_geometry
+        restore_window_geometry(self, "main", default_size=(1200, 760))
+
+    def closeEvent(self, ev) -> None:  # noqa: N802
+        from teams_transcriber.ui.window_state import save_window_geometry
+        save_window_geometry(self, "main")
+        super().closeEvent(ev)
+
     def set_content(self, widget: QWidget) -> None:
         """Replace the content area's child widget."""
         while self._content_layout.count():
