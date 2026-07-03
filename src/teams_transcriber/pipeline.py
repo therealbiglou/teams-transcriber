@@ -86,10 +86,7 @@ class Pipeline:
         """Re-run summarization on the post-processing executor. Never on the
         caller thread — the UI invokes this from a Qt slot and the Anthropic
         call would freeze the event loop."""
-        future = self._executor.submit(
-            self._summarizer.summarize, recording_id, api_key=api_key,
-        )
-        self._pending_futures.append(future)
+        self._submit_summarize(recording_id, api_key=api_key)
 
     def import_audio_file(self, src_path: str) -> int:
         """Import an external audio file as a recording and start processing.
@@ -198,6 +195,20 @@ class Pipeline:
 
     def _submit_post_processing(self, recording_id: int) -> None:
         future = self._executor.submit(self._run_post_processing, recording_id)
+        self._pending_futures.append(future)
+
+    def _submit_summarize(self, recording_id: int, *, api_key: str | None) -> None:
+        """Submit summarize() on the executor and log (rather than swallow) any
+        unexpected raise that would otherwise die silently in the Future."""
+        future = self._executor.submit(
+            self._summarizer.summarize, recording_id, api_key=api_key,
+        )
+        future.add_done_callback(
+            lambda f, rid=recording_id: (
+                logger.exception("summarize task for %d crashed", rid, exc_info=f.exception())
+                if f.exception() is not None else None
+            )
+        )
         self._pending_futures.append(future)
 
     def _on_recording_finalized(self, evt: RecordingFinalized) -> None:
@@ -311,11 +322,7 @@ class Pipeline:
             if segments:
                 logger.info("recover: %d had segments, resuming summarization", rec.id)
                 rec_repo.update_status(rec.id, RecordingStatus.SUMMARIZING)
-                future = self._executor.submit(
-                    self._summarizer.summarize, rec.id,
-                    api_key=self._settings.anthropic_api_key(),
-                )
-                self._pending_futures.append(future)
+                self._submit_summarize(rec.id, api_key=self._settings.anthropic_api_key())
                 continue
             logger.warning("recovering stuck TRANSCRIBING %d (no segments)", rec.id)
             rec_repo.update_status(

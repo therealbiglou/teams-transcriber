@@ -328,6 +328,35 @@ def test_retry_summary_runs_on_executor_not_caller(tmp_path: Path) -> None:
     db.close()
 
 
+def test_retry_summary_logs_crash_instead_of_swallowing_it(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unexpected raise inside summarize() must not die silently in the
+    Future — it should be logged so it's not invisible in production."""
+    paths = AppPaths(root=tmp_path / "TT")
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+
+    class _BoomSumm:
+        def summarize(self, recording_id: int, *, api_key: str | None) -> None:
+            raise RuntimeError("boom")
+
+    pipeline = Pipeline(
+        bus=EventBus(), db=db, paths=paths, settings=Settings(),
+        audio_source_factory=lambda: _make_source(0.1),
+        summarizer=_BoomSumm(),  # type: ignore[arg-type]
+    )
+    with caplog.at_level("ERROR"):
+        pipeline.retry_summary(42, api_key="sk-test")
+        pipeline._executor.shutdown(wait=True)  # drain the submitted work; raises nothing
+
+    assert any(
+        "42" in r.message and r.exc_info is not None for r in caplog.records
+    )
+    db.close()
+
+
 def test_pipeline_runs_post_processing_on_executor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The transcribe+summarize chain must run off the publishing thread."""
     import threading
