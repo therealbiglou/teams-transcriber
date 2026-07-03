@@ -456,7 +456,6 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         """
         import shutil
         from pathlib import Path
-        from PySide6.QtWidgets import QMessageBox
         from teams_transcriber.ui.confirm_dialog import ConfirmDialog
 
         repo_id = self._settings.transcription_model
@@ -479,10 +478,12 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         candidates = unique_candidates
 
         if not candidates:
-            QMessageBox.information(
-                self, "Model cache not found",
-                f"Could not find a cached Whisper model under {cache_root}.\n"
-                "The model will download fresh on next transcription.",
+            ConfirmDialog.info(
+                self, title="Model cache not found",
+                body=(
+                    f"Could not find a cached Whisper model under {cache_root}.\n"
+                    "The model will download fresh on next transcription."
+                ),
             )
             return
 
@@ -510,11 +511,13 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
                     "Could not delete %s: %s", d, exc,
                 )
         if deleted_any:
-            QMessageBox.information(
-                self, "Done",
-                "Model cache cleared. The model will re-download on the "
-                "next transcription. Use Retry on any failed recordings "
-                "to trigger it now.",
+            ConfirmDialog.info(
+                self, title="Done",
+                body=(
+                    "Model cache cleared. The model will re-download on the "
+                    "next transcription. Use Retry on any failed recordings "
+                    "to trigger it now."
+                ),
             )
 
     def _add_pattern(self) -> None:
