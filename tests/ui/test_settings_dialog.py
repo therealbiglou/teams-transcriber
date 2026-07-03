@@ -212,3 +212,16 @@ def test_settings_dialog_has_shared_chrome(qapp, qtbot, paths) -> None:
     assert isinstance(dlg, FramelessWindowMixin)
     assert dlg._title_bar.close_btn is not None
     assert dlg._tabs.count() >= 7
+
+
+def test_model_cache_candidates_only_configured_model(tmp_path):
+    from teams_transcriber.ui.settings_dialog import _model_cache_candidates
+    (tmp_path / "models--Systran--faster-whisper-large-v3").mkdir()
+    (tmp_path / "models--Systran--faster-whisper-medium").mkdir()
+    (tmp_path / "models--mobiuslabsgmbh--faster-whisper-large-v3-turbo").mkdir()
+
+    got = [d.name for d in _model_cache_candidates(tmp_path, "medium")]
+    assert got == ["models--Systran--faster-whisper-medium"]
+
+    got = [d.name for d in _model_cache_candidates(tmp_path, "large-v3")]
+    assert got == ["models--Systran--faster-whisper-large-v3"]   # NOT the turbo dir

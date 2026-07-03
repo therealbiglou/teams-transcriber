@@ -21,6 +21,26 @@ def _enumerate_speakers() -> list:
         return list(soundcard.all_speakers())
     except Exception:
         return []
+
+
+def _model_cache_candidates(cache_root, model: str) -> list:
+    """Cached HF snapshot dirs for exactly this Whisper model.
+
+    HF cache dirs look like `models--<org>--faster-whisper-<model>`. endswith
+    keeps 'large-v3' from also matching 'large-v3-turbo'; the replace() form
+    covers a fully-qualified `org/repo` model value."""
+    from pathlib import Path
+    cache_root = Path(cache_root)
+    if not cache_root.is_dir():
+        return []
+    marker_suffix = f"faster-whisper-{model}"
+    marker_full = model.replace("/", "--") if "/" in model else ""
+    return [
+        d for d in sorted(cache_root.iterdir())
+        if d.is_dir() and (d.name.endswith(marker_suffix) or (marker_full and marker_full in d.name))
+    ]
+
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -488,22 +508,7 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
 
         repo_id = self._settings.transcription_model
         cache_root = Path.home() / ".cache" / "huggingface" / "hub"
-        target_marker = repo_id.replace("/", "--")
-        candidates: list[Path] = []
-        if cache_root.is_dir():
-            for d in cache_root.iterdir():
-                if d.is_dir() and target_marker in d.name:
-                    candidates.append(d)
-                elif d.is_dir() and "faster-whisper" in d.name:
-                    candidates.append(d)
-        # Deduplicate while preserving order.
-        seen: set[Path] = set()
-        unique_candidates: list[Path] = []
-        for c in candidates:
-            if c not in seen:
-                seen.add(c)
-                unique_candidates.append(c)
-        candidates = unique_candidates
+        candidates = _model_cache_candidates(cache_root, repo_id)
 
         if not candidates:
             ConfirmDialog.info(
