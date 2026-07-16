@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import wave
+from datetime import UTC, datetime
 from pathlib import Path
 
 import numpy as np
@@ -94,3 +95,34 @@ def test_import_rejects_non_audio_file(env, tmp_path: Path) -> None:
     # No recording row created on failure.
     rows = list(RecordingRepo(db).list_recent(limit=10))
     assert rows == []
+
+
+def test_import_honors_metadata_overrides(env, tmp_path: Path) -> None:
+    paths, db = env
+    src = tmp_path / "external" / "REC0001.wav"
+    src.parent.mkdir(parents=True)
+    _write_mono_wav(src, seconds=1.0)
+
+    when = datetime(2026, 7, 14, 9, 0, 0, tzinfo=UTC)
+    rid = import_audio_file(
+        src, db=db, paths=paths,
+        title="Site walkthrough", started_at_override=when,
+    )
+    rec = RecordingRepo(db).get(rid)
+    assert rec is not None
+    assert rec.display_title == "Site walkthrough"
+    assert rec.started_at == when.isoformat()
+
+
+def test_import_without_overrides_still_derives_from_filename(env, tmp_path: Path) -> None:
+    """Backward compatibility: omitting title/started_at_override keeps the
+    existing filename/mtime-derived behavior."""
+    paths, db = env
+    src = tmp_path / "external" / "my-meeting.wav"
+    src.parent.mkdir(parents=True)
+    _write_mono_wav(src, seconds=0.5)
+
+    rid = import_audio_file(src, db=db, paths=paths)
+    rec = RecordingRepo(db).get(rid)
+    assert rec is not None
+    assert rec.display_title == "My Meeting"

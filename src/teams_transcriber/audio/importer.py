@@ -42,11 +42,22 @@ def _display_title(stem: str) -> str:
     return cleaned.title() or "Imported audio"
 
 
-def import_audio_file(src: Path, *, db: Database, paths: AppPaths) -> int:
+def import_audio_file(
+    src: Path,
+    *,
+    db: Database,
+    paths: AppPaths,
+    title: str | None = None,
+    started_at_override: datetime | None = None,
+) -> int:
     """Copy `src` into the audio dir and create a Recording row.
 
     Returns the new recording's id. Raises FileNotFoundError if `src` is
     missing, or ValueError (from `probe_audio`) if the file has no audio stream.
+
+    `title` and `started_at_override` let a caller with real metadata (e.g. a
+    phone-recording sidecar) skip the filename/mtime-derived defaults. Both
+    are optional and backward compatible with the plain filename-import path.
 
     Caller submits to the pipeline (see Pipeline.import_audio_file for the
     end-to-end wrapper).
@@ -58,14 +69,18 @@ def import_audio_file(src: Path, *, db: Database, paths: AppPaths) -> int:
     # copy 100 MB of nothing into the audio dir.
     channels, duration_ms = probe_audio(src)
 
-    try:
-        started_at = datetime.fromtimestamp(src.stat().st_mtime, tz=UTC)
-    except OSError:
-        started_at = datetime.now(UTC)
+    if started_at_override is not None:
+        started_at = started_at_override
+    else:
+        try:
+            started_at = datetime.fromtimestamp(src.stat().st_mtime, tz=UTC)
+        except OSError:
+            started_at = datetime.now(UTC)
 
     paths.audio_dir.mkdir(parents=True, exist_ok=True)
     base = started_at.strftime("%Y-%m-%d_%H%M%S")
-    slug = _slug(src.stem)
+    slug_source = title if title else src.stem
+    slug = _slug(slug_source)
     ext = src.suffix.lower() or ".opus"
     candidate = paths.audio_dir / f"{base}_imported-{slug}{ext}"
     suffix = 1
@@ -75,14 +90,14 @@ def import_audio_file(src: Path, *, db: Database, paths: AppPaths) -> int:
 
     shutil.copy2(str(src), str(candidate))
 
-    title = _display_title(src.stem)
+    display = title if title else _display_title(src.stem)
     rec = RecordingRepo(db).create(Recording(
         id=None,
         started_at=started_at.isoformat(),
         ended_at=None,
         source=RecordingSource.MANUAL,
-        detected_title=title,
-        display_title=title,
+        detected_title=display,
+        display_title=display,
         audio_path=str(candidate),
         audio_deleted_at=None,
         duration_ms=duration_ms or None,

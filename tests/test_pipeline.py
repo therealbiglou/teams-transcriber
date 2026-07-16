@@ -584,6 +584,59 @@ def test_pipeline_retry_transcription_resets_status_and_enqueues(tmp_path, monke
     assert transcriber.calls == [rec.id]
 
 
+def test_import_phone_recording_submits_post_processing(tmp_path) -> None:
+    """Pipeline.import_phone_recording wraps importer + executor submit,
+    threading the sidecar's title/started_at through to the recording row
+    and enqueuing real post-processing (not just a monkeypatched stub)."""
+    import wave
+    from datetime import UTC, datetime
+
+    from teams_transcriber.config import load_settings
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    settings = load_settings(paths)
+    bus = EventBus()
+
+    class _NoopTranscriber:
+        def __init__(self): self.calls = []
+        def transcribe(self, rid): self.calls.append(rid)
+    class _NoopSummarizer:
+        def summarize(self, rid, *, api_key): pass
+
+    transcriber = _NoopTranscriber()
+
+    p = Pipeline(
+        bus=bus, db=db, paths=paths, settings=settings,
+        audio_source_factory=lambda: _make_source(0.1),
+        meeting_watcher=None,
+        transcriber=transcriber,
+        summarizer=_NoopSummarizer(),
+    )
+
+    src = tmp_path / "external" / "phone-recording.wav"
+    src.parent.mkdir(parents=True)
+    n = int(0.5 * 16_000)
+    t = np.linspace(0, 0.5, n, endpoint=False, dtype=np.float32)
+    samples = (0.25 * np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
+    with wave.open(str(src), "wb") as w:
+        w.setnchannels(1); w.setsampwidth(2); w.setframerate(16_000)
+        w.writeframes(samples.tobytes())
+
+    when = datetime(2026, 7, 14, 9, 0, 0, tzinfo=UTC)
+    rid = p.import_phone_recording(str(src), title="Site walkthrough", started_at=when)
+    p._executor.shutdown(wait=True)  # drain the submitted work
+
+    assert transcriber.calls == [rid]
+    rec = RecordingRepo(db).get(rid)
+    assert rec is not None
+    assert rec.display_title == "Site walkthrough"
+    assert rec.started_at == when.isoformat()
+    db.close()
+
+
 def test_recover_stuck_summarizing_with_summary_marks_done(tmp_path) -> None:
     """If SUMMARIZING row has a Summary, recovery should mark it DONE."""
     from teams_transcriber.audio.source import FakeAudioSource

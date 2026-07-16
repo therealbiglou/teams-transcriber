@@ -27,6 +27,7 @@ from teams_transcriber.storage.models import (
     TodoState,
     TranscriptSegment,
 )
+from teams_transcriber.storage.phone import PhoneImportRepo
 from teams_transcriber.storage.recordings import RecordingRepo
 from teams_transcriber.storage.retention import AudioRetentionPruner, PruneReport
 from teams_transcriber.storage.chat import ChatMessage, ChatRepo
@@ -36,13 +37,14 @@ from teams_transcriber.storage.schema_v3 import SCHEMA_V3
 from teams_transcriber.storage.schema_v4 import SCHEMA_V4
 from teams_transcriber.storage.schema_v5 import SCHEMA_V5
 from teams_transcriber.storage.schema_v6 import SCHEMA_V6
+from teams_transcriber.storage.schema_v7 import SCHEMA_V7
 from teams_transcriber.storage.summaries import SummaryRepo
 from teams_transcriber.storage.todos import TodoStateRepo
 from teams_transcriber.storage.transcripts import SearchHit, TranscriptRepo
 from teams_transcriber.storage.wrike import WrikeSyncRepo, WrikeSyncRow, WrikeTaskRepo, WrikeTaskRow
 
 ALL_MIGRATIONS: tuple[Migration, ...] = (
-    SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6,
+    SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7,
 )
 
 
@@ -58,9 +60,11 @@ __all__ = [
     "ALL_MIGRATIONS",
     "ChatMessage",
     "ChatRepo",
+    "PhoneImportRepo",
     "SCHEMA_V1",
     "SCHEMA_V5",
     "SCHEMA_V6",
+    "SCHEMA_V7",
     "ActionItemOther",
     "AudioRetentionPruner",
     "Channel",
