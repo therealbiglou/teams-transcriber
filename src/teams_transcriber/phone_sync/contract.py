@@ -76,6 +76,8 @@ def parse_changes(text: str) -> list[TodoChange]:
     out: list[TodoChange] = []
     for entry in data:
         try:
+            if not isinstance(entry["done"], bool):
+                raise TypeError(f"done must be a bool, got {type(entry['done']).__name__}")
             out.append(TodoChange(
                 recording_id=int(entry["recording_id"]),
                 todo_index=int(entry["todo_index"]),

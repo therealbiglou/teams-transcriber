@@ -40,7 +40,7 @@ def test_parse_sidecar_garbage_raises():
         parse_sidecar("not json {")
 
 
-def test_parse_changes_skips_malformed_entries():
+def test_parse_changes_skips_malformed_entries(caplog):
     text = json.dumps([
         {"recording_id": 3, "todo_index": 0, "done": True,
          "toggled_at": "2026-07-14T10:00:00+00:00"},
@@ -48,10 +48,46 @@ def test_parse_changes_skips_malformed_entries():
         {"recording_id": 4, "todo_index": 2, "done": False,
          "toggled_at": "2026-07-14T11:00:00+00:00"},
     ])
-    changes = parse_changes(text)
+    with caplog.at_level("WARNING", logger="teams_transcriber.phone_sync.contract"):
+        changes = parse_changes(text)
     assert [(c.recording_id, c.todo_index, c.done) for c in changes] == [
         (3, 0, True), (4, 2, False),
     ]
+    assert any("skipping malformed change entry" in rec.message
+               for rec in caplog.records)
+
+
+def test_parse_changes_skips_non_bool_done(caplog):
+    text = json.dumps([
+        {"recording_id": 5, "todo_index": 1, "done": "false",
+         "toggled_at": "2026-07-14T10:00:00+00:00"},
+        {"recording_id": 6, "todo_index": 0, "done": True,
+         "toggled_at": "2026-07-14T11:00:00+00:00"},
+    ])
+    with caplog.at_level("WARNING", logger="teams_transcriber.phone_sync.contract"):
+        changes = parse_changes(text)
+    assert [(c.recording_id, c.todo_index, c.done) for c in changes] == [
+        (6, 0, True),
+    ]
+    assert any("skipping malformed change entry" in rec.message
+               for rec in caplog.records)
+
+
+def test_parse_sidecar_zero_duration_kept():
+    sc = parse_sidecar(json.dumps({
+        "uid": "a", "title": "t", "source": "memo",
+        "started_at": "2026-07-14T09:00:00+00:00",
+        "duration_ms": 0,
+    }))
+    assert sc.duration_ms == 0
+
+
+def test_parse_sidecar_empty_title_raises():
+    with pytest.raises(ContractError):
+        parse_sidecar(json.dumps({
+            "uid": "a", "title": "", "source": "memo",
+            "started_at": "2026-07-14T09:00:00+00:00",
+        }))
 
 
 def test_parse_changes_garbage_returns_empty():
