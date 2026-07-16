@@ -60,10 +60,10 @@ def parse_sidecar(text: str) -> Sidecar:
     if data["source"] not in VALID_SOURCES:
         raise ContractError(f"sidecar source {data['source']!r} not in {sorted(VALID_SOURCES)}")
     started_at = str(data["started_at"])
-    _require_aware_isoformat(started_at, field="started_at")
+    _require_aware_isoformat(started_at, field="sidecar started_at")
     ended_at = str(data["ended_at"]) if data.get("ended_at") else None
     if ended_at is not None:
-        _require_aware_isoformat(ended_at, field="ended_at")
+        _require_aware_isoformat(ended_at, field="sidecar ended_at")
     try:
         duration_ms = (
             int(data["duration_ms"]) if data.get("duration_ms") is not None else None
@@ -86,16 +86,17 @@ def parse_sidecar(text: str) -> Sidecar:
 def _require_aware_isoformat(value: str, *, field: str) -> None:
     """Reject a timestamp that isn't a timezone-aware ISO-8601 string.
 
-    A naive string would flow verbatim into recordings.started_at (or
-    ended_at), which drives ORDER BY -- and the LWW toggle comparison
-    depends on every exchanged timestamp being an unambiguous instant.
+    A naive started_at/ended_at would flow verbatim into
+    recordings.started_at, which drives ORDER BY -- and the LWW toggle
+    comparison depends on every exchanged timestamp being an unambiguous
+    instant (comparing aware vs naive datetimes raises TypeError).
     """
     try:
         parsed = datetime.fromisoformat(value)
     except ValueError as exc:
-        raise ContractError(f"sidecar {field} is not valid ISO-8601: {value!r}") from exc
+        raise ContractError(f"{field} is not valid ISO-8601: {value!r}") from exc
     if parsed.tzinfo is None:
-        raise ContractError(f"sidecar {field} must be timezone-aware: {value!r}")
+        raise ContractError(f"{field} must be timezone-aware: {value!r}")
 
 
 def parse_changes(text: str) -> list[TodoChange]:
@@ -112,11 +113,16 @@ def parse_changes(text: str) -> list[TodoChange]:
         try:
             if not isinstance(entry["done"], bool):
                 raise TypeError(f"done must be a bool, got {type(entry['done']).__name__}")
+            toggled_at = str(entry["toggled_at"])
+            # A naive toggled_at would raise TypeError deep in the LWW
+            # comparison (aware vs naive) -- reject it here so it's skipped
+            # like any other malformed entry (ContractError is a ValueError).
+            _require_aware_isoformat(toggled_at, field="toggled_at")
             out.append(TodoChange(
                 recording_id=int(entry["recording_id"]),
                 todo_index=int(entry["todo_index"]),
                 done=entry["done"],
-                toggled_at=str(entry["toggled_at"]),
+                toggled_at=toggled_at,
             ))
         except (KeyError, TypeError, ValueError) as exc:
             logger.warning("skipping malformed change entry %r: %s", entry, exc)

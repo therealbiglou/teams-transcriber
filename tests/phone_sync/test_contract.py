@@ -120,6 +120,22 @@ def test_parse_changes_garbage_returns_empty():
     assert parse_changes("]{") == []
 
 
+def test_parse_changes_skips_naive_toggled_at(caplog):
+    text = json.dumps([
+        {"recording_id": 7, "todo_index": 0, "done": True,
+         "toggled_at": "2026-07-14T10:00:00"},  # naive -- malformed
+        {"recording_id": 8, "todo_index": 1, "done": False,
+         "toggled_at": "2026-07-14T11:00:00+00:00"},
+    ])
+    with caplog.at_level("WARNING", logger="teams_transcriber.phone_sync.contract"):
+        changes = parse_changes(text)
+    assert [(c.recording_id, c.todo_index, c.done) for c in changes] == [
+        (8, 1, False),
+    ]
+    assert any("skipping malformed change entry" in rec.message
+               for rec in caplog.records)
+
+
 def test_ack_and_manifest_carry_schema_version():
     ack = json.loads(build_ack(
         [{"uid": "a", "recording_id": 1, "result": "imported"}],

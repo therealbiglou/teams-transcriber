@@ -132,8 +132,9 @@ def run_sync(
         # fall back to the string comparison if parsing fails.
         stale = current.done_at is not None and current.done_at >= change.toggled_at
         if current.done_at is not None:
-            with contextlib.suppress(ValueError):
-                # ValueError -> keep the string-comparison fallback above.
+            with contextlib.suppress(ValueError, TypeError):
+                # ValueError (unparseable) or TypeError (aware vs naive
+                # comparison) -> keep the string-comparison fallback above.
                 stale = (
                     datetime.fromisoformat(current.done_at)
                     >= datetime.fromisoformat(change.toggled_at)

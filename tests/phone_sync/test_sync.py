@@ -345,6 +345,39 @@ def test_toggle_lww_mixed_z_and_offset_suffix_compares_correctly(tmp_path):
         db.close()
 
 
+def test_naive_toggled_at_is_skipped_not_a_cycle_abort(tmp_path):
+    """A naive (offset-less) toggled_at must be skipped like any malformed
+    entry, not abort the cycle: comparing an aware done_at datetime against
+    a naive toggled_at raises TypeError, which would escape the LWW
+    comparison's ValueError suppression and kill toggles + export + ack."""
+    db = _make_db(tmp_path)
+    try:
+        t = phone(tmp_path)
+        rid = _seed_recording_with_todo(db, done_at="2026-07-14T10:00:00+00:00")
+        t.push_text(json.dumps([
+            {"recording_id": rid, "todo_index": 0, "done": False,
+             "toggled_at": "2026-07-14T11:00:00"},  # naive -- malformed
+            {"recording_id": rid, "todo_index": 0, "done": False,
+             "toggled_at": "2026-07-14T12:00:00+00:00"},  # valid
+        ]), "outbox/changes.json")
+
+        report = run_sync(
+            db, t, import_recording=fake_import(db),
+            now_iso="2026-07-14T13:00:00+00:00",
+        )
+
+        # Valid entry applied; naive entry skipped at parse time.
+        assert report.toggles_applied == 1
+        states = {s.todo_index: s for s in TodoStateRepo(db).list_for_recording(rid)}
+        assert states[0].done is False
+        # Cycle completed: library + ack still written.
+        assert t.read_text("library/manifest.json") is not None
+        ack = json.loads(t.read_text("sync/desktop_ack.json"))
+        assert ack["changes_applied_through"] == "2026-07-14T12:00:00+00:00"
+    finally:
+        db.close()
+
+
 def test_same_todo_twice_in_one_batch_applies_both_in_lww_order(tmp_path):
     """Entry A (10:00, done) then entry B (11:00, undone) for the SAME todo in
     one changes.json: A must persist ITS toggled_at as done_at (not wall-clock
