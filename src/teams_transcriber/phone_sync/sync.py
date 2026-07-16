@@ -9,6 +9,7 @@ the desktop never writes changes.json.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import tempfile
 from collections.abc import Callable
@@ -57,17 +58,19 @@ def run_sync(
 
     for audio_name in audio_names:
         sidecar_name = audio_name[: -len(".m4a")] + ".json"
-        stem = Path(audio_name).stem
+        # Best-effort uid in the contract's uid namespace (strip the "rec_"
+        # filename prefix) -- the sidecar couldn't be parsed to get the real one.
+        stem_uid = Path(audio_name).stem.removeprefix("rec_")
         if sidecar_name not in remote:
             report.failures.append((audio_name, "missing sidecar"))
-            ack_entries.append({"uid": stem, "recording_id": None, "result": "missing sidecar"})
+            ack_entries.append({"uid": stem_uid, "recording_id": None, "result": "missing sidecar"})
             continue
         sidecar_text = transport.read_text(sidecar_name)
         try:
             sidecar = contract.parse_sidecar(sidecar_text or "")
         except contract.ContractError as exc:
             report.failures.append((audio_name, str(exc)))
-            ack_entries.append({"uid": stem, "recording_id": None, "result": f"bad sidecar: {exc}"})
+            ack_entries.append({"uid": stem_uid, "recording_id": None, "result": f"bad sidecar: {exc}"})
             continue
         if ledger.recording_id_for(sidecar.uid) is not None:
             # Already imported in a previous cycle (the ack for it went out
@@ -89,6 +92,10 @@ def run_sync(
                     str(local), title=sidecar.title,
                     started_at=_parse_started_at(sidecar),
                 )
+            # Import and ledger-record are separate transactions; a crash
+            # between them leaves an imported Recording with no ledger row,
+            # so the next cycle re-imports it (visible, deletable duplicate).
+            # Accepted for personal scale -- revisit if it ever bites.
             ledger.record(sidecar.uid, rid, sidecar.source)
         except Exception as exc:  # one bad file never stops the batch
             logger.exception("phone import failed for %s", audio_name)
@@ -117,9 +124,21 @@ def run_sync(
                 f"unknown todo {change.recording_id}/{change.todo_index}",
             ))
             continue
-        # ISO-8601 UTC strings (both sides always write datetime.isoformat()
-        # in UTC) compare correctly as strings -- no need to parse to datetime.
-        if current.done_at is not None and current.done_at >= change.toggled_at:
+        # ISO-8601 UTC strings normally compare correctly lexicographically,
+        # but the two sides don't always agree on 'Z' vs '+00:00' (and may
+        # differ in fractional-second precision), which can flip a plain
+        # string comparison within the same second. Parse to datetime
+        # (fromisoformat in 3.11 accepts both 'Z' and '+00:00') and only
+        # fall back to the string comparison if parsing fails.
+        stale = current.done_at is not None and current.done_at >= change.toggled_at
+        if current.done_at is not None:
+            with contextlib.suppress(ValueError):
+                # ValueError -> keep the string-comparison fallback above.
+                stale = (
+                    datetime.fromisoformat(current.done_at)
+                    >= datetime.fromisoformat(change.toggled_at)
+                )
+        if stale:
             report.toggles_skipped_stale += 1
             continue
         # Persist the phone's toggled_at (not wall-clock now) so a later

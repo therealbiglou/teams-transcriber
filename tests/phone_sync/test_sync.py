@@ -126,6 +126,45 @@ def test_happy_path_imports_and_acks(tmp_path):
         db.close()
 
 
+def test_bad_duration_ms_fails_only_that_file(tmp_path):
+    """A malformed duration_ms in one sidecar must not abort the whole
+    cycle: the bad file is reported as a failure and left in place, the
+    other outbox item still imports, and library + ack still get written."""
+    db = _make_db(tmp_path)
+    try:
+        t = phone(tmp_path)
+        seed_outbox(t, "uid-good", title="Good")
+        t.push_text("fake-audio-bytes", "outbox/rec_uid-bad.m4a")
+        t.push_text(
+            json.dumps({
+                "uid": "uid-bad", "title": "Bad", "source": "memo",
+                "started_at": "2026-07-14T10:00:00+00:00",
+                "duration_ms": "abc",
+            }),
+            "outbox/rec_uid-bad.json",
+        )
+        importer = fake_import(db)
+
+        report = run_sync(db, t, import_recording=importer, now_iso="2026-07-14T12:00:00+00:00")
+
+        assert len(report.imported) == 1
+        assert report.imported[0][0] == "uid-good"
+        assert len(report.failures) == 1
+        assert report.failures[0][0] == "outbox/rec_uid-bad.m4a"
+        names = {f.name for f in t.list_files("outbox")}
+        assert "outbox/rec_uid-bad.m4a" in names and "outbox/rec_uid-bad.json" in names
+        assert "outbox/rec_uid-good.m4a" not in names
+        assert PhoneImportRepo(db).recording_id_for("uid-good") is not None
+        assert PhoneImportRepo(db).recording_id_for("uid-bad") is None
+        ack = json.loads(t.read_text("sync/desktop_ack.json"))
+        uids_acked = {e["uid"] for e in ack["imported"]}
+        assert "uid-good" in uids_acked
+        assert t.read_text("library/manifest.json") is not None
+        assert t.read_text("library/meetings.json") is not None
+    finally:
+        db.close()
+
+
 def test_second_run_is_idempotent(tmp_path):
     db = _make_db(tmp_path)
     try:
@@ -157,6 +196,8 @@ def test_missing_sidecar_leaves_files_and_reports_failure(tmp_path):
         assert report.failures[0][0] == "outbox/rec_uid-1.m4a"
         assert [f.name for f in t.list_files("outbox")] == ["outbox/rec_uid-1.m4a"]
         assert importer.calls == []
+        ack = json.loads(t.read_text("sync/desktop_ack.json"))
+        assert ack["imported"][0]["uid"] == "uid-1"
     finally:
         db.close()
 
@@ -242,6 +283,9 @@ def test_toggle_lww_phone_newer_wins(tmp_path):
         states = {s.todo_index: s for s in TodoStateRepo(db).list_for_recording(rid)}
         assert states[0].done is False
         assert seen == [rid]
+        # Single-writer regression: the desktop never writes changes.json,
+        # so the phone's file must still be present after a sync cycle.
+        assert any(f.name == "outbox/changes.json" for f in t.list_files("outbox"))
     finally:
         db.close()
 
@@ -267,6 +311,36 @@ def test_toggle_lww_desktop_newer_wins(tmp_path):
         states = {s.todo_index: s for s in TodoStateRepo(db).list_for_recording(rid)}
         assert states[0].done is True
         assert seen == []
+    finally:
+        db.close()
+
+
+def test_toggle_lww_mixed_z_and_offset_suffix_compares_correctly(tmp_path):
+    """done_at uses a Z suffix, toggled_at uses +00:00 with a fractional
+    second in the SAME second (10:00:00). Chronologically toggled_at
+    (10:00:00.5) is later than done_at (10:00:00) so the toggle must apply.
+    A naive string comparison gets this backwards -- 'Z' (0x5A) sorts
+    greater than '.' (0x2E), so 'done_at Z' > 'toggled_at .5+00:00' as
+    strings, wrongly marking the toggle stale. Only the datetime.fromisoformat
+    comparison path gets this right."""
+    db = _make_db(tmp_path)
+    try:
+        t = phone(tmp_path)
+        rid = _seed_recording_with_todo(db, done_at="2026-07-14T10:00:00Z")
+        t.push_text(json.dumps([
+            {"recording_id": rid, "todo_index": 0, "done": False,
+             "toggled_at": "2026-07-14T10:00:00.500000+00:00"},
+        ]), "outbox/changes.json")
+
+        report = run_sync(
+            db, t, import_recording=fake_import(db),
+            now_iso="2026-07-14T12:00:00+00:00",
+        )
+
+        assert report.toggles_applied == 1
+        assert report.toggles_skipped_stale == 0
+        states = {s.todo_index: s for s in TodoStateRepo(db).list_for_recording(rid)}
+        assert states[0].done is False
     finally:
         db.close()
 

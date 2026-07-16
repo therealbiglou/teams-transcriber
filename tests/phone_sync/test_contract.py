@@ -90,6 +90,32 @@ def test_parse_sidecar_empty_title_raises():
         }))
 
 
+def test_parse_sidecar_bad_duration_ms_raises_contract_error():
+    with pytest.raises(ContractError):
+        parse_sidecar(json.dumps({
+            "uid": "a", "title": "t", "source": "memo",
+            "started_at": "2026-07-14T09:00:00+00:00",
+            "duration_ms": "abc",
+        }))
+
+
+def test_parse_sidecar_naive_started_at_raises():
+    with pytest.raises(ContractError):
+        parse_sidecar(json.dumps({
+            "uid": "a", "title": "t", "source": "memo",
+            "started_at": "2026-07-14T09:00:00",  # no tz offset
+        }))
+
+
+def test_parse_sidecar_naive_ended_at_raises():
+    with pytest.raises(ContractError):
+        parse_sidecar(json.dumps({
+            "uid": "a", "title": "t", "source": "memo",
+            "started_at": "2026-07-14T09:00:00+00:00",
+            "ended_at": "2026-07-14T09:30:00",  # no tz offset
+        }))
+
+
 def test_parse_changes_garbage_returns_empty():
     assert parse_changes("]{") == []
 

@@ -4,6 +4,11 @@ Documents/TeamsTranscriber/ folder. Single source of truth for schema_version.
 Spec: docs/superpowers/specs/2026-07-14-android-companion-design.md.
 Parsing is strict for sidecars (a bad sidecar fails that one import) and
 tolerant for changes.json (one malformed toggle never blocks the rest).
+
+Timestamps exchanged in the contract (`started_at`, `ended_at`, `toggled_at`,
+`changes_applied_through`, `exported_at`) are ISO-8601 UTC with an explicit
+`+00:00` offset (never `Z`), so lexicographic comparison equals chronological
+comparison.
 """
 
 from __future__ import annotations
@@ -11,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -53,15 +59,43 @@ def parse_sidecar(text: str) -> Sidecar:
         raise ContractError(f"sidecar missing required fields: {missing}")
     if data["source"] not in VALID_SOURCES:
         raise ContractError(f"sidecar source {data['source']!r} not in {sorted(VALID_SOURCES)}")
+    started_at = str(data["started_at"])
+    _require_aware_isoformat(started_at, field="started_at")
+    ended_at = str(data["ended_at"]) if data.get("ended_at") else None
+    if ended_at is not None:
+        _require_aware_isoformat(ended_at, field="ended_at")
+    try:
+        duration_ms = (
+            int(data["duration_ms"]) if data.get("duration_ms") is not None else None
+        )
+    except (TypeError, ValueError) as exc:
+        raise ContractError(
+            f"sidecar duration_ms invalid: {data['duration_ms']!r}"
+        ) from exc
     return Sidecar(
         uid=str(data["uid"]),
         title=str(data["title"]),
         source=str(data["source"]),
-        started_at=str(data["started_at"]),
-        ended_at=(str(data["ended_at"]) if data.get("ended_at") else None),
-        duration_ms=(int(data["duration_ms"]) if data.get("duration_ms") is not None else None),
+        started_at=started_at,
+        ended_at=ended_at,
+        duration_ms=duration_ms,
         app_version=str(data.get("app_version", "")),
     )
+
+
+def _require_aware_isoformat(value: str, *, field: str) -> None:
+    """Reject a timestamp that isn't a timezone-aware ISO-8601 string.
+
+    A naive string would flow verbatim into recordings.started_at (or
+    ended_at), which drives ORDER BY -- and the LWW toggle comparison
+    depends on every exchanged timestamp being an unambiguous instant.
+    """
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise ContractError(f"sidecar {field} is not valid ISO-8601: {value!r}") from exc
+    if parsed.tzinfo is None:
+        raise ContractError(f"sidecar {field} must be timezone-aware: {value!r}")
 
 
 def parse_changes(text: str) -> list[TodoChange]:
@@ -81,7 +115,7 @@ def parse_changes(text: str) -> list[TodoChange]:
             out.append(TodoChange(
                 recording_id=int(entry["recording_id"]),
                 todo_index=int(entry["todo_index"]),
-                done=bool(entry["done"]),
+                done=entry["done"],
                 toggled_at=str(entry["toggled_at"]),
             ))
         except (KeyError, TypeError, ValueError) as exc:
