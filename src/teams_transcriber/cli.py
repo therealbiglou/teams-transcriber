@@ -7,6 +7,7 @@ import logging
 import signal
 import sys
 import threading
+from pathlib import Path
 from typing import Any
 
 from teams_transcriber.config import load_settings
@@ -79,6 +80,38 @@ def _cmd_retry_summary(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_phone_sync(args: argparse.Namespace) -> int:
+    """One sync cycle against a plain folder (LocalDirTransport).
+
+    Useful headlessly and with folder-sync tools today; the UI/MTP flow in
+    Phase 2 reuses run_sync with a different transport.
+    """
+    from datetime import UTC, datetime
+
+    from teams_transcriber.phone_sync.sync import run_sync
+    from teams_transcriber.phone_sync.transport import LocalDirTransport
+
+    paths = AppPaths()
+    paths.ensure_dirs()
+    pipeline = _build_pipeline(paths, with_watcher=False)
+    try:
+        report = run_sync(
+            pipeline.db,
+            LocalDirTransport(Path(args.folder)),
+            import_recording=pipeline.import_phone_recording,
+            now_iso=datetime.now(UTC).isoformat(),
+        )
+    finally:
+        pipeline.shutdown()   # waits for queued transcribe/summarize work
+    print(f"Imported {len(report.imported)}, skipped {report.skipped_known} known, "
+          f"toggles applied {report.toggles_applied} "
+          f"({report.toggles_skipped_stale} stale), "
+          f"failures {len(report.failures)}")
+    for name, why in report.failures:
+        print(f"  FAILED {name}: {why}")
+    return 1 if report.failures else 0
+
+
 def _cmd_ui(args: argparse.Namespace) -> int:
     del args
     from teams_transcriber.ui.app import main as ui_main
@@ -139,6 +172,10 @@ def main(argv: list[str] | None = None) -> int:
 
     p_smoke = sub.add_parser("smoke-test", help="Boot all imports and exit 0 (build verification).")
     p_smoke.set_defaults(func=_cmd_smoke_test)
+
+    p_phone = sub.add_parser("phone-sync", help="Sync a phone folder (recordings in, library out)")
+    p_phone.add_argument("folder", help="Path to the TeamsTranscriber folder (outbox/library/sync)")
+    p_phone.set_defaults(func=_cmd_phone_sync)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

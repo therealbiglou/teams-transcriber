@@ -72,6 +72,17 @@ class Pipeline:
 
     # --- public lifecycle ----------------------------------------------
 
+    @property
+    def db(self) -> Database:
+        """The Database this pipeline was wired with.
+
+        Public so callers that need a repo/db handle alongside the pipeline
+        (e.g. cli.py's phone-sync command, which hands the db to run_sync)
+        don't have to reach into the private attribute -- mirrors how
+        ui/app.py keeps its own `self.db` next to `self.pipeline`.
+        """
+        return self._db
+
     def start_manual(self, *, detected_title: str | None = None) -> int:
         return self._start_recorder(source_type="manual", detected_title=detected_title)
 
