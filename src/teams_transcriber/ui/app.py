@@ -383,7 +383,17 @@ class App:
             s = sum_repo.get(rec.id)
             one_line = s.one_line if s else None
             todos = len(s.my_todos) if s else 0
-            done = sum(1 for st in todo_repo.list_for_recording(rec.id) if st.done) if s else 0
+            # Bound the done count to the CURRENT summary's todos: todo_state
+            # keeps stale rows for indices beyond a shrunk my_todos (seed
+            # never prunes on re-summarization), and those must not inflate
+            # the history chip's done count.
+            done = (
+                sum(
+                    1 for st in todo_repo.list_for_recording(rec.id)
+                    if st.done and st.todo_index < todos
+                )
+                if s else 0
+            )
             rows.append((rec, one_line, todos, done))
         if query:
             ql = query.lower()
