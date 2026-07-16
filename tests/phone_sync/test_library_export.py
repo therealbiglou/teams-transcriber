@@ -116,6 +116,29 @@ def test_build_library_includes_seeded_chat_messages(tmp_path):
         db.close()
 
 
+def test_build_library_todos_done_ignores_stale_state_rows(tmp_path):
+    """Re-summarization can shrink my_todos (e.g. 5 -> 2) while todo_state
+    keeps rows for the old higher indices (TodoStateRepo.seed never prunes).
+    todos_done must only count done rows whose index is within the CURRENT
+    summary's my_todos."""
+    db = _make_db(tmp_path)
+    try:
+        rid = _seed_full_recording(db)  # summary has 2 my_todos
+        repo = TodoStateRepo(db)
+        repo.upsert(rid, 0, "Do A", done=True)            # current index, done
+        repo.upsert(rid, 5, "Old stale todo", done=True)  # stale index, done
+
+        from teams_transcriber.phone_sync.library_export import build_library
+
+        files = build_library(db, now_iso="2026-07-14T12:00:00+00:00")
+        meetings = json.loads(files["library/meetings.json"])
+        entry = next(m for m in meetings if m["id"] == rid)
+        assert entry["todo_count"] == 2
+        assert entry["todos_done"] == 1  # stale index-5 done row must not count
+    finally:
+        db.close()
+
+
 def test_build_library_skips_recordings_without_summary(tmp_path):
     db = _make_db(tmp_path)
     try:

@@ -37,7 +37,12 @@ def build_library(db: Database, *, now_iso: str) -> dict[str, str]:
         summary = sum_repo.get(rec.id)
         states = {s.todo_index: s for s in todo_repo.list_for_recording(rec.id)}
         todo_count = len(summary.my_todos) if summary else 0
-        todos_done = sum(1 for s in states.values() if s.done)
+        # Bound the done count to the CURRENT summary's todos: todo_state keeps
+        # stale rows for indices beyond a shrunk my_todos (seed never prunes on
+        # re-summarization), and those must not inflate todos_done.
+        todos_done = sum(
+            1 for i in range(todo_count) if i in states and states[i].done
+        )
         meetings.append({
             "id": rec.id,
             "title": rec.display_title or rec.detected_title or "Untitled meeting",
