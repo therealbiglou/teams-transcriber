@@ -77,6 +77,11 @@ Rules:
   recording/todo) alike; the phone prunes `changes.json` entries with
   `toggled_at ≤ changes_applied_through`; the desktop never edits
   `changes.json` (single-writer per file, both directions).
+- **Timestamps:** every timestamp in the contract (`started_at`, `ended_at`,
+  `toggled_at`, `changes_applied_through`, `exported_at`) is ISO-8601 UTC
+  with an explicit `+00:00` offset (never `Z`), so lexicographic comparison
+  equals chronological. The desktop rejects sidecars whose timestamps are
+  naive or unparseable.
 - **Forward compatibility:** the app compares `manifest.schema_version` to
   what it understands and shows "update the app" instead of misrendering.
 
