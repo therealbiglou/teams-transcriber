@@ -71,9 +71,12 @@ Rules:
   after its import is committed to the desktop DB.
 - **Todo conflicts:** last-write-wins by timestamp — phone `toggled_at` vs
   desktop `done_at`. Applied toggles fire the existing Wrike close-loop.
-- **Toggle cleanup:** the phone prunes `changes.json` entries with
-  `toggled_at ≤ changes_applied_through` from the ack; the desktop never
-  edits `changes.json` (single-writer per file, both directions).
+- **Toggle cleanup:** the ack's `changes_applied_through` is the maximum
+  `toggled_at` among all entries the desktop parsed this cycle — applied,
+  superseded by newer desktop state (LWW), or unresolvable (unknown
+  recording/todo) alike; the phone prunes `changes.json` entries with
+  `toggled_at ≤ changes_applied_through`; the desktop never edits
+  `changes.json` (single-writer per file, both directions).
 - **Forward compatibility:** the app compares `manifest.schema_version` to
   what it understands and shows "update the app" instead of misrendering.
 
