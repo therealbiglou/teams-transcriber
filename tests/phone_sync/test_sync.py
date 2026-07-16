@@ -184,6 +184,43 @@ def test_pull_size_mismatch_leaves_files(tmp_path, monkeypatch):
         db.close()
 
 
+def test_bad_sidecar_leaves_files_and_reports_failure(tmp_path):
+    db = _make_db(tmp_path)
+    try:
+        t = phone(tmp_path)
+        seed_outbox(t, "uid-1", source="carrier_pigeon")  # ContractError source
+        importer = fake_import(db)
+
+        report = run_sync(db, t, import_recording=importer, now_iso="2026-07-14T12:00:00+00:00")
+
+        assert len(report.failures) == 1
+        assert report.failures[0][0] == "outbox/rec_uid-1.m4a"
+        names = {f.name for f in t.list_files("outbox")}
+        assert "outbox/rec_uid-1.m4a" in names and "outbox/rec_uid-1.json" in names
+        assert importer.calls == []
+    finally:
+        db.close()
+
+
+def test_import_failure_leaves_files_and_ledger_empty(tmp_path):
+    db = _make_db(tmp_path)
+    try:
+        t = phone(tmp_path)
+        seed_outbox(t, "uid-1")
+
+        def _boom(src_path: str, *, title, started_at) -> int:
+            raise RuntimeError("decoder exploded")
+
+        report = run_sync(db, t, import_recording=_boom, now_iso="2026-07-14T12:00:00+00:00")
+
+        assert report.failures == [("outbox/rec_uid-1.m4a", "decoder exploded")]
+        assert PhoneImportRepo(db).recording_id_for("uid-1") is None
+        names = {f.name for f in t.list_files("outbox")}
+        assert "outbox/rec_uid-1.m4a" in names and "outbox/rec_uid-1.json" in names
+    finally:
+        db.close()
+
+
 def test_toggle_lww_phone_newer_wins(tmp_path):
     db = _make_db(tmp_path)
     try:
@@ -230,6 +267,32 @@ def test_toggle_lww_desktop_newer_wins(tmp_path):
         states = {s.todo_index: s for s in TodoStateRepo(db).list_for_recording(rid)}
         assert states[0].done is True
         assert seen == []
+    finally:
+        db.close()
+
+
+def test_same_todo_twice_in_one_batch_applies_both_in_lww_order(tmp_path):
+    """Entry A (10:00, done) then entry B (11:00, undone) for the SAME todo in
+    one changes.json: A must persist ITS toggled_at as done_at (not wall-clock
+    now, which is far ahead of phone timestamps) so B is not wrongly staled."""
+    db = _make_db(tmp_path)
+    try:
+        t = phone(tmp_path)
+        rid = _seed_recording_with_todo(db, done_at=None)
+        t.push_text(json.dumps([
+            {"recording_id": rid, "todo_index": 0, "done": True,
+             "toggled_at": "2026-07-14T10:00:00+00:00"},
+            {"recording_id": rid, "todo_index": 0, "done": False,
+             "toggled_at": "2026-07-14T11:00:00+00:00"},
+        ]), "outbox/changes.json")
+
+        report = run_sync(db, t, import_recording=fake_import(db),
+                          now_iso="2026-07-14T12:00:00+00:00")
+
+        assert report.toggles_applied == 2
+        assert report.toggles_skipped_stale == 0
+        states = {s.todo_index: s for s in TodoStateRepo(db).list_for_recording(rid)}
+        assert states[0].done is False  # B applied over A
     finally:
         db.close()
 

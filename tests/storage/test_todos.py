@@ -92,6 +92,33 @@ def test_mark_done_requires_task_text_if_row_missing(db: Database, recording_id:
         repo.mark_done(recording_id, todo_index=0, done=True)
 
 
+def test_mark_done_with_override_persists_exact_timestamp(
+    db: Database, recording_id: int
+) -> None:
+    repo = TodoStateRepo(db)
+    repo.upsert(recording_id, todo_index=0, task_text="Write spec", done=False)
+    repo.mark_done(
+        recording_id, todo_index=0, done=True,
+        done_at_override="2026-07-14T10:00:00+00:00",
+    )
+    items = repo.list_for_recording(recording_id)
+    assert items[0].done is True
+    assert items[0].done_at == "2026-07-14T10:00:00+00:00"
+
+
+def test_mark_done_without_override_uses_wall_clock(
+    db: Database, recording_id: int
+) -> None:
+    repo = TodoStateRepo(db)
+    repo.upsert(recording_id, todo_index=0, task_text="Write spec", done=False)
+    before = _now()
+    repo.mark_done(recording_id, todo_index=0, done=True)
+    after = _now()
+    done_at = repo.list_for_recording(recording_id)[0].done_at
+    assert done_at is not None
+    assert before <= done_at <= after  # ISO-8601 UTC strings compare lexically
+
+
 def test_recording_delete_cascades(db: Database, recording_id: int) -> None:
     repo = TodoStateRepo(db)
     repo.upsert(recording_id, todo_index=0, task_text="X", done=True)

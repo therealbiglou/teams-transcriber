@@ -122,7 +122,12 @@ def run_sync(
         if current.done_at is not None and current.done_at >= change.toggled_at:
             report.toggles_skipped_stale += 1
             continue
-        todo_repo.mark_done(change.recording_id, change.todo_index, change.done)
+        # Persist the phone's toggled_at (not wall-clock now) so a later
+        # toggle for the same todo in this batch still compares LWW correctly.
+        todo_repo.mark_done(
+            change.recording_id, change.todo_index, change.done,
+            done_at_override=change.toggled_at,
+        )
         report.toggles_applied += 1
         applied_recordings.add(change.recording_id)
 

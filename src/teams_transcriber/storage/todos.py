@@ -72,9 +72,17 @@ class TodoStateRepo:
         done: bool,
         *,
         task_text: str | None = None,
+        done_at_override: str | None = None,
     ) -> None:
-        """Set done state. If no row exists yet, `task_text` is required."""
-        done_at = datetime.now(UTC).isoformat() if done else None
+        """Set done state. If no row exists yet, `task_text` is required.
+
+        `done_at_override` (only honored when `done` is True) persists the
+        given ISO-8601 timestamp instead of now(). It exists so phone-sync's
+        last-write-wins compares phone timestamps against phone timestamps —
+        stamping wall-clock time would wrongly stale a later toggle for the
+        same todo arriving in the same changes.json batch.
+        """
+        done_at = (done_at_override or datetime.now(UTC).isoformat()) if done else None
         with self._db.connect() as conn:
             existing = conn.execute(
                 "SELECT id FROM todo_state WHERE recording_id = ? AND todo_index = ?",
