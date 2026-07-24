@@ -166,3 +166,43 @@ def test_phone_sync_status_text_failure_is_prefixed():
     text = _phone_sync_status_text(raw)
     assert "Transport error" in text
     assert "fail" in text.lower()
+
+
+def test_phone_sync_status_text_survives_non_dict_last():
+    # Reviewer-reproduced crash: phone_sync_last corrupted to a plain string
+    # raised AttributeError on .get.
+    raw = {"integrations": {"phone_sync_last": "corrupted-string"}}
+    assert _phone_sync_status_text(raw) == "Never synced"
+
+
+def test_phone_sync_status_text_survives_non_string_at():
+    # Reviewer-reproduced crash: a non-string "at" raised TypeError from
+    # fromisoformat, which the ValueError-only except didn't catch.
+    raw = {
+        "integrations": {
+            "phone_sync_last": {"at": 12345, "ok": True, "summary": "Imported 2"}
+        }
+    }
+    text = _phone_sync_status_text(raw)  # must not raise
+    assert "Imported 2" in text
+
+
+def test_phone_sync_status_text_survives_arbitrary_shapes():
+    # The formatter must never raise for any input shape.
+    for raw in (
+        {},
+        {"integrations": None},
+        {"integrations": "corrupted"},
+        {"integrations": {"phone_sync_last": None}},
+        {"integrations": {"phone_sync_last": ["list"]}},
+        {"integrations": {"phone_sync_last": {"at": None, "ok": False, "summary": None}}},
+        {"integrations": {"phone_sync_last": {"at": "not-a-date", "ok": True, "summary": 7}}},
+    ):
+        assert isinstance(_phone_sync_status_text(raw), str)
+
+
+def test_dialog_constructs_with_corrupted_phone_sync_last(qapp, paths):
+    settings = load_settings(paths)
+    settings._raw.setdefault("integrations", {})["phone_sync_last"] = "corrupted-string"
+    dlg = SettingsDialog(settings, paths)  # must not raise
+    assert dlg.phone_sync_status_label.text() == "Never synced"

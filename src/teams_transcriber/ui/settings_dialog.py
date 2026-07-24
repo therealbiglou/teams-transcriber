@@ -42,18 +42,25 @@ from teams_transcriber.ui.title_bar import TitleBar
 
 def _phone_sync_status_text(raw: dict) -> str:
     """Format integrations.phone_sync_last (UTC ISO timestamp) into a
-    human-readable, local-time status line for the Settings dialog."""
-    last = (raw.get("integrations") or {}).get("phone_sync_last")
-    if not last:
+    human-readable, local-time status line for the Settings dialog.
+
+    Runs unguarded inside SettingsDialog.__init__, so it must never raise —
+    a corrupted settings file must degrade to a sane string, not brick the
+    dialog. Every field is shape-checked before use.
+    """
+    integrations = raw.get("integrations") if isinstance(raw, dict) else None
+    last = integrations.get("phone_sync_last") if isinstance(integrations, dict) else None
+    if not isinstance(last, dict) or not last:
         return "Never synced"
 
-    at = last.get("at") or ""
+    at = last.get("at")
     try:
         from datetime import datetime
         when = datetime.fromisoformat(at).astimezone().strftime("%Y-%m-%d %H:%M")
-    except ValueError:
-        when = at
-    summary = last.get("summary") or ""
+    except (ValueError, TypeError):
+        # Non-string or unparseable timestamp: show it raw rather than crash.
+        when = str(at) if at is not None else ""
+    summary = str(last.get("summary") or "")
 
     if last.get("ok"):
         return f"Last sync: {when} — {summary}"
