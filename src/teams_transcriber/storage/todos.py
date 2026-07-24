@@ -18,6 +18,7 @@ def _row_to_todo(row: sqlite3.Row) -> TodoState:
         task_text=row["task_text"],
         done=bool(row["done"]),
         done_at=row["done_at"],
+        toggled_at=row["toggled_at"],
     )
 
 
@@ -34,18 +35,20 @@ class TodoStateRepo:
         task_text: str,
         done: bool,
     ) -> None:
-        done_at = datetime.now(UTC).isoformat() if done else None
+        stamp = datetime.now(UTC).isoformat()
+        done_at = stamp if done else None
         with self._db.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO todo_state (recording_id, todo_index, task_text, done, done_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO todo_state (recording_id, todo_index, task_text, done, done_at, toggled_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(recording_id, todo_index) DO UPDATE SET
-                    task_text = excluded.task_text,
-                    done      = excluded.done,
-                    done_at   = excluded.done_at
+                    task_text  = excluded.task_text,
+                    done       = excluded.done,
+                    done_at    = excluded.done_at,
+                    toggled_at = excluded.toggled_at
                 """,
-                (recording_id, todo_index, task_text, int(done), done_at),
+                (recording_id, todo_index, task_text, int(done), done_at, stamp),
             )
             conn.commit()
 
@@ -56,8 +59,8 @@ class TodoStateRepo:
         with self._db.connect() as conn:
             conn.execute(
                 """
-                INSERT INTO todo_state (recording_id, todo_index, task_text, done, done_at)
-                VALUES (?, ?, ?, 0, NULL)
+                INSERT INTO todo_state (recording_id, todo_index, task_text, done, done_at, toggled_at)
+                VALUES (?, ?, ?, 0, NULL, NULL)
                 ON CONFLICT(recording_id, todo_index) DO UPDATE SET
                     task_text = excluded.task_text
                 """,
@@ -76,13 +79,22 @@ class TodoStateRepo:
     ) -> None:
         """Set done state. If no row exists yet, `task_text` is required.
 
-        `done_at_override` (only honored when `done` is True) persists the
-        given ISO-8601 timestamp instead of now(). It exists so phone-sync's
-        last-write-wins compares phone timestamps against phone timestamps —
-        stamping wall-clock time would wrongly stale a later toggle for the
-        same todo arriving in the same changes.json batch.
+        `done_at_override`, when given, is persisted as the exact ISO-8601
+        timestamp instead of wall-clock now() — for both `done_at` (only
+        when `done` is True; `done_at` is None whenever `done` is False,
+        unchanged) and `toggled_at` (stamped on EVERY call, done or undone).
+        It exists so phone-sync's last-write-wins compares phone timestamps
+        against phone timestamps — stamping wall-clock time would wrongly
+        stale a later toggle for the same todo arriving in the same
+        changes.json batch.
+
+        `toggled_at` is a durable LWW baseline (schema v8): unlike
+        `done_at`, it is never cleared when a todo is un-checked, so a
+        later stale re-send of an older toggle can still be detected after
+        the row has been un-checked.
         """
-        done_at = (done_at_override or datetime.now(UTC).isoformat()) if done else None
+        stamp = done_at_override or datetime.now(UTC).isoformat()
+        done_at = stamp if done else None
         with self._db.connect() as conn:
             existing = conn.execute(
                 "SELECT id FROM todo_state WHERE recording_id = ? AND todo_index = ?",
@@ -93,15 +105,15 @@ class TodoStateRepo:
                     raise ValueError("task_text is required when no existing row matches")
                 conn.execute(
                     """
-                    INSERT INTO todo_state (recording_id, todo_index, task_text, done, done_at)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO todo_state (recording_id, todo_index, task_text, done, done_at, toggled_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (recording_id, todo_index, task_text, int(done), done_at),
+                    (recording_id, todo_index, task_text, int(done), done_at, stamp),
                 )
             else:
                 conn.execute(
-                    "UPDATE todo_state SET done = ?, done_at = ? WHERE id = ?",
-                    (int(done), done_at, existing["id"]),
+                    "UPDATE todo_state SET done = ?, done_at = ?, toggled_at = ? WHERE id = ?",
+                    (int(done), done_at, stamp, existing["id"]),
                 )
             conn.commit()
 

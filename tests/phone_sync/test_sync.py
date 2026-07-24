@@ -92,14 +92,18 @@ def _seed_recording_with_todo(db, done_at: str | None) -> int:
         generated_at=datetime.now(UTC).isoformat(), model_used="claude-sonnet-4-6",
     ))
     TodoStateRepo(db).mark_done(rec.id, 0, done_at is not None, task_text="Do A")
-    if done_at is not None:
-        # mark_done stamps "now" as done_at; force the exact seeded value.
-        with db.connect() as conn:
-            conn.execute(
-                "UPDATE todo_state SET done_at = ? WHERE recording_id = ? AND todo_index = 0",
-                (done_at, rec.id),
-            )
-            conn.commit()
+    # mark_done also stamps toggled_at with wall-clock "now" (schema v8's
+    # durable LWW baseline) -- force it (and done_at) to the exact seeded
+    # value via raw SQL, same as the pre-v8 done_at-only override below, so
+    # the LWW baseline in these tests reflects the seeded timestamp rather
+    # than the real test-run time.
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE todo_state SET done_at = ?, toggled_at = ? "
+            "WHERE recording_id = ? AND todo_index = 0",
+            (done_at, done_at, rec.id),
+        )
+        conn.commit()
     return rec.id
 
 
@@ -444,6 +448,44 @@ def test_stray_library_detail_file_pruned(tmp_path):
         assert "library/meetings/999.json" not in names
         assert "library/manifest.json" in names
         assert "library/meetings.json" in names
+    finally:
+        db.close()
+
+
+def test_undone_row_keeps_lww_baseline(tmp_path):
+    """Desktop: todo checked, then UN-checked at 12:00 (mark_done False --
+    toggled_at 12:00, done_at None -- schema v8's durable LWW baseline).
+    Phone then sends a STALE done=True with toggled_at 11:00 (before the
+    un-check). The toggle must be SKIPPED as stale and the todo must remain
+    un-done. Pre-v8 (no toggled_at), un-checking cleared done_at to None,
+    so the LWW baseline was lost and this stale toggle would have wrongly
+    re-applied."""
+    db = _make_db(tmp_path)
+    try:
+        t = phone(tmp_path)
+        rid = _seed_recording_with_todo(db, done_at=None)
+        repo = TodoStateRepo(db)
+        repo.mark_done(rid, 0, True, task_text="Do A")
+        repo.mark_done(rid, 0, False, done_at_override="2026-07-14T12:00:00+00:00")
+        states = {s.todo_index: s for s in repo.list_for_recording(rid)}
+        assert states[0].done is False
+        assert states[0].done_at is None
+        assert states[0].toggled_at == "2026-07-14T12:00:00+00:00"
+
+        t.push_text(json.dumps([
+            {"recording_id": rid, "todo_index": 0, "done": True,
+             "toggled_at": "2026-07-14T11:00:00+00:00"},
+        ]), "outbox/changes.json")
+
+        report = run_sync(
+            db, t, import_recording=fake_import(db),
+            now_iso="2026-07-14T13:00:00+00:00",
+        )
+
+        assert report.toggles_applied == 0
+        assert report.toggles_skipped_stale == 1
+        states = {s.todo_index: s for s in TodoStateRepo(db).list_for_recording(rid)}
+        assert states[0].done is False
     finally:
         db.close()
 
