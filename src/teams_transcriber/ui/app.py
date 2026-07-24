@@ -113,7 +113,7 @@ def _chat_should_send(*, api_key: str, text: str) -> bool:
 
 def _wrike_lru_push(items: list[str], value: str, *, cap: int) -> list[str]:
     rest = [i for i in items if i != value]
-    return ([value] + rest)[:cap]
+    return [value, *rest][:cap]
 
 
 def _build_columns_splitter(history, summary):
@@ -472,12 +472,17 @@ class App:
         """Watcher-thread sync cycle: runs entirely off the Qt main thread.
 
         Builds a fresh MtpTransport(find_phone_root()) (never reuses the
-        probe's root -- spike freshness discipline), runs the sync engine,
-        persists a last-sync status into settings, and toasts the result.
-        Nothing here touches a QWidget directly: on_todos_changed and the
-        final toast are both hopped to the main thread via the 3-arg
+        probe's root -- spike freshness discipline) and runs the sync
+        engine. Nothing here touches a QWidget directly, and -- just as
+        importantly -- nothing here calls save_settings() on this thread:
+        SettingsDialog._on_accept can call save_settings() concurrently on
+        the main thread against the same Settings object, and two
+        concurrent writers to settings.json can corrupt it. The
+        phone_sync_last mutation + save_settings() + toast are all done in
+        one callable hopped to the main thread via the 3-arg
         QTimer.singleShot(0, self.window, ...) pattern used elsewhere in
-        this file for worker-thread -> UI callbacks.
+        this file for worker-thread -> UI callbacks, so persistence always
+        happens on the main thread, in order (persist then toast).
         """
         from datetime import UTC, datetime
 
@@ -507,11 +512,16 @@ class App:
             f"({report.toggles_skipped_stale} stale), "
             f"failures {len(report.failures)}"
         )
-        self.settings._raw.setdefault("integrations", {})["phone_sync_last"] = {
-            "at": now_iso, "ok": not report.failures, "summary": text,
-        }
-        save_settings(self.paths, self.settings)
-        QTimer.singleShot(0, self.window, lambda: show_in_app_toast("Phone sync", text))
+        ok = not report.failures
+
+        def _persist_then_toast() -> None:
+            self.settings._raw.setdefault("integrations", {})["phone_sync_last"] = {
+                "at": now_iso, "ok": ok, "summary": text,
+            }
+            save_settings(self.paths, self.settings)
+            show_in_app_toast("Phone sync", text)
+
+        QTimer.singleShot(0, self.window, _persist_then_toast)
 
     def _phone_sync_on_error(self, hint: str) -> None:
         """Watcher-thread callback for a device_not_ready arrival (phone
@@ -1326,6 +1336,8 @@ class App:
 
     def _quit_for_update(self) -> None:
         """Clean shutdown before the installer replaces files on disk."""
+        if self._phone_watcher is not None:
+            self._phone_watcher.stop()
         self.hotkeys.stop()
         self.pipeline.shutdown()
         self.db.close()
@@ -1414,6 +1426,8 @@ class App:
         win.show()
 
     def _quit(self) -> None:
+        if self._phone_watcher is not None:
+            self._phone_watcher.stop()
         self.hotkeys.stop()
         self.pipeline.shutdown()
         self.db.close()

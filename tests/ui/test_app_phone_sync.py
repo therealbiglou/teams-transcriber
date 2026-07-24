@@ -105,14 +105,25 @@ def test_phone_sync_cycle_persists_status_and_toasts(qapp, qtbot, tmp_path, monk
     on_todos_changed(7)
     qtbot.waitUntil(lambda: todo_calls == [7], timeout=2000)
 
+    # phone_sync_last mutation + save_settings() are hopped to the main
+    # thread together with the toast (same singleShot callable) -- assert
+    # via waitUntil rather than expecting them synchronously.
+    qtbot.waitUntil(
+        lambda: "phone_sync_last" in app.settings._raw.get("integrations", {}),
+        timeout=2000,
+    )
     last = app.settings._raw["integrations"]["phone_sync_last"]
     assert last["ok"] is True
     assert "Imported 1" in last["summary"]
 
     # Persisted to disk too, not just in memory.
     from teams_transcriber.config import load_settings
-    reloaded = load_settings(paths)
-    assert reloaded._raw["integrations"]["phone_sync_last"]["ok"] is True
+
+    def _persisted() -> bool:
+        reloaded = load_settings(paths)
+        return reloaded._raw.get("integrations", {}).get("phone_sync_last", {}).get("ok") is True
+
+    qtbot.waitUntil(_persisted, timeout=2000)
 
     # Toast is hopped to the main thread via QTimer.singleShot -- assert
     # via waitUntil rather than expecting it synchronously.
@@ -165,6 +176,10 @@ def test_phone_sync_cycle_marks_failed_report_not_ok(qapp, qtbot, tmp_path, monk
 
     app._phone_sync_cycle()
 
+    qtbot.waitUntil(
+        lambda: "phone_sync_last" in app.settings._raw.get("integrations", {}),
+        timeout=2000,
+    )
     last = app.settings._raw["integrations"]["phone_sync_last"]
     assert last["ok"] is False
     qtbot.waitUntil(lambda: len(toasts) == 1, timeout=2000)
@@ -230,6 +245,59 @@ def test_apply_phone_sync_setting_enabled_twice_is_idempotent(qapp):
     app._apply_phone_sync_setting()
     assert app._phone_watcher is None
     assert not first_thread.is_alive()          # stop() joined it
+
+
+def test_quit_stops_phone_watcher_before_teardown(qapp):
+    """_quit must stop a running phone watcher first, ahead of hotkeys/
+    pipeline/db teardown -- otherwise the watcher thread can still be
+    mid-cycle (touching self.db / self.pipeline) after they're torn down."""
+    from teams_transcriber.ui.app import App
+
+    app = App.__new__(App)
+    order: list[str] = []
+    app._phone_watcher = SimpleNamespace(stop=lambda: order.append("watcher_stop"))
+    app.hotkeys = SimpleNamespace(stop=lambda: order.append("hotkeys_stop"))
+    app.pipeline = SimpleNamespace(shutdown=lambda: order.append("pipeline_shutdown"))
+    app.db = SimpleNamespace(close=lambda: order.append("db_close"))
+    app.qapp = SimpleNamespace(quit=lambda: order.append("qapp_quit"))
+
+    app._quit()
+
+    assert order == ["watcher_stop", "hotkeys_stop", "pipeline_shutdown", "db_close", "qapp_quit"]
+
+
+def test_quit_with_no_phone_watcher_does_not_crash(qapp):
+    """No watcher running (phone sync never enabled) -- _quit must tolerate None."""
+    from teams_transcriber.ui.app import App
+
+    app = App.__new__(App)
+    app._phone_watcher = None
+    app.hotkeys = SimpleNamespace(stop=lambda: None)
+    app.pipeline = SimpleNamespace(shutdown=lambda: None)
+    app.db = SimpleNamespace(close=lambda: None)
+    app.qapp = SimpleNamespace(quit=lambda: None)
+
+    app._quit()  # must not raise
+
+
+def test_quit_for_update_stops_phone_watcher_before_teardown(qapp):
+    """_quit_for_update (pre-installer shutdown path) must stop the phone
+    watcher first too, same as _quit."""
+    from teams_transcriber.ui.app import App
+
+    app = App.__new__(App)
+    order: list[str] = []
+    app._phone_watcher = SimpleNamespace(stop=lambda: order.append("watcher_stop"))
+    app.hotkeys = SimpleNamespace(stop=lambda: order.append("hotkeys_stop"))
+    app.pipeline = SimpleNamespace(shutdown=lambda: order.append("pipeline_shutdown"))
+    app.db = SimpleNamespace(close=lambda: order.append("db_close"))
+    app.qapp = SimpleNamespace(exit=lambda code: order.append(("qapp_exit", code)))
+
+    app._quit_for_update()
+
+    assert order == [
+        "watcher_stop", "hotkeys_stop", "pipeline_shutdown", "db_close", ("qapp_exit", 0),
+    ]
 
 
 def test_open_settings_tab_reconnects_phone_sync_setting_and_history_refresh():
