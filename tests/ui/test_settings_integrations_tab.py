@@ -3,10 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import Qt
 
 from teams_transcriber.config import load_settings
 from teams_transcriber.paths import AppPaths
-from teams_transcriber.ui.settings_dialog import SettingsDialog
+from teams_transcriber.ui.settings_dialog import SettingsDialog, _phone_sync_status_text
 
 
 @pytest.fixture
@@ -118,3 +119,50 @@ def test_wrike_test_disables_button_while_checking(qapp, qtbot, paths, monkeypat
     gate.set()
     qtbot.waitUntil(lambda: dlg._wrike_test_btn.isEnabled(), timeout=3000)
     assert "Connected as A B" in dlg.wrike_status_label.text()
+
+
+def test_phone_sync_toggle_persists(qapp, paths):
+    settings = load_settings(paths)
+    dlg = SettingsDialog(settings, paths)
+    assert dlg.phone_sync_enable_cb.isChecked() is False
+
+    dlg.phone_sync_enable_cb.setChecked(True)
+    dlg._on_accept()
+
+    reloaded = load_settings(paths)
+    assert reloaded._raw["integrations"]["phone_sync_enabled"] is True
+
+
+def test_phone_sync_status_renders_last_sync(qapp, paths):
+    settings = load_settings(paths)
+    settings._raw.setdefault("integrations", {})["phone_sync_last"] = {
+        "at": "2026-07-24T15:04:00+00:00",
+        "ok": True,
+        "summary": "Imported 2",
+    }
+    dlg = SettingsDialog(settings, paths)
+
+    assert "Imported 2" in dlg.phone_sync_status_label.text()
+    flags = dlg.phone_sync_status_label.textInteractionFlags()
+    assert flags & Qt.TextInteractionFlag.TextSelectableByMouse
+    assert dlg.phone_sync_status_label.wordWrap() is True
+
+
+def test_phone_sync_status_text_never_synced():
+    assert _phone_sync_status_text({}) == "Never synced"
+    assert _phone_sync_status_text({"integrations": {}}) == "Never synced"
+
+
+def test_phone_sync_status_text_failure_is_prefixed():
+    raw = {
+        "integrations": {
+            "phone_sync_last": {
+                "at": "2026-07-24T15:04:00+00:00",
+                "ok": False,
+                "summary": "Transport error",
+            }
+        }
+    }
+    text = _phone_sync_status_text(raw)
+    assert "Transport error" in text
+    assert "fail" in text.lower()
