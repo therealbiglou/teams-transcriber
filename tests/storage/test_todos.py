@@ -1,10 +1,7 @@
 from datetime import UTC, datetime
-from pathlib import Path
-from typing import Iterator
 
 import pytest
 
-from teams_transcriber.storage import build_database
 from teams_transcriber.storage.db import Database
 from teams_transcriber.storage.models import (
     Recording,
@@ -20,17 +17,8 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-@pytest.fixture
-def db(tmp_path: Path) -> Iterator[Database]:
-    """Override conftest's v1-only `db` fixture: TodoStateRepo reads/writes
-    todo_state.toggled_at (schema v8), so tests in this module need the full
-    migration set applied, not just schema v1."""
-    database = build_database(tmp_path / "test.db")
-    database.initialize()
-    try:
-        yield database
-    finally:
-        database.close()
+# `db` fixture: conftest.py's applies the full migration set (needed here
+# since TodoStateRepo reads/writes todo_state.toggled_at, schema v8).
 
 
 @pytest.fixture
