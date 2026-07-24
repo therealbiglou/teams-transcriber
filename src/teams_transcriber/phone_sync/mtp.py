@@ -106,15 +106,15 @@ def find_phone_root(shell=None) -> _ComFolder:
     devices = [i for i in this_pc.Items() if not i.IsFileSystem]
     if not devices:
         raise MtpNotReady("no_device", hint="Plug the phone in over USB.")
+    saw_storageless = False
     for dev in devices:
         storages = list(dev.GetFolder.Items())
         if not storages:
             # Staged arrival (spike hazard #3): phone locked, or Android
-            # reset USB mode to charging-only on this plug.
-            raise MtpNotReady(
-                "device_not_ready",
-                hint="Unlock the phone and set USB to File transfer.",
-            )
+            # reset USB mode to charging-only on this plug. Keep scanning --
+            # the ready phone may sit behind another storageless peripheral.
+            saw_storageless = True
+            continue
         for storage in storages:
             docs = storage.GetFolder.ParseName("Documents")
             if docs is None:
@@ -122,6 +122,11 @@ def find_phone_root(shell=None) -> _ComFolder:
             marker = docs.GetFolder.ParseName("TeamsTranscriber")
             if marker is not None:
                 return marker.GetFolder
+    if saw_storageless:
+        raise MtpNotReady(
+            "device_not_ready",
+            hint="Unlock the phone and set USB to File transfer.",
+        )
     raise MtpNotReady(
         "no_marker",
         hint="No TeamsTranscriber folder on the phone yet — install/run the "
@@ -165,6 +170,7 @@ class MtpTransport:
     # --- Transport protocol ------------------------------------------------
 
     def list_files(self, prefix: str) -> list[RemoteFile]:
+        validate_name(prefix)
         folder = self._resolve_folder(prefix)
         if folder is None:
             return []
@@ -258,12 +264,18 @@ class MtpTransport:
         # pop a native "overwrite?" confirmation dialog and hang.
         name = item.Name
         discard_dir = Path(tempfile.mkdtemp(dir=self._discard_dir))
-        discard_folder = self._shell.NameSpace(str(discard_dir))
-        discard_folder.MoveHere(item)
-        self._wait(
-            lambda: folder.ParseName(name) is None,
-            f"{name} still present after discard",
-        )
+        try:
+            discard_folder = self._shell.NameSpace(str(discard_dir))
+            discard_folder.MoveHere(item)
+            self._wait(
+                lambda: folder.ParseName(name) is None,
+                f"{name} still present after discard",
+            )
+        finally:
+            # Device-side absence means the move's local-copy leg completed;
+            # drop the recording-sized discard copy instead of accumulating
+            # it in %TEMP% for the transport's lifetime.
+            shutil.rmtree(discard_dir, ignore_errors=True)
 
     def _stage_as(self, src: Path, leaf: str, stage_dir: Path) -> Path:
         # CopyHere keeps the source path's own filename, so the pushed

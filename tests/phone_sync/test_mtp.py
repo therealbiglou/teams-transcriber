@@ -77,7 +77,7 @@ class FakeShellFolder:
     def Application(self):
         return self._shell
 
-    def add_folder(self, name, **kw) -> "FakeShellFolder":
+    def add_folder(self, name, **kw) -> FakeShellFolder:
         sub = FakeShellFolder(name, shell=self._shell, **kw)
         self._items[name] = FakeShellItem(name, folder=sub, owner=self)
         return sub
@@ -235,6 +235,33 @@ def test_find_phone_root_no_device_raises():
     assert exc.value.hint
 
 
+def test_find_phone_root_skips_storageless_device_to_reach_marker():
+    # A storageless peripheral enumerated BEFORE the phone must not
+    # short-circuit the scan -- the ready phone behind it wins.
+    shell, marker = _make_tree()
+    this_pc = shell.this_pc
+    empty_dev = FakeShellFolder("Storageless Peripheral", shell=shell)
+    reordered = {"Peripheral": FakeShellItem(
+        "Peripheral", folder=empty_dev, is_file_system=False, owner=this_pc,
+    )}
+    reordered.update(this_pc._items)
+    this_pc._items = reordered  # storageless device now enumerates first
+    root = find_phone_root(shell=shell)
+    assert root is marker
+
+
+def test_find_phone_root_all_storageless_raises_device_not_ready():
+    shell, _ = _make_tree(storages=0)
+    this_pc = shell.this_pc
+    this_pc._items["Pixel2"] = FakeShellItem(
+        "Pixel2", folder=FakeShellFolder("Device2", shell=shell),
+        is_file_system=False, owner=this_pc,
+    )
+    with pytest.raises(MtpNotReady) as exc:
+        find_phone_root(shell=shell)
+    assert exc.value.reason == "device_not_ready"
+
+
 # --- push --------------------------------------------------------------
 
 
@@ -255,17 +282,31 @@ def test_push_existing_name_deletes_then_copies(tmp_path):
 
 
 def test_push_invisible_after_write_raises_stale_session(tmp_path):
-    shell, root = _make_tree(outbox_invisible={"rec_b.m4a"})
+    _shell, root = _make_tree(outbox_invisible={"rec_b.m4a"})
     src = tmp_path / "b.m4a"
     src.write_bytes(b"data")
 
     t = MtpTransport(root, poll_interval=0.005, timeout=0.05)
-    with pytest.raises(MtpStaleSession):
+    with pytest.raises(MtpStaleSession) as exc:
         t.push(src, "outbox/rec_b.m4a")
+    assert "unplug and replug" in str(exc.value)
+
+
+def test_push_succeeds_after_async_arrival_latency(tmp_path):
+    # Spike: CopyHere is async -- the item only appears after some polls.
+    _shell, root = _make_tree(outbox_latency=2)
+    src = tmp_path / "slow.m4a"
+    src.write_bytes(b"slow-bytes")
+
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t.push(src, "outbox/slow.m4a")
+
+    outbox = root.ParseName("outbox").GetFolder
+    assert outbox.ParseName("slow.m4a")._content == b"slow-bytes"
 
 
 def test_push_creates_missing_parent_folder(tmp_path):
-    shell, root = _make_tree()
+    _shell, root = _make_tree()
     src = tmp_path / "n.json"
     src.write_bytes(b"{}")
 
@@ -282,7 +323,7 @@ def test_push_creates_missing_parent_folder(tmp_path):
 
 
 def test_pull_and_read_text_round_trip(tmp_path):
-    shell, root = _make_tree()
+    _shell, root = _make_tree()
     meetings = root.ParseName("library").GetFolder.ParseName("meetings").GetFolder
     meetings.add_file("5.json", b'{"ok": true}')
 
@@ -296,8 +337,23 @@ def test_pull_and_read_text_round_trip(tmp_path):
     assert t.read_text("library/meetings/missing.json") is None
 
 
+def test_pull_renames_when_dest_leaf_differs_from_remote_leaf(tmp_path):
+    # CopyHere keeps the source item's name; pull must rename to the
+    # caller's requested destination filename when it differs.
+    _shell, root = _make_tree()
+    outbox = root.ParseName("outbox").GetFolder
+    outbox.add_file("rec_d.m4a", b"renamed-bytes")
+
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    dest = tmp_path / "local_copy.m4a"
+    t.pull("outbox/rec_d.m4a", dest)
+
+    assert dest.read_bytes() == b"renamed-bytes"
+    assert not (tmp_path / "rec_d.m4a").exists()
+
+
 def test_push_text_then_read_text(tmp_path):
-    shell, root = _make_tree()
+    _shell, root = _make_tree()
     t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
 
     t.push_text('{"x": 1}', "sync/desktop_ack.json")
@@ -320,16 +376,31 @@ def test_delete_uses_move_here_and_removes_from_device(tmp_path):
 
 
 def test_delete_missing_file_is_a_noop(tmp_path):
-    shell, root = _make_tree()
+    _shell, root = _make_tree()
     t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
     t.delete("outbox/does_not_exist.m4a")  # must not raise
+
+
+def test_delete_discard_staging_does_not_accumulate():
+    # The per-call discard subdir (recording-sized files) must be cleaned
+    # up after the move completes, not leak for the transport's lifetime.
+    _shell, root = _make_tree()
+    outbox = root.ParseName("outbox").GetFolder
+    outbox.add_file("rec_e.m4a", b"e" * 64)
+    outbox.add_file("rec_f.m4a", b"f" * 64)
+
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t.delete("outbox/rec_e.m4a")
+    t.delete("outbox/rec_f.m4a")
+
+    assert list(t._discard_dir.iterdir()) == []
 
 
 # --- list_files --------------------------------------------------------
 
 
 def test_list_files_recurses_with_relative_names_and_sizes():
-    shell, root = _make_tree()
+    _shell, root = _make_tree()
     outbox = root.ParseName("outbox").GetFolder
     outbox.add_file("a.json", b"{}")
     outbox.add_file("b.m4a", b"xxxxx")
@@ -346,7 +417,7 @@ def test_list_files_recurses_with_relative_names_and_sizes():
 
 
 def test_list_files_missing_prefix_returns_empty():
-    shell, root = _make_tree()
+    _shell, root = _make_tree()
     t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
     assert t.list_files("does/not/exist") == []
 
@@ -358,11 +429,13 @@ def test_list_files_missing_prefix_returns_empty():
     "../x", "outbox\\x", "/abs", "outbox/../x", "C:evil",
 ])
 def test_operations_reject_invalid_names(tmp_path, bad):
-    shell, root = _make_tree()
+    _shell, root = _make_tree()
     t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
     src = tmp_path / "f.txt"
     src.write_bytes(b"x")
 
+    with pytest.raises(ValueError):
+        t.list_files(bad)
     with pytest.raises(ValueError):
         t.push(src, bad)
     with pytest.raises(ValueError):
@@ -379,7 +452,7 @@ def test_operations_reject_invalid_names(tmp_path, bad):
 
 
 def test_close_cleans_up_tempdir():
-    shell, root = _make_tree()
+    _shell, root = _make_tree()
     t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
     tmp_dir = Path(t._tmp)
     assert tmp_dir.exists()
