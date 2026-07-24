@@ -70,7 +70,9 @@ Rules:
 - **Conservative deletion:** an outbox file is deleted from the phone only
   after its import is committed to the desktop DB.
 - **Todo conflicts:** last-write-wins by timestamp — phone `toggled_at` vs
-  desktop `done_at`. Applied toggles fire the existing Wrike close-loop.
+  the desktop row's `toggled_at` (schema v8), falling back to `done_at` for
+  rows last written before schema v8 shipped. Applied toggles fire the
+  existing Wrike close-loop.
 - **Toggle cleanup:** the ack's `changes_applied_through` is the maximum
   `toggled_at` among all entries the desktop parsed this cycle — applied,
   superseded by newer desktop state (LWW), or unresolvable (unknown
