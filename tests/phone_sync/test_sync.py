@@ -9,7 +9,7 @@ tests/phone_sync/test_library_export.py.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from teams_transcriber.phone_sync.sync import run_sync
@@ -400,6 +400,50 @@ def test_same_todo_twice_in_one_batch_applies_both_in_lww_order(tmp_path):
         assert report.toggles_skipped_stale == 0
         states = {s.todo_index: s for s in TodoStateRepo(db).list_for_recording(rid)}
         assert states[0].done is False  # B applied over A
+    finally:
+        db.close()
+
+
+def test_started_at_with_nonutc_offset_normalized(tmp_path):
+    """Sidecar with started_at '2026-07-24T20:30:00+05:30' -> the imported
+    recording's started_at must be the UTC equivalent
+    '2026-07-24T15:00:00+00:00' (same instant, offset normalized to zero)."""
+    db = _make_db(tmp_path)
+    try:
+        t = phone(tmp_path)
+        seed_outbox(t, "uid-1", started_at="2026-07-24T20:30:00+05:30")
+        importer = fake_import(db)
+
+        run_sync(db, t, import_recording=importer, now_iso="2026-07-24T12:00:00+00:00")
+
+        assert len(importer.calls) == 1
+        _src_path, _title, started_at = importer.calls[0]
+        original = datetime.fromisoformat("2026-07-24T20:30:00+05:30")
+        assert started_at is not None
+        assert started_at.utcoffset() == timedelta(0)
+        assert started_at == original
+    finally:
+        db.close()
+
+
+def test_stray_library_detail_file_pruned(tmp_path):
+    """A leftover library/meetings/<id>.json for a recording that no longer
+    exists (deleted on the desktop) must be pruned from the transport during
+    export -- the library is regenerated every sync, not accreted."""
+    db = _make_db(tmp_path)
+    try:
+        t = phone(tmp_path)
+        rid = _seed_recording_with_todo(db, done_at=None)
+        t.push_text('{"id": 999, "stale": true}', "library/meetings/999.json")
+        importer = fake_import(db)
+
+        run_sync(db, t, import_recording=importer, now_iso="2026-07-14T12:00:00+00:00")
+
+        names = {f.name for f in t.list_files("library")}
+        assert f"library/meetings/{rid}.json" in names
+        assert "library/meetings/999.json" not in names
+        assert "library/manifest.json" in names
+        assert "library/meetings.json" in names
     finally:
         db.close()
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from teams_transcriber.phone_sync.transport import LocalDirTransport, RemoteFile
+import pytest
+
+from teams_transcriber.phone_sync.transport import LocalDirTransport, RemoteFile, validate_name
 
 
 def test_push_list_pull_delete_roundtrip(tmp_path):
@@ -31,3 +33,24 @@ def test_push_list_pull_delete_roundtrip(tmp_path):
 def test_list_files_empty_prefix_dir(tmp_path):
     t = LocalDirTransport(tmp_path / "phone")
     assert t.list_files("outbox") == []
+
+
+@pytest.mark.parametrize("bad", [
+    "../escape.m4a", "outbox/../../x", "C:/evil", "C:\\evil",
+    "outbox\\rec.m4a", "/abs/path", "outbox/../x",
+])
+def test_validate_name_rejects_traversal_and_separators(bad):
+    with pytest.raises(ValueError):
+        validate_name(bad)
+
+
+def test_validate_name_accepts_contract_names():
+    for good in ("outbox/rec_a.m4a", "library/meetings/5.json", "sync/desktop_ack.json"):
+        assert validate_name(good) == good
+
+
+def test_local_transport_refuses_bad_names(tmp_path):
+    from teams_transcriber.phone_sync.transport import LocalDirTransport
+    t = LocalDirTransport(tmp_path)
+    with pytest.raises(ValueError):
+        t.read_text("../outside.txt")

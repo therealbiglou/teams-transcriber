@@ -14,7 +14,7 @@ import logging
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from teams_transcriber.phone_sync import contract
@@ -36,9 +36,12 @@ class PhoneSyncReport:
 
 def _parse_started_at(sidecar: contract.Sidecar) -> datetime | None:
     try:
-        return datetime.fromisoformat(sidecar.started_at)
+        parsed = datetime.fromisoformat(sidecar.started_at)
     except ValueError:
         return None
+    # Contract requires aware timestamps; normalize any offset to UTC so
+    # recordings.started_at stays lexicographically ordered (ORDER BY).
+    return parsed.astimezone(UTC) if parsed.tzinfo is not None else None
 
 
 def run_sync(
@@ -156,7 +159,14 @@ def run_sync(
             on_todos_changed(rid)
 
     # --- export + ack --------------------------------------------------------
-    for name, text in build_library(db, now_iso=now_iso).items():
+    library_files = build_library(db, now_iso=now_iso)
+    # Prune detail files for recordings that no longer exist (deleted on the
+    # desktop) — "regenerated every sync" means replaced, not accreted.
+    current = set(library_files)
+    for remote_file in transport.list_files("library"):
+        if remote_file.name not in current:
+            transport.delete(remote_file.name)
+    for name, text in library_files.items():
         transport.push_text(text, name)
     transport.push_text(
         contract.build_ack(ack_entries, changes_applied_through=max_seen),

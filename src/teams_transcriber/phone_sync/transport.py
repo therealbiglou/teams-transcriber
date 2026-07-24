@@ -13,6 +13,17 @@ from pathlib import Path
 from typing import Protocol
 
 
+def validate_name(name: str) -> str:
+    """Reject names that could escape the phone folder. Phase 2 feeds the
+    transport names listed from the phone itself, so they are untrusted."""
+    if "\\" in name or name.startswith("/") or ":" in name:
+        raise ValueError(f"invalid transport name: {name!r}")
+    parts = name.split("/")
+    if any(p in ("", ".", "..") for p in parts):
+        raise ValueError(f"invalid transport name: {name!r}")
+    return name
+
+
 @dataclass(frozen=True, slots=True)
 class RemoteFile:
     name: str
@@ -33,6 +44,7 @@ class LocalDirTransport:
         self._base = Path(base)
 
     def _path(self, name: str) -> Path:
+        validate_name(name)
         return self._base / Path(name)
 
     def list_files(self, prefix: str) -> list[RemoteFile]:
