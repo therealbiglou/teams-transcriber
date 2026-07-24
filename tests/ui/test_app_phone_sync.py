@@ -195,6 +195,43 @@ def test_apply_phone_sync_setting_starts_and_stops_watcher(qapp, tmp_path):
     assert watcher._thread is None  # stop() joined and cleared the thread
 
 
+def test_apply_phone_sync_setting_enabled_twice_is_idempotent(qapp):
+    """Two consecutive enabled=True applies (startup + a Settings save that
+    didn't touch the flag) must keep the SAME watcher instance and exactly
+    one live watcher thread; a subsequent disable stops and joins it."""
+    import threading
+
+    from teams_transcriber.config import Settings
+    from teams_transcriber.ui.app import App
+
+    app = App.__new__(App)
+    app.settings = Settings()
+    app.settings._raw.setdefault("integrations", {})["phone_sync_enabled"] = True
+    app._phone_watcher = None
+
+    app._apply_phone_sync_setting()
+    first = app._phone_watcher
+    assert first is not None
+    first_thread = first._thread
+    assert first_thread is not None and first_thread.is_alive()
+
+    app._apply_phone_sync_setting()  # e.g. Settings saved with flag unchanged
+    assert app._phone_watcher is first          # same instance, not respawned
+    assert first._thread is first_thread        # same thread, no second spawn
+    assert (
+        sum(
+            1 for t in threading.enumerate()
+            if t.name == "PhoneSyncWatcher" and t.is_alive()
+        )
+        == 1
+    )
+
+    app.settings._raw["integrations"]["phone_sync_enabled"] = False
+    app._apply_phone_sync_setting()
+    assert app._phone_watcher is None
+    assert not first_thread.is_alive()          # stop() joined it
+
+
 def test_open_settings_tab_reconnects_phone_sync_setting_and_history_refresh():
     """Wiring regression guard: the dlg.saved connection point must keep
     refreshing history AND re-apply the phone-sync enabled/disabled toggle

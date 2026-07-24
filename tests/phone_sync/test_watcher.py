@@ -96,6 +96,108 @@ def test_device_not_ready_reports_hint_once_per_arrival_and_skips_cycle():
         watcher.stop()
 
 
+def test_run_cycle_exception_consumes_arrival_and_rearms_after_departure():
+    """A raising run_cycle still consumes the arrival: on_error gets the
+    failure text, there is NO retry while the probe stays True, and only a
+    departure + re-arrival produces a new run_cycle attempt."""
+    presence = [False]
+    presence_lock = threading.Lock()
+    cycle_calls: list[int] = []
+    first_attempt = threading.Event()
+    second_attempt = threading.Event()
+    errors: list[str] = []
+    error_seen = threading.Event()
+
+    def probe() -> bool:
+        with presence_lock:
+            return presence[0]
+
+    def run_cycle() -> None:
+        cycle_calls.append(1)
+        if len(cycle_calls) == 1:
+            first_attempt.set()
+            raise RuntimeError("sync blew up")
+        second_attempt.set()
+
+    def on_error(msg: str) -> None:
+        errors.append(msg)
+        error_seen.set()
+
+    watcher = PhoneSyncWatcher(
+        run_cycle=run_cycle, probe=probe, poll_seconds=0.05, on_error=on_error,
+    )
+    watcher.start()
+    try:
+        with presence_lock:
+            presence[0] = True
+        assert first_attempt.wait(timeout=2), "run_cycle never attempted on arrival"
+        assert error_seen.wait(timeout=2), "on_error never fired for the failed cycle"
+        assert errors == ["Phone sync failed — see logs."]
+
+        # Probe stays True over several more polls: the failed arrival is
+        # consumed -- no retry.
+        time.sleep(0.3)
+        assert cycle_calls == [1]
+
+        # Depart, then re-arrive -> a fresh run_cycle attempt.
+        with presence_lock:
+            presence[0] = False
+        time.sleep(0.2)
+        with presence_lock:
+            presence[0] = True
+        assert second_attempt.wait(timeout=2), "no new attempt after re-arrival"
+        assert cycle_calls == [1, 1]
+    finally:
+        watcher.stop()
+
+
+def test_arbitrary_probe_exception_is_absent_and_recovers():
+    """A plain RuntimeError from probe (not MtpNotReady) is treated as
+    absent: run_cycle never runs, on_error is never called (the watcher
+    logs it instead -- on_error is reserved for the device_not_ready hint
+    and run_cycle failures), and once the probe heals to a plain True the
+    arrival still triggers a cycle."""
+    mode = ["raise"]
+    mode_lock = threading.Lock()
+    cycle_calls: list[int] = []
+    cycle_ran = threading.Event()
+    errors: list[str] = []
+    raise_count = [0]
+    raised_enough = threading.Event()
+
+    def probe() -> bool:
+        with mode_lock:
+            current = mode[0]
+        if current == "raise":
+            raise_count[0] += 1
+            if raise_count[0] >= 3:
+                raised_enough.set()
+            raise RuntimeError("COM exploded")
+        return True
+
+    def run_cycle() -> None:
+        cycle_calls.append(1)
+        cycle_ran.set()
+
+    watcher = PhoneSyncWatcher(
+        run_cycle=run_cycle, probe=probe, poll_seconds=0.05, on_error=errors.append,
+    )
+    watcher.start()
+    try:
+        assert raised_enough.wait(timeout=2), "probe never polled 3 times"
+        assert cycle_calls == []
+        assert errors == []  # generic probe failures are logged, not on_error'd
+
+        # Probe heals -> this is a False(-ish)->True transition -> one cycle.
+        with mode_lock:
+            mode[0] = "ok"
+        assert cycle_ran.wait(timeout=2), "healthy probe never triggered a cycle"
+        assert cycle_calls == [1]
+        assert errors == []
+    finally:
+        watcher.stop()
+
+
 def test_other_not_ready_reasons_are_silent_and_absent():
     """no_device/no_marker/service_stopped reasons are 'waiting' states:
     no on_error call, treated as absent (no run_cycle)."""
