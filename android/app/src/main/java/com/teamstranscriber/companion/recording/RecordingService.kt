@@ -22,6 +22,7 @@ import java.time.ZoneId
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -35,7 +36,7 @@ class RecordingService : Service() {
     private var armed = false
     private var tickerJob: Job? = null
     private var commandJob: Job? = null
-    private val scope = CoroutineScope(Dispatchers.Main + Job())
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -57,21 +58,31 @@ class RecordingService : Service() {
     }
 
     private fun arm() {
-        if (armed) return
-        armed = true
         createChannel()
+        // startForegroundService() imposes a "call startForeground() within ~5s" obligation on
+        // EVERY call, including the idempotent re-arm from MainActivity.onStart while already armed.
+        // Always (re)assert foreground; pick the notification by state so an in-progress recording
+        // isn't clobbered.
+        val notif = if (RecordingBus.state.value.active) {
+            buildNotification(System.currentTimeMillis() - startedAt)
+        } else {
+            buildArmedNotification()
+        }
         try {
-            startForeground(NOTIF_ID, buildArmedNotification())
+            startForeground(NOTIF_ID, notif)
         } catch (e: Exception) {
             // Same Android 14+ background-mic-FGS restriction as beginCapture(); arm() is
             // only ever called from the foreground (UI), but guard defensively anyway.
-            armed = false
-            notifyError("Couldn't arm auto-record — open the app to enable it")
-            stopSelf()
+            if (!armed) {
+                notifyError("Couldn't arm auto-record — open the app to enable it")
+                stopSelf()
+            }
             return
         }
+        if (armed) return // already armed; command collector already running
+        armed = true
         commandJob = scope.launch {
-            AutoRecordControl.commands.collect { onCommand(it) }
+            AutoRecordControl.commands.collect { runCatching { onCommand(it) } }
         }
     }
 
