@@ -61,10 +61,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
         "open_workspace": "ctrl+alt+n",
         "toggle_pause_detection": "ctrl+alt+p",
     },
-    "integrations": {
-        "wrike_enabled": False,
-        "wrike_recent_folder_ids": [],
-    },
+    "integrations": {},
 }
 
 
