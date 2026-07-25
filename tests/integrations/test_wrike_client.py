@@ -166,3 +166,22 @@ def test_delete_attachment():
     client = _client(handler)
     client.delete_attachment("att9")
     assert seen["method"] == "DELETE" and seen["path"] == "/api/v4/attachments/att9"
+
+
+def test_upload_attachment_retries_on_429_then_succeeds():
+    calls = {"n": 0}
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            return httpx.Response(429, headers={"Retry-After": "0"}, json={"errorDescription": "throttled"})
+        return httpx.Response(200, json={"data": [{"id": "att9"}]})
+    client = _client(handler)
+    att_id = client.upload_attachment("prj1", "transcript.md", b"body")
+    assert calls["n"] == 3 and att_id == "att9"
+
+
+def test_upload_attachment_gives_up_with_rate_limit_error():
+    def handler(request): return httpx.Response(429, headers={"Retry-After": "0"})
+    client = _client(handler)
+    with pytest.raises(WrikeRateLimitError):
+        client.upload_attachment("prj1", "transcript.md", b"body")

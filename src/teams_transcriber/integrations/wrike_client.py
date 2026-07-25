@@ -111,17 +111,15 @@ class WrikeClient:
 
     def upload_attachment(self, entity_id: str, filename: str, content: bytes) -> str:
         # Wrike's attach endpoint takes the raw file bytes as the request body
-        # (not multipart) with the name in the X-File-Name header. Bypass
-        # _request's JSON path; reuse its error handling shape.
-        resp = self._client.request(
+        # (not multipart) with the name in the X-File-Name header. Route through
+        # _send (not _request) so we skip its JSON body encoding but still get
+        # the shared 429 retry/backoff + typed error handling — attachments are
+        # the largest payloads and the most likely to be rate-limited.
+        resp = self._send(
             "POST", f"/folders/{entity_id}/attachments",
             content=content,
             headers={"X-File-Name": filename, "content-type": "application/octet-stream"},
         )
-        if resp.status_code in (401, 403):
-            raise WrikeAuthError(f"Wrike auth failed ({resp.status_code}): {resp.text[:200]}")
-        if not resp.is_success:
-            raise WrikeApiError(f"Wrike attach -> {resp.status_code}: {resp.text[:200]}")
         data = resp.json().get("data") or []
         if not data:
             raise WrikeApiError(f"Wrike returned no attachment for {filename}")
@@ -141,10 +139,33 @@ class WrikeClient:
         json: Any | None = None,
         params: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
+        resp = self._send(method, path, json=json, params=params)
+        body = resp.json()
+        data = body.get("data")
+        return data if isinstance(data, list) else []
+
+    def _send(
+        self,
+        method: str,
+        path: str,
+        *,
+        json: Any | None = None,
+        params: dict[str, Any] | None = None,
+        content: bytes | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> httpx.Response:
+        """Send a request with 429 retry/backoff and typed error handling.
+
+        Returns the successful ``httpx.Response`` (2xx). Shared by ``_request``
+        (JSON body/response) and ``upload_attachment`` (raw body) so both honor
+        the same rate-limit budget and error taxonomy.
+        """
         attempts = 0
         while True:
             attempts += 1
-            resp = self._client.request(method, path, json=json, params=params)
+            resp = self._client.request(
+                method, path, json=json, params=params, content=content, headers=headers,
+            )
             if resp.status_code == 429:
                 if attempts > _MAX_RETRIES_ON_429:
                     raise WrikeRateLimitError(
@@ -167,6 +188,4 @@ class WrikeClient:
                 raise WrikeApiError(
                     f"Wrike {method} {path} -> {resp.status_code}: {resp.text[:200]}"
                 )
-            body = resp.json()
-            data = body.get("data")
-            return data if isinstance(data, list) else []
+            return resp
