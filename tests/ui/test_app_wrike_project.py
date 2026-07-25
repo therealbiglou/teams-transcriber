@@ -157,3 +157,67 @@ def test_resolve_wrike_assignees_calls_suggest_assignees(qapp, tmp_path, monkeyp
         assert captured["llm_fallback"] is True
     finally:
         db.close()
+
+
+def test_resolve_wrike_assignees_llm_fallback_off_without_key(qapp, tmp_path, monkeypatch):
+    """No Anthropic key -> suggest_assignees must be called with
+    llm_fallback=False (fuzzy-only), even when the toggle is on."""
+    from teams_transcriber.storage.models import ActionItemOther
+    from teams_transcriber.ui.app import App
+
+    db, rid = _seed_summary(
+        tmp_path, action_items_others=[ActionItemOther(who="Alex", task="ship it")]
+    )
+    try:
+        app = App.__new__(App)
+        app.db = db
+        app.settings = SimpleNamespace(
+            _raw={"integrations": {"wrike_llm_assignee_fallback": True}},
+            ai_model="claude-x",
+        )
+        app._anthropic_key = lambda: ""   # no key
+
+        class _Client:
+            def list_contacts(self):
+                return [{"id": "C1", "firstName": "Alex", "lastName": "Doe"}]
+
+        captured = {}
+
+        def _fake_suggest_assignees(items, contacts, *, meeting_summary, api_key, model, llm_fallback):
+            captured["llm_fallback"] = llm_fallback
+            return {}
+
+        monkeypatch.setattr(
+            "teams_transcriber.integrations.wrike_assignees.suggest_assignees",
+            _fake_suggest_assignees,
+        )
+
+        app._resolve_wrike_assignees(rid, _Client())
+
+        assert captured["llm_fallback"] is False
+    finally:
+        db.close()
+
+
+def test_on_todo_state_changed_refreshes_without_close_loop(qapp):
+    """_on_todo_state_changed refreshes history + reloads the master view but
+    -- since Task 7 dropped the ledgered close-loop -- must NOT call the
+    (now-unreferenced) close-loop sync. Mirrors the _on_master_todo_toggled
+    test in test_app_wrike_close_loop.py."""
+    from teams_transcriber.ui.app import App
+
+    app = App.__new__(App)
+    app.search = SimpleNamespace(input=SimpleNamespace(text=lambda: ""))
+
+    refresh_calls: list[int] = []
+    app._refresh_history = lambda query=None: refresh_calls.append(1)
+    reload_calls: list[int] = []
+    app.master_todos = SimpleNamespace(reload=lambda: reload_calls.append(1))
+    close_loop_calls: list[int] = []
+    app._wrike_close_loop_sync = close_loop_calls.append  # type: ignore[assignment]
+
+    app._on_todo_state_changed(7)
+
+    assert refresh_calls == [1]
+    assert reload_calls == [1]
+    assert close_loop_calls == []

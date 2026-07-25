@@ -344,7 +344,7 @@ class App:
         self.history.recording_selected.connect(self._show_summary)
         self.summary = SummaryPane(
             self.db,
-            wrike_available=self._wrike_is_configured,
+            wrike_available=self._wrike_project_enabled,
             anthropic_key_getter=self._anthropic_key,
         )
         self.summary.export_requested.connect(self._export_summary)
@@ -1063,26 +1063,6 @@ class App:
             return
         card.set_pending(False)
         card.append_error_message(err)
-
-    def _wrike_is_configured(self) -> bool:
-        """True when Wrike sync is enabled AND a token is stored in keyring.
-
-        Used by SummaryPane to decide whether to show the "Send to Wrike"
-        button, and as a guard before opening the picker.
-        """
-        import keyring
-
-        from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_WRIKE
-        enabled = bool(
-            self.settings._raw.get("integrations", {}).get("wrike_enabled", False)
-        )
-        if not enabled:
-            return False
-        try:
-            token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
-        except Exception:
-            return False
-        return bool(token)
 
     def _wrike_project_enabled(self) -> bool:
         """True when auto Wrike-project-export is fully configured: a token
