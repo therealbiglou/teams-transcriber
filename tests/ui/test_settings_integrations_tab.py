@@ -23,8 +23,8 @@ def test_integrations_tab_present_with_token_and_enable(qapp, paths):
     titles = [dlg._tabs.tabText(i) for i in range(dlg._tabs.count())]
     assert "Integrations" in titles
     assert dlg.wrike_token_input is not None
-    assert dlg.wrike_enable_cb is not None
-    assert dlg.wrike_enable_cb.isChecked() is False
+    assert dlg.wrike_project_export_cb is not None
+    assert dlg.wrike_project_export_cb.isChecked() is False
 
 
 def test_test_connection_updates_label_on_success(qapp, qtbot, paths, monkeypatch):
@@ -206,3 +206,31 @@ def test_dialog_constructs_with_corrupted_phone_sync_last(qapp, paths):
     settings._raw.setdefault("integrations", {})["phone_sync_last"] = "corrupted-string"
     dlg = SettingsDialog(settings, paths)  # must not raise
     assert dlg.phone_sync_status_label.text() == "Never synced"
+
+
+def test_project_export_toggle_and_destination_persist(qapp, paths):
+    settings = load_settings(paths)
+    dlg = SettingsDialog(settings, paths)
+
+    assert dlg.wrike_project_export_cb.isChecked() is False
+    assert dlg.wrike_dest_label.text() == "No destination chosen"
+
+    dlg.wrike_project_export_cb.setChecked(True)
+    dlg._chosen_parent = ("f1", "Team / Meetings")
+    dlg._on_accept()
+
+    reloaded = load_settings(paths)
+    integ = reloaded._raw["integrations"]
+    assert integ["wrike_project_export_enabled"] is True
+    assert integ["wrike_parent_id"] == "f1"
+    assert integ["wrike_parent_label"] == "Team / Meetings"
+
+
+def test_old_auto_send_todos_checkbox_is_gone(qapp, paths):
+    import inspect
+
+    from teams_transcriber.ui import settings_dialog as sd
+
+    src = inspect.getsource(sd.SettingsDialog._build_integrations_tab)
+    assert "wrike_enable_cb" not in src        # replaced by project-export
+    assert "wrike_project_export_cb" in src
