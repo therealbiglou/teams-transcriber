@@ -18,8 +18,13 @@ class AudioRecorder(private val outputFile: File) {
         r.setAudioSamplingRate(16_000)
         r.setAudioEncodingBitRate(64_000)
         r.setOutputFile(outputFile.absolutePath)
-        r.prepare()
-        r.start()
+        try {
+            r.prepare()
+            r.start()
+        } catch (e: Exception) {
+            r.release()
+            throw e
+        }
         recorder = r
     }
 

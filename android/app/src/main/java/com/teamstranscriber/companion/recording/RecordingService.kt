@@ -36,7 +36,11 @@ class RecordingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> begin(RecordingSource.valueOf(intent.getStringExtra(EXTRA_SOURCE)!!))
+            ACTION_START -> {
+                val src = intent.getStringExtra(EXTRA_SOURCE)
+                    ?.let { runCatching { RecordingSource.valueOf(it) }.getOrNull() }
+                if (src != null) begin(src) else stopSelf()
+            }
             ACTION_STOP -> finish()
         }
         return START_STICKY
@@ -55,7 +59,16 @@ class RecordingService : Service() {
         tempFile = File(cacheDir, "capture_${newUid()}.m4a")
         recorder = AudioRecorder(tempFile)
         startForeground(NOTIF_ID, buildNotification(0L))
-        recorder.start(this)
+        try {
+            recorder.start(this)
+        } catch (e: Exception) {
+            notifyError("Couldn't start recording: ${e.message ?: "microphone unavailable"}")
+            tempFile.delete()
+            RecordingBus.set(RecordingStatus(active = false))
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
         RecordingBus.set(RecordingStatus(active = true, source = src, startedAtEpochMillis = startedAt))
         scope.launch {
             while (RecordingBus.state.value.active) {
@@ -83,6 +96,8 @@ class RecordingService : Service() {
             )
             runCatching { OutboxWriter(Storage.outboxDir()).write(tempFile, sidecar) }
                 .onFailure { notifyError(it.message ?: "save failed") }
+        } else if (::recorder.isInitialized) {
+            notifyError("Recording too short — nothing saved")
         }
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
