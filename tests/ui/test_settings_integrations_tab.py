@@ -17,7 +17,7 @@ def paths(tmp_path: Path) -> AppPaths:
     return p
 
 
-def test_integrations_tab_present_with_token_and_enable(qapp, paths):
+def test_integrations_tab_present_with_token_and_project_export(qapp, paths):
     settings = load_settings(paths)
     dlg = SettingsDialog(settings, paths)
     titles = [dlg._tabs.tabText(i) for i in range(dlg._tabs.count())]
@@ -234,3 +234,47 @@ def test_old_auto_send_todos_checkbox_is_gone(qapp, paths):
     src = inspect.getsource(sd.SettingsDialog._build_integrations_tab)
     assert "wrike_enable_cb" not in src        # replaced by project-export
     assert "wrike_project_export_cb" in src
+
+
+def test_group_folders_by_space_uses_child_ids_when_present():
+    from teams_transcriber.ui.settings_dialog import _group_folders_by_space
+
+    spaces = [
+        {"id": "sp1", "title": "Team", "childIds": ["f1"]},
+        {"id": "sp2", "title": "Personal", "childIds": ["f2"]},
+    ]
+    folders = [{"id": "f1", "title": "Meetings"}, {"id": "f2", "title": "Notes"}]
+
+    grouped = _group_folders_by_space(spaces, folders)
+
+    assert grouped == {"sp1": [{"id": "f1", "title": "Meetings"}],
+                       "sp2": [{"id": "f2", "title": "Notes"}]}
+
+
+def test_group_folders_by_space_falls_back_when_child_ids_absent():
+    from teams_transcriber.ui.settings_dialog import _group_folders_by_space
+
+    spaces = [{"id": "sp1", "title": "Team"}]  # no childIds
+    folders = [{"id": "f1", "title": "Meetings"}, {"id": "f2", "title": "Notes"}]
+
+    grouped = _group_folders_by_space(spaces, folders)
+
+    assert grouped == {"sp1": folders}
+
+
+def test_group_folders_by_space_mixed_child_ids_per_space():
+    # The case the old global fallback broke: one space with childIds, one
+    # without. The childId space gets its subset; the childless space gets
+    # all folders (not an empty list).
+    from teams_transcriber.ui.settings_dialog import _group_folders_by_space
+
+    spaces = [
+        {"id": "sp1", "title": "Team", "childIds": ["f1"]},
+        {"id": "sp2", "title": "Personal"},  # no childIds
+    ]
+    folders = [{"id": "f1", "title": "Meetings"}, {"id": "f2", "title": "Notes"}]
+
+    grouped = _group_folders_by_space(spaces, folders)
+
+    assert grouped["sp1"] == [{"id": "f1", "title": "Meetings"}]
+    assert grouped["sp2"] == folders

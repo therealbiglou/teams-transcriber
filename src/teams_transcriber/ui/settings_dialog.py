@@ -45,25 +45,23 @@ def _group_folders_by_space(
 ) -> dict[str, list[dict]]:
     """Group top-level Wrike folders under the space they belong to.
 
-    Best-effort: a folder belongs to a space if the space's ``childIds``
-    lists the folder's id. If no space carries ``childIds`` at all (the
-    field is absent/empty on every space — some Wrike accounts/plans don't
-    return it), fall back to showing every folder under every space so the
-    picker still has something useful to offer.
+    Best-effort, decided independently per space: if a space carries
+    ``childIds``, its folder list is exactly those folders (by id); if a
+    space lacks ``childIds`` (absent/empty — some Wrike accounts/plans
+    don't return it, and a mixed response can have both kinds), fall back
+    to showing every folder under that space so the picker still has
+    something useful to offer.
     """
-    any_child_ids = any(space.get("childIds") for space in spaces)
-    grouped: dict[str, list[dict]] = {space["id"]: [] for space in spaces}
-    if not any_child_ids:
-        for space in spaces:
-            grouped[space["id"]] = list(folders)
-        return grouped
-
     folders_by_id = {folder["id"]: folder for folder in folders}
+    grouped: dict[str, list[dict]] = {}
     for space in spaces:
-        child_ids = space.get("childIds") or []
-        grouped[space["id"]] = [
-            folders_by_id[cid] for cid in child_ids if cid in folders_by_id
-        ]
+        child_ids = space.get("childIds")
+        if child_ids:
+            grouped[space["id"]] = [
+                folders_by_id[cid] for cid in child_ids if cid in folders_by_id
+            ]
+        else:
+            grouped[space["id"]] = list(folders)
     return grouped
 
 
