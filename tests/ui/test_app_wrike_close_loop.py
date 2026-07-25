@@ -39,9 +39,10 @@ def test_close_loop_returns_empty_when_no_changes():
     assert _wrike_close_loop_changes(rows, {0: False}) == []
 
 
-def test_master_todo_toggle_triggers_close_loop(qapp, tmp_path):
-    """Master to-do view toggles must run the same Wrike close-loop as the
-    summary pane's checkbox (App._on_master_todo_toggled)."""
+def test_master_todo_toggle_refreshes_history_without_close_loop(qapp, tmp_path):
+    """Master to-do view toggles refresh the history chip but -- since Task 7
+    dropped the ledgered close-loop in favor of auto project export on
+    SummaryReady -- must NOT call the (now-unreferenced) close-loop sync."""
     from types import SimpleNamespace
 
     from teams_transcriber.paths import AppPaths
@@ -64,13 +65,16 @@ def test_master_todo_toggle_triggers_close_loop(qapp, tmp_path):
         )
         app.history = SimpleNamespace(set_recordings=lambda rows: None)
 
-        calls: list[int] = []
-        app._wrike_close_loop_sync = calls.append  # type: ignore[assignment]
+        refresh_calls: list[int] = []
+        app._refresh_history = lambda query=None: refresh_calls.append(1)
+        close_loop_calls: list[int] = []
+        app._wrike_close_loop_sync = close_loop_calls.append  # type: ignore[assignment]
         app.master_todos.todo_toggled.connect(app._on_master_todo_toggled)
 
         app.master_todos.todo_toggled.emit(42)
 
-        assert calls == [42]
+        assert refresh_calls == [1]
+        assert close_loop_calls == []
     finally:
         db.close()
 

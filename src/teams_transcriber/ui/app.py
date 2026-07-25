@@ -293,8 +293,8 @@ class App:
                 show_in_app_toast(
                     "Pending Wrike syncs",
                     f"{count} meeting{'s' if count != 1 else ''} waiting.",
-                    action_label="Pick folder",
-                    action_callback=lambda r=rid: self._wrike_open_picker(r),
+                    action_label="Retry",
+                    action_callback=lambda r=rid: self._wrike_export_worker(r),
                 )
         except Exception:
             logger.exception("pending-Wrike-syncs check failed")
@@ -353,7 +353,7 @@ class App:
         self.summary.retry_requested.connect(self._retry_recording)
         self.summary.transcript_requested.connect(self._show_transcript)
         self.summary.todo_state_changed.connect(self._on_todo_state_changed)
-        self.summary.wrike_sync_requested.connect(self._wrike_open_picker)
+        self.summary.wrike_sync_requested.connect(self._wrike_export_worker)
         self.summary.chat_send_requested.connect(self._on_chat_send)
         from teams_transcriber.ui.window_state import (
             restore_splitter_state,
@@ -425,16 +425,14 @@ class App:
     def _on_todo_state_changed(self, rid: int) -> None:
         self._refresh_history(query=self.search.input.text() or None)
         self.master_todos.reload()
-        self._wrike_close_loop_sync(rid)
 
     def _on_phone_todos_changed(self, rid: int) -> None:
         """Called by run_sync (from the watcher thread, via _phone_sync_cycle)
         for every recording whose todo states changed from a phone toggle.
-        Same trio as _on_todo_state_changed -- this closes the ledgered
+        Same duo as _on_todo_state_changed -- this closes the ledgered
         Phase-1 gap where the CLI's phone-sync command passed None here."""
         self._refresh_history(query=self.search.input.text() or None)
         self.master_todos.reload()
-        self._wrike_close_loop_sync(rid)
 
     def _apply_phone_sync_setting(self) -> None:
         """Start/stop the device watcher to match integrations.phone_sync_enabled.
@@ -531,11 +529,10 @@ class App:
         QTimer.singleShot(0, self.window, lambda: show_in_app_toast("Phone sync", hint))
 
     def _on_master_todo_toggled(self, recording_id: int) -> None:
-        """Master-view toggle: same close-loop as the summary pane's checkbox.
+        """Master-view toggle: refresh history's done-count chip.
         No master_todos.reload() here — the toggled checkbox is the sender and
         reload would delete it mid-signal; the view already shows the new state."""
         self._refresh_history(query=self.search.input.text() or None)
-        self._wrike_close_loop_sync(recording_id)
 
     def _wrike_close_loop_sync(self, recording_id: int) -> None:
         """Compute which my-todos changed and dispatch a worker to push them."""
@@ -1087,36 +1084,118 @@ class App:
             return False
         return bool(token)
 
-    def _on_summary_ready_wrike(self, evt) -> None:
-        """Offer to sync this summary's items to Wrike via a toast + planner."""
+    def _wrike_project_enabled(self) -> bool:
+        """True when auto Wrike-project-export is fully configured: a token
+        in keyring, the project-export toggle on, and a destination parent
+        chosen (Settings -> Integrations -> Wrike)."""
         import keyring
 
         from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_WRIKE
-        from teams_transcriber.storage.wrike import WrikeSyncRepo
 
-        token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
-        enabled = bool(
-            self.settings._raw.get("integrations", {}).get("wrike_enabled", False)
-        )
-        existing = WrikeSyncRepo(self.db).get(evt.recording_id)
-        already_synced = bool(existing and existing.status == "synced")
-        if not _wrike_should_offer_sync(
-            enabled=enabled, has_token=bool(token), already_synced=already_synced,
-        ):
+        integ = self.settings._raw.get("integrations", {})
+        if not bool(integ.get("wrike_project_export_enabled", False)):
+            return False
+        if not integ.get("wrike_parent_id"):
+            return False
+        try:
+            token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
+        except Exception:
+            return False
+        return bool(token)
+
+    def _on_summary_ready_wrike(self, evt) -> None:
+        """Auto-push this recording's summary to Wrike as a project, if configured."""
+        if not self._wrike_project_enabled():
             return
-        from teams_transcriber.integrations.wrike_items import recording_to_sync_items
-        items = recording_to_sync_items(self.db, evt.recording_id)
-        if not items:
-            return
-        n = len(items)
-        WrikeSyncRepo(self.db).upsert(evt.recording_id, status="pending")
-        rid = evt.recording_id
-        show_in_app_toast(
-            "Send to Wrike",
-            f"{n} item{'s' if n != 1 else ''} ready — review and send.",
-            action_label="Review",
-            action_callback=lambda: self._wrike_open_planner(rid),
+        self._wrike_export_worker(evt.recording_id)
+
+    def _resolve_wrike_assignees(self, recording_id: int, client) -> dict[int, str | None]:
+        """Resolve Wrike contact ids for each action_items_others entry.
+
+        Returns {} when the recording has no action-items-for-others (skips
+        the list_contacts round-trip entirely). Gated on
+        integrations.wrike_llm_assignee_fallback + a present Anthropic key --
+        the LLM pass is a paid extra call, opt-out by default off-key.
+        """
+        from teams_transcriber.integrations.wrike_assignees import Contact, suggest_assignees
+        from teams_transcriber.storage import SummaryRepo
+
+        summary = SummaryRepo(self.db).get(recording_id)
+        if summary is None or not summary.action_items_others:
+            return {}
+
+        contacts_raw = client.list_contacts()
+        contacts = [
+            Contact(id=str(c.get("id")),
+                    first_name=str(c.get("firstName") or "").strip(),
+                    last_name=str(c.get("lastName") or "").strip())
+            for c in contacts_raw
+        ]
+        items = [
+            (i, ai.who or "")
+            for i, ai in enumerate(summary.action_items_others)
+        ]
+        anthropic_key = self._anthropic_key()
+        llm_enabled = bool(
+            self.settings._raw.get("integrations", {}).get("wrike_llm_assignee_fallback", True)
         )
+        return suggest_assignees(
+            items, contacts,
+            meeting_summary=summary.summary,
+            api_key=anthropic_key, model=self.settings.ai_model,
+            llm_fallback=llm_enabled and bool(anthropic_key),
+        )
+
+    def _wrike_export_worker(self, recording_id: int) -> None:
+        """Worker thread: build+run the Wrike project export, then hop a
+        toast (success/failure/partial) back to the main thread."""
+        import keyring
+        import threading
+
+        from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_WRIKE
+
+        def _worker() -> None:
+            from PySide6.QtCore import QTimer
+
+            from teams_transcriber.integrations.wrike_client import WrikeApiError, WrikeClient
+            from teams_transcriber.integrations.wrike_project_export import export_recording
+            from teams_transcriber.storage.wrike import WrikeSyncRepo
+
+            token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
+            parent_id = self.settings._raw.get("integrations", {}).get("wrike_parent_id")
+            if not token or not parent_id:
+                return
+            client = WrikeClient(token=token)
+            try:
+                assignees = self._resolve_wrike_assignees(recording_id, client)
+                report = export_recording(self.db, client, recording_id,
+                                           parent_id=parent_id, assignees=assignees)
+            except WrikeApiError as exc:
+                WrikeSyncRepo(self.db).update(recording_id, status="failed", error_message=str(exc))
+                QTimer.singleShot(0, self.window, lambda e=str(exc): show_in_app_toast("Wrike sync failed", e))
+                return
+            except Exception as exc:
+                logger.exception("wrike export crashed for %d", recording_id)
+                WrikeSyncRepo(self.db).update(recording_id, status="failed", error_message=str(exc))
+                QTimer.singleShot(0, self.window, lambda e=str(exc): show_in_app_toast("Wrike sync failed", e))
+                return
+            finally:
+                client.close()
+            if report.failures:
+                WrikeSyncRepo(self.db).update(recording_id, status="failed",
+                                               error_message="; ".join(report.failures))
+                QTimer.singleShot(0, self.window, lambda: show_in_app_toast(
+                    "Wrike sync — partial", f"{len(report.failures)} item(s) failed; will retry.",
+                    action_label="Retry", action_callback=lambda: self._wrike_export_worker(recording_id)))
+            else:
+                WrikeSyncRepo(self.db).update(recording_id, status="synced")
+                link = report.permalink
+                QTimer.singleShot(0, self.window, lambda: show_in_app_toast(
+                    "Synced to Wrike", "Project created.",
+                    action_label=("Open in Wrike" if link else None),
+                    action_callback=((lambda: __import__("webbrowser").open(link)) if link else None)))
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _wrike_open_picker(self, recording_id: int) -> None:
         """Kept as the connected-signal entry point; delegates to the planner."""
