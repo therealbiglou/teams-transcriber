@@ -22,9 +22,12 @@ def test_description_without_decisions_is_just_summary():
 
 def test_description_appends_key_decisions_section():
     out = build_description(_summary(key_decisions=["Ship Friday", "Use SQLite"]))
-    assert out.startswith("The summary body.")
-    assert "## Key decisions" in out
-    assert "- Ship Friday" in out and "- Use SQLite" in out
+    assert out == (
+        "The summary body.\n\n"
+        "## Key decisions\n"
+        "- Ship Friday\n"
+        "- Use SQLite"
+    )
 
 
 def test_transcript_md_formats_channel_and_timestamp():
@@ -35,10 +38,12 @@ def test_transcript_md_formats_channel_and_timestamp():
                           channel=Channel.OTHERS, text="hi back"),
     ]
     md = build_transcript_md(segs)
-    assert md.startswith("# Transcript")
-    assert "**ME** 00:12 hello" in md
-    assert "**OTHERS** 01:15 hi back" in md
+    assert md == (
+        "# Transcript\n\n"
+        "**ME** 00:12 hello\n"
+        "**OTHERS** 01:15 hi back"
+    )
 
 
 def test_transcript_md_empty():
-    assert "no transcript" in build_transcript_md([]).lower()
+    assert build_transcript_md([]) == "# Transcript\n\n_(no transcript)_"
