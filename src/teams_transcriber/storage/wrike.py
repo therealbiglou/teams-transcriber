@@ -153,3 +153,59 @@ class WrikeTaskRepo:
                 (1 if done else 0, recording_id, kind, todo_index),
             )
             conn.commit()
+
+
+@dataclass(slots=True)
+class WrikeProjectRow:
+    recording_id: int
+    project_id: str
+    permalink: str | None
+    attachment_id: str | None
+    notes_comment_id: str | None
+    created_at: str
+    last_pushed_at: str
+
+
+class WrikeProjectRepo:
+    def __init__(self, db: Database) -> None:
+        self._db = db
+
+    def get(self, recording_id: int) -> WrikeProjectRow | None:
+        with self._db.connect() as conn:
+            row = conn.execute(
+                "SELECT recording_id, project_id, permalink, attachment_id, "
+                "notes_comment_id, created_at, last_pushed_at "
+                "FROM wrike_projects WHERE recording_id = ?",
+                (recording_id,),
+            ).fetchone()
+        return None if row is None else WrikeProjectRow(*row)
+
+    def upsert(self, recording_id: int, *, project_id: str, permalink: str | None = None) -> None:
+        now = _now_utc()
+        with self._db.connect() as conn:
+            conn.execute(
+                "INSERT INTO wrike_projects (recording_id, project_id, permalink, "
+                "created_at, last_pushed_at) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(recording_id) DO UPDATE SET "
+                "project_id=excluded.project_id, "
+                "permalink=COALESCE(excluded.permalink, wrike_projects.permalink), "
+                "last_pushed_at=excluded.last_pushed_at",
+                (recording_id, project_id, permalink, now, now),
+            )
+            conn.commit()
+
+    def set_attachment(self, recording_id: int, attachment_id: str | None) -> None:
+        with self._db.connect() as conn:
+            conn.execute(
+                "UPDATE wrike_projects SET attachment_id=? WHERE recording_id=?",
+                (attachment_id, recording_id),
+            )
+            conn.commit()
+
+    def set_notes_comment(self, recording_id: int, comment_id: str) -> None:
+        with self._db.connect() as conn:
+            conn.execute(
+                "UPDATE wrike_projects SET notes_comment_id=? WHERE recording_id=?",
+                (comment_id, recording_id),
+            )
+            conn.commit()

@@ -67,3 +67,29 @@ def test_wrike_task_update_last_synced(db_with_recording):
     ))
     repo.set_last_synced_done(rid, "my", 0, True)
     assert repo.get(rid, "my", 0).last_synced_done is True
+
+
+def test_wrike_project_roundtrip_and_idempotent_upsert(db_with_recording):
+    from teams_transcriber.storage import WrikeProjectRepo
+    db, rid = db_with_recording
+    repo = WrikeProjectRepo(db)
+    assert repo.get(rid) is None
+    repo.upsert(rid, project_id="prj1", permalink="https://w/open.htm?id=1")
+    row = repo.get(rid)
+    assert row.project_id == "prj1" and row.permalink.endswith("id=1")
+    first_created = row.created_at
+    repo.set_attachment(rid, "att5")
+    repo.set_notes_comment(rid, "cmt7")
+    repo.upsert(rid, project_id="prj1")           # re-push
+    row2 = repo.get(rid)
+    assert row2.attachment_id == "att5" and row2.notes_comment_id == "cmt7"
+    assert row2.created_at == first_created        # created_at preserved
+    assert row2.last_pushed_at >= first_created    # bumped
+
+
+def test_wrike_project_cascades_on_recording_delete(db_with_recording):
+    from teams_transcriber.storage import RecordingRepo, WrikeProjectRepo
+    db, rid = db_with_recording
+    WrikeProjectRepo(db).upsert(rid, project_id="prj1")
+    RecordingRepo(db).delete(rid)
+    assert WrikeProjectRepo(db).get(rid) is None
