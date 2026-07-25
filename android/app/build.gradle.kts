@@ -49,6 +49,7 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
+    implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)
     // Android's org.json is a compile-only stub that throws at runtime in plain JVM unit
     // tests (no Robolectric here — sync/ stays pure JVM-testable). The real org.json jar
