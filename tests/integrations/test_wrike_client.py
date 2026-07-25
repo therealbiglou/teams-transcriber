@@ -54,26 +54,6 @@ def test_create_task_posts_to_folder():
     assert '"title":"Do thing"' in captured["body"] or '"title": "Do thing"' in captured["body"]
 
 
-def test_complete_task_puts_status():
-    captured = {}
-    def h(req):
-        captured["method"] = req.method
-        captured["body"] = req.read().decode()
-        return httpx.Response(200, json={"data": [{"id": "T1", "status": "Completed"}]})
-    _client(h).complete_task("T1", done=True)
-    assert captured["method"] == "PUT"
-    assert "Completed" in captured["body"]
-
-
-def test_uncomplete_task_sets_active():
-    captured = {}
-    def h(req):
-        captured["body"] = req.read().decode()
-        return httpx.Response(200, json={"data": [{"id": "T1", "status": "Active"}]})
-    _client(h).complete_task("T1", done=False)
-    assert "Active" in captured["body"]
-
-
 def test_auth_error_on_401():
     def h(req): return httpx.Response(
         401, json={"errorDescription": "bad token"},

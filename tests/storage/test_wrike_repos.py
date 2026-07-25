@@ -57,18 +57,6 @@ def test_wrike_task_insert_and_list(db_with_recording):
     assert repo.get(rid, "my", 1) is None
 
 
-def test_wrike_task_update_last_synced(db_with_recording):
-    db, rid = db_with_recording
-    repo = WrikeTaskRepo(db)
-    repo.insert(WrikeTaskRow(
-        id=None, recording_id=rid, kind="my", todo_index=0,
-        wrike_task_id="T1", wrike_folder_id="F1",
-        created_at="2026-06-07T10:00:00Z", last_synced_done=False,
-    ))
-    repo.set_last_synced_done(rid, "my", 0, True)
-    assert repo.get(rid, "my", 0).last_synced_done is True
-
-
 def test_wrike_project_roundtrip_and_idempotent_upsert(db_with_recording):
     from teams_transcriber.storage import WrikeProjectRepo
     db, rid = db_with_recording

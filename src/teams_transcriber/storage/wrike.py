@@ -143,17 +143,6 @@ class WrikeTaskRepo:
                 for r in cur.fetchall()
             ]
 
-    def set_last_synced_done(
-        self, recording_id: int, kind: str, todo_index: int, done: bool,
-    ) -> None:
-        with self._db.connect() as conn:
-            conn.execute(
-                "UPDATE wrike_tasks SET last_synced_done=? "
-                "WHERE recording_id=? AND kind=? AND todo_index=?",
-                (1 if done else 0, recording_id, kind, todo_index),
-            )
-            conn.commit()
-
 
 @dataclass(slots=True)
 class WrikeProjectRow:

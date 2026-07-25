@@ -88,11 +88,6 @@ class WrikeClient:
             raise WrikeApiError(f"Wrike returned no comment for POST {path}")
         return str(data[0]["id"])
 
-    def complete_task(self, task_id: str, *, done: bool) -> dict[str, Any]:
-        status = "Completed" if done else "Active"
-        data = self._request("PUT", f"/tasks/{task_id}", json={"status": status})
-        return data[0] if data else {}
-
     def list_spaces(self) -> list[dict[str, Any]]:
         return self._request("GET", "/spaces")
 
