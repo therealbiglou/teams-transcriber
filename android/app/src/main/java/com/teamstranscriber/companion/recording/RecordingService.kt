@@ -45,7 +45,10 @@ class RecordingService : Service() {
             }
             ACTION_STOP -> finish()
         }
-        return START_STICKY
+        // A recorder can't resume a process-killed capture, and a sticky restart
+        // redelivers a null intent (no action branch) that would leave the promised
+        // startForeground uncalled — so don't auto-restart.
+        return START_NOT_STICKY
     }
 
     private fun begin(src: RecordingSource) {
@@ -60,7 +63,18 @@ class RecordingService : Service() {
         startedAt = System.currentTimeMillis()
         tempFile = File(cacheDir, "capture_${newUid()}.m4a")
         recorder = AudioRecorder(tempFile)
-        startForeground(NOTIF_ID, buildNotification(0L))
+        try {
+            startForeground(NOTIF_ID, buildNotification(0L))
+        } catch (e: Exception) {
+            // Android 14+ forbids starting a microphone foreground service from the
+            // background — e.g. auto-record fired from the NotificationListenerService
+            // while the app isn't on screen. Fail gracefully with a notification
+            // instead of crashing (see docs/.../2026-07-25-phase-3-android-recorder.md).
+            notifyError("Couldn't start recording — open the app to record this call")
+            tempFile.delete()
+            stopSelf()
+            return
+        }
         try {
             recorder.start(this)
         } catch (e: Exception) {
