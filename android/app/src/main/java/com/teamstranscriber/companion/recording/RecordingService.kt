@@ -10,6 +10,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import com.teamstranscriber.companion.BuildConfig
+import com.teamstranscriber.companion.MainActivity
 import com.teamstranscriber.companion.storage.Storage
 import com.teamstranscriber.companion.sync.OutboxWriter
 import com.teamstranscriber.companion.sync.RecordingSource
@@ -31,19 +32,23 @@ class RecordingService : Service() {
     private var source: RecordingSource = RecordingSource.MEMO
     private var startedAt: Long = 0L
     private var finishing = false
+    private var armed = false
     private var tickerJob: Job? = null
+    private var commandJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.Main + Job())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_ARM -> arm()
+            ACTION_DISARM -> disarm()
             ACTION_START -> {
                 val src = intent.getStringExtra(EXTRA_SOURCE)
                     ?.let { runCatching { RecordingSource.valueOf(it) }.getOrNull() }
-                if (src != null) begin(src) else stopSelf()
+                if (src != null) beginCapture(src) else stopSelf()
             }
-            ACTION_STOP -> finish()
+            ACTION_STOP -> finishCapture()
         }
         // A recorder can't resume a process-killed capture, and a sticky restart
         // redelivers a null intent (no action branch) that would leave the promised
@@ -51,29 +56,76 @@ class RecordingService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun begin(src: RecordingSource) {
+    private fun arm() {
+        if (armed) return
+        armed = true
+        createChannel()
+        try {
+            startForeground(NOTIF_ID, buildArmedNotification())
+        } catch (e: Exception) {
+            // Same Android 14+ background-mic-FGS restriction as beginCapture(); arm() is
+            // only ever called from the foreground (UI), but guard defensively anyway.
+            armed = false
+            notifyError("Couldn't arm auto-record — open the app to enable it")
+            stopSelf()
+            return
+        }
+        commandJob = scope.launch {
+            AutoRecordControl.commands.collect { onCommand(it) }
+        }
+    }
+
+    private fun disarm() {
+        armed = false // so finishCapture()'s not-armed branch fully tears down
+        if (RecordingBus.state.value.active) {
+            finishCapture()
+        } else {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
+        commandJob?.cancel()
+        commandJob = null
+    }
+
+    private suspend fun onCommand(command: AutoRecordCommand) {
+        when (command) {
+            is AutoRecordCommand.BeginCapture -> {
+                if (armed && !RecordingBus.state.value.active) beginCapture(command.source)
+            }
+            AutoRecordCommand.StopCapture -> {
+                val status = RecordingBus.state.value
+                if (status.active && status.source == RecordingSource.TEAMS_CALL) finishCapture()
+            }
+        }
+    }
+
+    private fun beginCapture(src: RecordingSource) {
         if (RecordingBus.state.value.active) return // already recording; ignore
         createChannel()
         if (!RecordingGuards.hasEnoughFreeSpace(Storage.outboxDir().usableSpace)) {
             notifyError("Not enough free storage to record")
-            stopSelf()
+            if (!armed) stopSelf()
             return
         }
         source = src
         startedAt = System.currentTimeMillis()
         tempFile = File(cacheDir, "capture_${newUid()}.m4a")
         recorder = AudioRecorder(tempFile)
-        try {
-            startForeground(NOTIF_ID, buildNotification(0L))
-        } catch (e: Exception) {
-            // Android 14+ forbids starting a microphone foreground service from the
-            // background — e.g. auto-record fired from the NotificationListenerService
-            // while the app isn't on screen. Fail gracefully with a notification
-            // instead of crashing (see docs/.../2026-07-25-phase-3-android-recorder.md).
-            notifyError("Couldn't start recording — open the app to record this call")
-            tempFile.delete()
-            stopSelf()
-            return
+        if (!armed) {
+            try {
+                startForeground(NOTIF_ID, buildNotification(0L))
+            } catch (e: Exception) {
+                // Android 14+ forbids starting a microphone foreground service from the
+                // background — e.g. auto-record fired from the NotificationListenerService
+                // while the app isn't on screen. Fail gracefully with a notification
+                // instead of crashing (see docs/.../2026-07-25-phase-3-android-recorder.md).
+                notifyError("Couldn't start recording — open the app to record this call")
+                tempFile.delete()
+                stopSelf()
+                return
+            }
+        } else {
+            notificationManager().notify(NOTIF_ID, buildNotification(0L))
         }
         try {
             recorder.start(this)
@@ -81,8 +133,12 @@ class RecordingService : Service() {
             notifyError("Couldn't start recording: ${e.message ?: "microphone unavailable"}")
             tempFile.delete()
             RecordingBus.set(RecordingStatus(active = false))
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            if (armed) {
+                notificationManager().notify(NOTIF_ID, buildArmedNotification())
+            } else {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
             return
         }
         finishing = false
@@ -91,13 +147,13 @@ class RecordingService : Service() {
             while (RecordingBus.state.value.active) {
                 delay(1_000)
                 val elapsed = System.currentTimeMillis() - startedAt
-                if (RecordingGuards.shouldAutoStop(elapsed)) { finish(); break } // max-duration cap
+                if (RecordingGuards.shouldAutoStop(elapsed)) { finishCapture(); break } // max-duration cap
                 notificationManager().notify(NOTIF_ID, buildNotification(elapsed))
             }
         }
     }
 
-    private fun finish() {
+    private fun finishCapture() {
         if (finishing) return
         finishing = true
         tickerJob?.cancel()
@@ -119,8 +175,12 @@ class RecordingService : Service() {
         } else if (::recorder.isInitialized) {
             notifyError("Recording too short — nothing saved")
         }
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        if (armed) {
+            notificationManager().notify(NOTIF_ID, buildArmedNotification())
+        } else {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        }
     }
 
     override fun onDestroy() {
@@ -140,6 +200,19 @@ class RecordingService : Service() {
             .setOngoing(true)
             .setUsesChronometer(false)
             .addAction(Notification.Action.Builder(null, "Stop", stopIntent).build())
+            .build()
+    }
+
+    private fun buildArmedNotification(): Notification {
+        val contentIntent = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+        return Notification.Builder(this, CHANNEL_ID)
+            .setContentTitle("Watching for Teams calls")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setOngoing(true)
+            .setContentIntent(contentIntent)
             .build()
     }
 
@@ -170,6 +243,8 @@ class RecordingService : Service() {
         private const val NOTIF_ID = 42
         const val ACTION_START = "com.teamstranscriber.companion.START"
         const val ACTION_STOP = "com.teamstranscriber.companion.STOP"
+        const val ACTION_ARM = "com.teamstranscriber.companion.ARM"
+        const val ACTION_DISARM = "com.teamstranscriber.companion.DISARM"
         const val EXTRA_SOURCE = "source"
 
         fun start(context: Context, source: RecordingSource) {
@@ -183,6 +258,14 @@ class RecordingService : Service() {
                 Intent(context, RecordingService::class.java).setAction(ACTION_STOP),
             )
         }
+
+        fun arm(context: Context) = context.startForegroundService(
+            Intent(context, RecordingService::class.java).setAction(ACTION_ARM),
+        )
+
+        fun disarm(context: Context) = context.startService(
+            Intent(context, RecordingService::class.java).setAction(ACTION_DISARM),
+        )
     }
 }
 

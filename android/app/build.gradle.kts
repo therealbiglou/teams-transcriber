@@ -56,4 +56,5 @@ dependencies {
     // sits ahead of the mockable android.jar on the unit-test classpath, so JSONObject
     // actually works for round-tripping Sidecar.toJson() in tests.
     testImplementation(libs.org.json)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

@@ -25,7 +25,12 @@ import com.teamstranscriber.companion.settings.AppPrefs
 import com.teamstranscriber.companion.sync.RecordingSource
 
 @Composable
-fun RecorderScreen(onRequestPermissions: () -> Unit, onOpenAllFilesAccess: () -> Unit) {
+fun RecorderScreen(
+    onRequestPermissions: () -> Unit,
+    onOpenAllFilesAccess: () -> Unit,
+    onArm: () -> Unit,
+    onDisarm: () -> Unit,
+) {
     val context = LocalContext.current
     val status by RecordingBus.state.collectAsState()
     val prefs = remember { AppPrefs(context) }
@@ -59,7 +64,9 @@ fun RecorderScreen(onRequestPermissions: () -> Unit, onOpenAllFilesAccess: () ->
 
         Text("Auto-record Teams calls")
         Switch(checked = autoRecord, onCheckedChange = {
-            autoRecord = it; prefs.autoRecordEnabled = it
+            autoRecord = it
+            prefs.autoRecordEnabled = it
+            if (it) onArm() else onDisarm()
         })
         OutlinedButton(onClick = onOpenAllFilesAccess) { Text("Grant file access") }
         OutlinedButton(onClick = onRequestPermissions) { Text("Grant mic / notifications") }

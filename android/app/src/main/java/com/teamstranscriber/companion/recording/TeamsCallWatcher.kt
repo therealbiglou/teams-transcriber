@@ -21,7 +21,10 @@ class TeamsCallWatcher : NotificationListenerService() {
         )
         if (matches && !RecordingBus.state.value.active) {
             callKey = sbn.key
-            RecordingService.start(this, RecordingSource.TEAMS_CALL)
+            // Never start the service from here — Android 14+ forbids starting a mic
+            // foreground service from the background. The already-armed, already-foreground
+            // RecordingService picks this command up on its own collector.
+            AutoRecordControl.requestBeginCapture(RecordingSource.TEAMS_CALL)
         }
     }
 
@@ -29,7 +32,7 @@ class TeamsCallWatcher : NotificationListenerService() {
         // Stop only the recording that this call notification started.
         if (sbn.key == callKey && RecordingBus.state.value.source == RecordingSource.TEAMS_CALL) {
             callKey = null
-            RecordingService.stop(this)
+            AutoRecordControl.requestStopCapture()
         }
     }
 }

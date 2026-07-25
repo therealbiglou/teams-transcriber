@@ -13,6 +13,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.core.content.ContextCompat
 import com.teamstranscriber.companion.permissions.Permissions
+import com.teamstranscriber.companion.recording.RecordingService
+import com.teamstranscriber.companion.settings.AppPrefs
 import com.teamstranscriber.companion.ui.RecorderScreen
 
 class MainActivity : ComponentActivity() {
@@ -27,10 +29,19 @@ class MainActivity : ComponentActivity() {
                     RecorderScreen(
                         onRequestPermissions = ::requestRuntimePermissions,
                         onOpenAllFilesAccess = ::openAllFilesAccess,
+                        onArm = { RecordingService.arm(this) },
+                        onDisarm = { RecordingService.disarm(this) },
                     )
                 }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Re-arm after process death (or first launch) from the foreground — eligible here,
+        // and idempotent via the `if (armed) return` guard on a fresh RecordingService.
+        if (AppPrefs(this).autoRecordEnabled) RecordingService.arm(this)
     }
 
     private fun requestRuntimePermissions() {
