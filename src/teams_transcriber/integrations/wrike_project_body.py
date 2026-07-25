@@ -24,7 +24,7 @@ def _html_text(text: str) -> str:
 def build_description(summary: Summary) -> str:
     body = _html_text(summary.summary or "")
     if summary.key_decisions:
-        items = "".join(f"<li>{escape(d, quote=False)}</li>" for d in summary.key_decisions)
+        items = "".join(f"<li>{_html_text(d)}</li>" for d in summary.key_decisions)
         return f"{body}<br/><br/><b>Key decisions</b><ul>{items}</ul>"
     return body
 
