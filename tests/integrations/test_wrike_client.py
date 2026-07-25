@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 
@@ -102,3 +104,65 @@ def test_other_5xx_raises_api_error():
     def h(req): return httpx.Response(500, text="boom")
     with pytest.raises(WrikeApiError):
         _client(h).list_folders()
+
+
+def test_list_spaces():
+    def handler(request):
+        assert request.url.path == "/api/v4/spaces"
+        return httpx.Response(200, json={"data": [{"id": "sp1", "title": "Team"}]})
+    client = _client(handler)
+    assert client.list_spaces() == [{"id": "sp1", "title": "Team"}]
+
+
+def test_create_project_sets_project_field():
+    seen = {}
+    def handler(request):
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": [{"id": "prj1", "permalink": "https://wrike/open.htm?id=1"}]})
+    client = _client(handler)
+    out = client.create_project("parent1", "Q3 sync", "the description")
+    assert seen["path"] == "/api/v4/folders/parent1/folders"
+    assert seen["body"]["title"] == "Q3 sync"
+    assert seen["body"]["description"] == "the description"
+    assert "project" in seen["body"]           # the field that makes it a project
+    assert out["id"] == "prj1" and out["permalink"].endswith("id=1")
+
+
+def test_update_project_description():
+    seen = {}
+    def handler(request):
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": [{"id": "prj1"}]})
+    client = _client(handler)
+    client.update_project("prj1", description="new desc")
+    assert seen["method"] == "PUT" and seen["path"] == "/api/v4/folders/prj1"
+    assert seen["body"] == {"description": "new desc"}
+
+
+def test_upload_attachment_sends_raw_body_and_filename_header():
+    seen = {}
+    def handler(request):
+        seen["path"] = request.url.path
+        seen["name"] = request.headers.get("X-File-Name")
+        seen["content"] = request.content
+        return httpx.Response(200, json={"data": [{"id": "att9"}]})
+    client = _client(handler)
+    att_id = client.upload_attachment("prj1", "transcript.md", b"# hi\nbody")
+    assert seen["path"] == "/api/v4/folders/prj1/attachments"
+    assert seen["name"] == "transcript.md"
+    assert seen["content"] == b"# hi\nbody"
+    assert att_id == "att9"
+
+
+def test_delete_attachment():
+    seen = {}
+    def handler(request):
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        return httpx.Response(200, json={"data": []})
+    client = _client(handler)
+    client.delete_attachment("att9")
+    assert seen["method"] == "DELETE" and seen["path"] == "/api/v4/attachments/att9"

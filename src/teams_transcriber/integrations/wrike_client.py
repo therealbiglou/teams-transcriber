@@ -93,6 +93,43 @@ class WrikeClient:
         data = self._request("PUT", f"/tasks/{task_id}", json={"status": status})
         return data[0] if data else {}
 
+    def list_spaces(self) -> list[dict[str, Any]]:
+        return self._request("GET", "/spaces")
+
+    def create_project(self, parent_id: str, title: str, description: str) -> dict[str, Any]:
+        data = self._request(
+            "POST", f"/folders/{parent_id}/folders",
+            json={"title": title, "description": description, "project": {}},
+        )
+        if not data:
+            raise WrikeApiError(f"Wrike returned no folder for create_project under {parent_id}")
+        return data[0]
+
+    def update_project(self, project_id: str, *, description: str) -> dict[str, Any]:
+        data = self._request("PUT", f"/folders/{project_id}", json={"description": description})
+        return data[0] if data else {}
+
+    def upload_attachment(self, entity_id: str, filename: str, content: bytes) -> str:
+        # Wrike's attach endpoint takes the raw file bytes as the request body
+        # (not multipart) with the name in the X-File-Name header. Bypass
+        # _request's JSON path; reuse its error handling shape.
+        resp = self._client.request(
+            "POST", f"/folders/{entity_id}/attachments",
+            content=content,
+            headers={"X-File-Name": filename, "content-type": "application/octet-stream"},
+        )
+        if resp.status_code in (401, 403):
+            raise WrikeAuthError(f"Wrike auth failed ({resp.status_code}): {resp.text[:200]}")
+        if not resp.is_success:
+            raise WrikeApiError(f"Wrike attach -> {resp.status_code}: {resp.text[:200]}")
+        data = resp.json().get("data") or []
+        if not data:
+            raise WrikeApiError(f"Wrike returned no attachment for {filename}")
+        return str(data[0]["id"])
+
+    def delete_attachment(self, attachment_id: str) -> None:
+        self._request("DELETE", f"/attachments/{attachment_id}")
+
     def close(self) -> None:
         self._client.close()
 
