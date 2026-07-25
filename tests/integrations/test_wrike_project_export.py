@@ -177,6 +177,39 @@ def test_first_export_creates_project_tasks_attachment_and_notes(db_seeded):
     assert kinds == {("my", 0), ("my", 1), ("other", 0), ("follow_up", 0)}
 
 
+def test_due_dates_become_planned_wrike_dates_not_title_text(db_seeded):
+    db = db_seeded
+    rid = _seed_recording(
+        db,
+        my_todos=[
+            TodoItem(task="Write shot list", due="2026-07-28"),
+            TodoItem(task="Book studio"),  # no due
+            TodoItem(task="Odd date", due="next week"),  # unparseable → dropped
+        ],
+        action_items_others=[ActionItemOther(who="Priya", task="Style frames", due="2026-07-30")],
+        follow_ups=[],
+    )
+    fake = FakeClient()
+
+    report = export_recording(db, fake, rid, parent_id="P", assignees={})
+
+    assert report.failures == []
+    payload_by_title = {p["title"]: p for _folder, p in fake.create_task_calls}
+
+    # due date → a single-day Planned task, and the title stays clean (no "(due …)")
+    assert payload_by_title["Write shot list"]["dates"] == {
+        "type": "Planned", "start": "2026-07-28", "due": "2026-07-28",
+    }
+    # action-item due dates are honored too (previously ignored entirely)
+    assert payload_by_title["Priya: Style frames"]["dates"] == {
+        "type": "Planned", "start": "2026-07-30", "due": "2026-07-30",
+    }
+    # no due → no dates key at all
+    assert "dates" not in payload_by_title["Book studio"]
+    # unparseable due → task still created, just without a date
+    assert "dates" not in payload_by_title["Odd date"]
+
+
 def test_second_export_updates_not_duplicates(db_seeded):
     db = db_seeded
     rid = _seed_recording(

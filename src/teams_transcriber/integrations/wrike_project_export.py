@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any, Protocol
 
 from teams_transcriber.integrations.wrike_project_body import (
@@ -56,6 +56,22 @@ def _now() -> str:
 
 def _plain(text: str | None) -> str:
     return _TAG_RE.sub("", text or "").strip()
+
+
+def _due_date(raw: str | None) -> str | None:
+    """Normalize an LLM-provided due value to a Wrike ``yyyy-MM-dd`` date.
+
+    Returns None (task gets no due date, rather than failing) if the value is
+    absent or not a parseable ISO date — the summary field is free-form.
+    """
+    if not raw:
+        return None
+    candidate = raw.strip()[:10]
+    try:
+        date.fromisoformat(candidate)
+    except ValueError:
+        return None
+    return candidate
 
 
 def export_recording(
@@ -116,12 +132,20 @@ def export_recording(
         report.failures.append(f"transcript: {exc}")
 
     # 3. tasks (my_todos, action_items_others[assigned], follow_ups) — add only new
-    def _ensure_task(kind: str, index: int, name: str, assignee: str | None) -> None:
+    def _ensure_task(
+        kind: str, index: int, name: str, assignee: str | None,
+        due: str | None = None,
+    ) -> None:
         if task_repo.get(recording_id, kind, index) is not None:
             return
         payload: dict[str, Any] = {"title": name}
         if assignee:
             payload["responsibles"] = [assignee]
+        d = _due_date(due)
+        if d:
+            # A single-day Planned task carries a real Wrike due date; a due-only
+            # date would coerce to a Milestone (diamond marker) instead.
+            payload["dates"] = {"type": "Planned", "start": d, "due": d}
         try:
             created = client.create_task(project_id, payload)
             task_repo.insert(WrikeTaskRow(
@@ -136,10 +160,10 @@ def export_recording(
             report.failures.append(f"task {kind}/{index}: {exc}")
 
     for i, td in enumerate(summary.my_todos):
-        _ensure_task("my", i, td.task + (f" (due {td.due})" if td.due else ""), None)
+        _ensure_task("my", i, td.task, None, due=td.due)
     for j, ai in enumerate(summary.action_items_others):
         title_txt = f"{ai.who}: {ai.task}" if ai.who else ai.task
-        _ensure_task("other", j, title_txt, assignees.get(j))
+        _ensure_task("other", j, title_txt, assignees.get(j), due=ai.due)
     for k, f in enumerate(summary.follow_ups):
         # "follow_up" (not "follow") — matches the wrike_tasks.kind CHECK constraint
         # from schema v6, which already reserves this literal for follow-up items.
