@@ -17,6 +17,10 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+# `db` fixture: conftest.py's applies the full migration set (needed here
+# since TodoStateRepo reads/writes todo_state.toggled_at, schema v8).
+
+
 @pytest.fixture
 def recording_id(db: Database) -> int:
     rec = RecordingRepo(db).create(
@@ -141,3 +145,46 @@ def test_seed_creates_unchecked_row_when_missing(db: Database, recording_id: int
     repo.seed(recording_id, 1, "new task")
     rows = repo.list_for_recording(recording_id)
     assert rows[0].done is False
+
+
+def test_mark_done_stamps_toggled_at_even_when_undone(db: Database, recording_id: int) -> None:
+    repo = TodoStateRepo(db)
+    repo.upsert(recording_id, todo_index=0, task_text="Write spec", done=False)
+
+    repo.mark_done(recording_id, todo_index=0, done=True)
+    item = repo.list_for_recording(recording_id)[0]
+    assert item.done is True
+    assert item.done_at is not None
+    assert item.toggled_at is not None
+    first_toggled_at = item.toggled_at
+
+    repo.mark_done(recording_id, todo_index=0, done=False)
+    item = repo.list_for_recording(recording_id)[0]
+    assert item.done is False
+    assert item.done_at is None  # done_at semantics unchanged: cleared on undone
+    assert item.toggled_at is not None  # but toggled_at survives un-checking
+    assert item.toggled_at >= first_toggled_at  # ISO-8601 UTC strings compare lexically
+
+
+def test_mark_done_override_sets_both(db: Database, recording_id: int) -> None:
+    repo = TodoStateRepo(db)
+    repo.upsert(recording_id, todo_index=0, task_text="Write spec", done=False)
+
+    repo.mark_done(
+        recording_id, todo_index=0, done=True,
+        done_at_override="2026-07-24T10:00:00+00:00",
+    )
+    item = repo.list_for_recording(recording_id)[0]
+    assert item.done_at == "2026-07-24T10:00:00+00:00"
+    assert item.toggled_at == "2026-07-24T10:00:00+00:00"
+
+    # done=False WITH an override: done_at stays None (unchanged semantics)
+    # but toggled_at takes the override value -- this is exactly what
+    # phone-sync's engine needs when applying a phone "undone" toggle.
+    repo.mark_done(
+        recording_id, todo_index=0, done=False,
+        done_at_override="2026-07-24T11:00:00+00:00",
+    )
+    item = repo.list_for_recording(recording_id)[0]
+    assert item.done_at is None
+    assert item.toggled_at == "2026-07-24T11:00:00+00:00"

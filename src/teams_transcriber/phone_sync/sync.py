@@ -14,7 +14,7 @@ import logging
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from teams_transcriber.phone_sync import contract
@@ -34,11 +34,32 @@ class PhoneSyncReport:
     failures: list[tuple[str, str]] = field(default_factory=list)
 
 
+def _newer_or_equal(a: str, b: str) -> bool:
+    """True if ISO-8601 timestamp `a` is >= `b`.
+
+    ISO-8601 UTC strings normally compare correctly lexicographically, but
+    the two sides don't always agree on 'Z' vs '+00:00' (and may differ in
+    fractional-second precision), which can flip a plain string comparison
+    within the same second. Parse to datetime (fromisoformat in 3.11
+    accepts both 'Z' and '+00:00') and only fall back to the string
+    comparison if parsing fails.
+    """
+    result = a >= b
+    with contextlib.suppress(ValueError, TypeError):
+        # ValueError (unparseable) or TypeError (aware vs naive comparison)
+        # -> keep the string-comparison fallback above.
+        result = datetime.fromisoformat(a) >= datetime.fromisoformat(b)
+    return result
+
+
 def _parse_started_at(sidecar: contract.Sidecar) -> datetime | None:
     try:
-        return datetime.fromisoformat(sidecar.started_at)
+        parsed = datetime.fromisoformat(sidecar.started_at)
     except ValueError:
         return None
+    # Contract requires aware timestamps; normalize any offset to UTC so
+    # recordings.started_at stays lexicographically ordered (ORDER BY).
+    return parsed.astimezone(UTC) if parsed.tzinfo is not None else None
 
 
 def run_sync(
@@ -124,21 +145,12 @@ def run_sync(
                 f"unknown todo {change.recording_id}/{change.todo_index}",
             ))
             continue
-        # ISO-8601 UTC strings normally compare correctly lexicographically,
-        # but the two sides don't always agree on 'Z' vs '+00:00' (and may
-        # differ in fractional-second precision), which can flip a plain
-        # string comparison within the same second. Parse to datetime
-        # (fromisoformat in 3.11 accepts both 'Z' and '+00:00') and only
-        # fall back to the string comparison if parsing fails.
-        stale = current.done_at is not None and current.done_at >= change.toggled_at
-        if current.done_at is not None:
-            with contextlib.suppress(ValueError, TypeError):
-                # ValueError (unparseable) or TypeError (aware vs naive
-                # comparison) -> keep the string-comparison fallback above.
-                stale = (
-                    datetime.fromisoformat(current.done_at)
-                    >= datetime.fromisoformat(change.toggled_at)
-                )
+        # `toggled_at` (schema v8) is a durable LWW baseline that survives
+        # un-checking (unlike done_at, which is cleared to None whenever a
+        # todo is un-checked). Fall back to done_at for rows never touched
+        # since v8 shipped.
+        baseline = current.toggled_at or current.done_at
+        stale = baseline is not None and _newer_or_equal(baseline, change.toggled_at)
         if stale:
             report.toggles_skipped_stale += 1
             continue
@@ -156,7 +168,14 @@ def run_sync(
             on_todos_changed(rid)
 
     # --- export + ack --------------------------------------------------------
-    for name, text in build_library(db, now_iso=now_iso).items():
+    library_files = build_library(db, now_iso=now_iso)
+    # Prune detail files for recordings that no longer exist (deleted on the
+    # desktop) — "regenerated every sync" means replaced, not accreted.
+    current = set(library_files)
+    for remote_file in transport.list_files("library"):
+        if remote_file.name not in current:
+            transport.delete(remote_file.name)
+    for name, text in library_files.items():
         transport.push_text(text, name)
     transport.push_text(
         contract.build_ack(ack_entries, changes_applied_through=max_seen),

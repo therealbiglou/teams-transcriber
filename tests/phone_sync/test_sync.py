@@ -9,7 +9,7 @@ tests/phone_sync/test_library_export.py.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from teams_transcriber.phone_sync.sync import run_sync
@@ -92,14 +92,18 @@ def _seed_recording_with_todo(db, done_at: str | None) -> int:
         generated_at=datetime.now(UTC).isoformat(), model_used="claude-sonnet-4-6",
     ))
     TodoStateRepo(db).mark_done(rec.id, 0, done_at is not None, task_text="Do A")
-    if done_at is not None:
-        # mark_done stamps "now" as done_at; force the exact seeded value.
-        with db.connect() as conn:
-            conn.execute(
-                "UPDATE todo_state SET done_at = ? WHERE recording_id = ? AND todo_index = 0",
-                (done_at, rec.id),
-            )
-            conn.commit()
+    # mark_done also stamps toggled_at with wall-clock "now" (schema v8's
+    # durable LWW baseline) -- force it (and done_at) to the exact seeded
+    # value via raw SQL, same as the pre-v8 done_at-only override below, so
+    # the LWW baseline in these tests reflects the seeded timestamp rather
+    # than the real test-run time.
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE todo_state SET done_at = ?, toggled_at = ? "
+            "WHERE recording_id = ? AND todo_index = 0",
+            (done_at, done_at, rec.id),
+        )
+        conn.commit()
     return rec.id
 
 
@@ -400,6 +404,88 @@ def test_same_todo_twice_in_one_batch_applies_both_in_lww_order(tmp_path):
         assert report.toggles_skipped_stale == 0
         states = {s.todo_index: s for s in TodoStateRepo(db).list_for_recording(rid)}
         assert states[0].done is False  # B applied over A
+    finally:
+        db.close()
+
+
+def test_started_at_with_nonutc_offset_normalized(tmp_path):
+    """Sidecar with started_at '2026-07-24T20:30:00+05:30' -> the imported
+    recording's started_at must be the UTC equivalent
+    '2026-07-24T15:00:00+00:00' (same instant, offset normalized to zero)."""
+    db = _make_db(tmp_path)
+    try:
+        t = phone(tmp_path)
+        seed_outbox(t, "uid-1", started_at="2026-07-24T20:30:00+05:30")
+        importer = fake_import(db)
+
+        run_sync(db, t, import_recording=importer, now_iso="2026-07-24T12:00:00+00:00")
+
+        assert len(importer.calls) == 1
+        _src_path, _title, started_at = importer.calls[0]
+        original = datetime.fromisoformat("2026-07-24T20:30:00+05:30")
+        assert started_at is not None
+        assert started_at.utcoffset() == timedelta(0)
+        assert started_at == original
+    finally:
+        db.close()
+
+
+def test_stray_library_detail_file_pruned(tmp_path):
+    """A leftover library/meetings/<id>.json for a recording that no longer
+    exists (deleted on the desktop) must be pruned from the transport during
+    export -- the library is regenerated every sync, not accreted."""
+    db = _make_db(tmp_path)
+    try:
+        t = phone(tmp_path)
+        rid = _seed_recording_with_todo(db, done_at=None)
+        t.push_text('{"id": 999, "stale": true}', "library/meetings/999.json")
+        importer = fake_import(db)
+
+        run_sync(db, t, import_recording=importer, now_iso="2026-07-14T12:00:00+00:00")
+
+        names = {f.name for f in t.list_files("library")}
+        assert f"library/meetings/{rid}.json" in names
+        assert "library/meetings/999.json" not in names
+        assert "library/manifest.json" in names
+        assert "library/meetings.json" in names
+    finally:
+        db.close()
+
+
+def test_undone_row_keeps_lww_baseline(tmp_path):
+    """Desktop: todo checked, then UN-checked at 12:00 (mark_done False --
+    toggled_at 12:00, done_at None -- schema v8's durable LWW baseline).
+    Phone then sends a STALE done=True with toggled_at 11:00 (before the
+    un-check). The toggle must be SKIPPED as stale and the todo must remain
+    un-done. Pre-v8 (no toggled_at), un-checking cleared done_at to None,
+    so the LWW baseline was lost and this stale toggle would have wrongly
+    re-applied."""
+    db = _make_db(tmp_path)
+    try:
+        t = phone(tmp_path)
+        rid = _seed_recording_with_todo(db, done_at=None)
+        repo = TodoStateRepo(db)
+        repo.mark_done(rid, 0, True, task_text="Do A")
+        repo.mark_done(rid, 0, False, done_at_override="2026-07-14T12:00:00+00:00")
+        states = {s.todo_index: s for s in repo.list_for_recording(rid)}
+        assert states[0].done is False
+        assert states[0].done_at is None
+        assert states[0].toggled_at == "2026-07-14T12:00:00+00:00"
+
+        t.push_text(json.dumps([
+            {"recording_id": rid, "todo_index": 0, "done": True,
+             "toggled_at": "2026-07-14T11:00:00+00:00"},
+        ]), "outbox/changes.json")
+
+        report = run_sync(
+            db, t, import_recording=fake_import(db),
+            now_iso="2026-07-14T13:00:00+00:00",
+        )
+
+        assert report.toggles_applied == 0
+        assert report.toggles_skipped_stale == 1
+        states = {s.todo_index: s for s in TodoStateRepo(db).list_for_recording(rid)}
+        assert states[0].done is False
     finally:
         db.close()
 

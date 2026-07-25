@@ -31,6 +31,9 @@ from teams_transcriber.events import (
 )
 from teams_transcriber.meeting_watcher import MeetingWatcher, enumerate_windows
 from teams_transcriber.paths import AppPaths
+from teams_transcriber.phone_sync.mtp import MtpTransport, find_phone_root
+from teams_transcriber.phone_sync.sync import run_sync
+from teams_transcriber.phone_sync.watcher import PhoneSyncWatcher
 from teams_transcriber.pipeline import Pipeline
 from teams_transcriber.storage import (
     RecordingRepo,
@@ -110,7 +113,7 @@ def _chat_should_send(*, api_key: str, text: str) -> bool:
 
 def _wrike_lru_push(items: list[str], value: str, *, cap: int) -> list[str]:
     rest = [i for i in items if i != value]
-    return ([value] + rest)[:cap]
+    return [value, *rest][:cap]
 
 
 def _build_columns_splitter(history, summary):
@@ -238,6 +241,11 @@ class App:
         self.tray.settings_action.triggered.connect(self._open_settings)
         self.window.title_bar.settings_requested.connect(self._open_settings)
 
+        # Started/stopped by _apply_phone_sync_setting (called near the end of
+        # __init__, after the pipeline + window exist) -- declared here so the
+        # attribute exists regardless of when that call happens.
+        self._phone_watcher: PhoneSyncWatcher | None = None
+
         # Tracks the currently-recording recording id so the tray notes action
         # and the toast "Add notes" button can find it.
         self._active_recording_id: int | None = None
@@ -273,6 +281,7 @@ class App:
 
         self.pipeline.serve()
         self._refresh_history()
+        self._apply_phone_sync_setting()
 
         # Offer to retry any pending/failed Wrike syncs (consolidated toast).
         try:
@@ -417,6 +426,109 @@ class App:
         self._refresh_history(query=self.search.input.text() or None)
         self.master_todos.reload()
         self._wrike_close_loop_sync(rid)
+
+    def _on_phone_todos_changed(self, rid: int) -> None:
+        """Called by run_sync (from the watcher thread, via _phone_sync_cycle)
+        for every recording whose todo states changed from a phone toggle.
+        Same trio as _on_todo_state_changed -- this closes the ledgered
+        Phase-1 gap where the CLI's phone-sync command passed None here."""
+        self._refresh_history(query=self.search.input.text() or None)
+        self.master_todos.reload()
+        self._wrike_close_loop_sync(rid)
+
+    def _apply_phone_sync_setting(self) -> None:
+        """Start/stop the device watcher to match integrations.phone_sync_enabled.
+
+        Called once at startup (after the pipeline + window exist) and again
+        after every Settings save, since the checkbox lives in settings.json.
+        """
+        enabled = bool(
+            self.settings._raw.get("integrations", {}).get("phone_sync_enabled", False)
+        )
+        if enabled:
+            if self._phone_watcher is None:
+                self._phone_watcher = PhoneSyncWatcher(
+                    run_cycle=self._phone_sync_cycle,
+                    probe=self._phone_sync_probe,
+                    on_error=self._phone_sync_on_error,
+                )
+            self._phone_watcher.start()  # no-op if already running
+        elif self._phone_watcher is not None:
+            self._phone_watcher.stop()
+            self._phone_watcher = None
+
+    def _phone_sync_probe(self) -> bool:
+        """Watcher-thread probe: True once a qualifying phone is reachable.
+
+        Re-resolves the device from scratch every call (spike freshness
+        discipline) -- MtpNotReady propagates to PhoneSyncWatcher, which
+        treats it as absent (surfacing the device_not_ready hint once per
+        arrival via _phone_sync_on_error).
+        """
+        find_phone_root()
+        return True
+
+    def _phone_sync_cycle(self) -> None:
+        """Watcher-thread sync cycle: runs entirely off the Qt main thread.
+
+        Builds a fresh MtpTransport(find_phone_root()) (never reuses the
+        probe's root -- spike freshness discipline) and runs the sync
+        engine. Nothing here touches a QWidget directly, and -- just as
+        importantly -- nothing here calls save_settings() on this thread:
+        SettingsDialog._on_accept can call save_settings() concurrently on
+        the main thread against the same Settings object, and two
+        concurrent writers to settings.json can corrupt it. The
+        phone_sync_last mutation + save_settings() + toast are all done in
+        one callable hopped to the main thread via the 3-arg
+        QTimer.singleShot(0, self.window, ...) pattern used elsewhere in
+        this file for worker-thread -> UI callbacks, so persistence always
+        happens on the main thread, in order (persist then toast).
+        """
+        from datetime import UTC, datetime
+
+        from PySide6.QtCore import QTimer
+
+        from teams_transcriber.config import save_settings
+
+        def _todos_changed_on_main_thread(rid: int) -> None:
+            QTimer.singleShot(0, self.window, lambda: self._on_phone_todos_changed(rid))
+
+        now_iso = datetime.now(UTC).isoformat()
+        transport = MtpTransport(find_phone_root())
+        try:
+            report = run_sync(
+                self.db, transport,
+                import_recording=self.pipeline.import_phone_recording,
+                on_todos_changed=_todos_changed_on_main_thread,
+                now_iso=now_iso,
+            )
+        finally:
+            transport.close()
+
+        # Same summary-line shape as the CLI's phone-sync command.
+        text = (
+            f"Imported {len(report.imported)}, skipped {report.skipped_known} known, "
+            f"toggles applied {report.toggles_applied} "
+            f"({report.toggles_skipped_stale} stale), "
+            f"failures {len(report.failures)}"
+        )
+        ok = not report.failures
+
+        def _persist_then_toast() -> None:
+            self.settings._raw.setdefault("integrations", {})["phone_sync_last"] = {
+                "at": now_iso, "ok": ok, "summary": text,
+            }
+            save_settings(self.paths, self.settings)
+            show_in_app_toast("Phone sync", text)
+
+        QTimer.singleShot(0, self.window, _persist_then_toast)
+
+    def _phone_sync_on_error(self, hint: str) -> None:
+        """Watcher-thread callback for a device_not_ready arrival (phone
+        locked / wrong USB mode) -- toast the unlock hint, once per arrival
+        (PhoneSyncWatcher already dedupes repeated polls)."""
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(0, self.window, lambda: show_in_app_toast("Phone sync", hint))
 
     def _on_master_todo_toggled(self, recording_id: int) -> None:
         """Master-view toggle: same close-loop as the summary pane's checkbox.
@@ -567,6 +679,7 @@ class App:
                         child.setCurrentIndex(i)
                         break
         dlg.saved.connect(self._refresh_history)
+        dlg.saved.connect(self._apply_phone_sync_setting)
         exec_modal(dlg)
 
     def _on_hotkey_reload(self, new_hotkeys: dict[str, str]) -> None:
@@ -1223,6 +1336,8 @@ class App:
 
     def _quit_for_update(self) -> None:
         """Clean shutdown before the installer replaces files on disk."""
+        if self._phone_watcher is not None:
+            self._phone_watcher.stop()
         self.hotkeys.stop()
         self.pipeline.shutdown()
         self.db.close()
@@ -1311,6 +1426,8 @@ class App:
         win.show()
 
     def _quit(self) -> None:
+        if self._phone_watcher is not None:
+            self._phone_watcher.stop()
         self.hotkeys.stop()
         self.pipeline.shutdown()
         self.db.close()
