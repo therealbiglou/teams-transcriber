@@ -50,7 +50,61 @@ Grant on first run:
    source-tagged meetings, transcribe + summarize, and clear the outbox — the
    full Phase 1–2 sync, now fed by the phone.
 
-## Results
+## Results — run 1 (2026-07-25, Pixel 8 Pro, Android 17, adb-driven)
 
-_Record pass/fail per item and any `TeamsCallDetector` tuning here as the
-checklist is run; feed findings back into the phase notes._
+- **1–2 Manual record (voice memo): PASS.** Recorded via adb taps. `RecordingService`
+  confirmed foreground, type `0x80` (microphone), ongoing Stop notification. On stop:
+  outbox held exactly `rec_4b3d4110b1b2.m4a` (229025 B ≈ 64 kbps for 28.6 s) +
+  `rec_4b3d4110b1b2.json`, no `.tmp` left. Sidecar was contract-perfect:
+  `{"uid":"4b3d4110b1b2","title":"Voice memo — Jul 25, 1:16 PM","source":"memo",
+  "started_at":"2026-07-25T18:16:45+00:00","ended_at":"...+00:00","duration_ms":28632,
+  "app_version":"0.1.0"}` — all 7 keys, `memo` wire value, `+00:00` (no `Z`), real audio bytes.
+- **UI:** Compose renders correctly (Record → In-person/Voice memo/Cancel picker → active
+  Recording screen → Stop). Grant buttons + toggle present. Notification-listener binds
+  ("service connected") on launch.
+- **In-app timer:** confirmed FROZEN at 0:00 (known Minor; notification carries the live timer).
+- **4 Teams auto-record: DETECTOR WORKS, but the start CRASHES (blocker).**
+  `TeamsCallDetector` correctly matched a real Teams call (`com.microsoft.teams`) — proven by
+  the crash reaching `RecordingService.begin()`. But:
+  `java.lang.SecurityException: Starting FGS with type microphone ... requires ... the app must
+  be in the eligible state/exemptions` at `startForeground` (RecordingService.kt:63), from
+  `onStartCommand` (line 44). **Android 14+ forbids starting a microphone foreground service
+  from the background**, which is where the `NotificationListenerService` callback runs. The
+  unguarded `startForeground` then crashes the app ("TT Companion keeps stopping"), and the
+  ticking call notification re-triggers it → crash loop while armed.
+- Not yet run: 3 (in-person), 5 real Teams end-to-end, 6 failure-not-silent, 7 desktop USB round-trip.
+
+### Two fixes this blocker requires (see progress.md)
+1. **Crash guard (unconditional):** wrap `startForeground`/`begin()` in try/catch → `notifyError`
+   + graceful stop (the reviewer's flagged Minor, now proven Critical on-device). Prevents the
+   crash but leaves auto-record non-functional.
+2. **Auto-record architecture (design decision needed):** the spec's assumption that
+   `TeamsCallWatcher` can start mic recording directly does not hold on Android 14+. Options to
+   present to Brian: (A) persistent mic FGS armed-from-foreground while auto-record is enabled
+   (verify whether the mic indicator only shows on actual `AudioRecord` access, not while merely
+   armed); (B) foreground-only best-effort auto-record; (C) a "tap to record this Teams call"
+   high-priority notification that foregrounds the app then records. Manual record is unaffected
+   and fully working.
+
+## Run 2 — pending (reinstall build 57b30b0, armed-FGS auto-record)
+
+Auto-record was rearchitected to the "persistent armed recorder" (Brian's choice): the app arms a
+microphone FGS from the foreground and the background listener signals it in-process, so no
+background FGS start occurs. Reinstall and verify:
+
+- Reinstall: `adb install -r android/app/build/outputs/apk/debug/app-debug.apk`; re-grant perms if needed.
+- **Arm:** toggle **Auto-record Teams calls** ON in the app. Expect a persistent
+  **"Watching for Teams calls"** notification. Expect **no** mic in-use indicator while merely armed
+  (only when actually recording) — CONFIRM this assumption on-device.
+- **Auto-capture:** place a Teams call. Expect the armed notification to swap to "Recording — Teams
+  call" and capture to start (NO crash), stopping when the call ends; outbox pair `source":"teams_call"`.
+- **No crash on the old failure path:** confirm the app no longer crashes (the earlier
+  background-mic-FGS `SecurityException` is gone because capture now starts from the armed foreground service).
+- **Re-arm after process death:** with auto-record on, force-stop the app then reopen it —
+  `MainActivity.onStart` should re-arm (persistent notification returns) without crashing.
+- **Disarm:** toggle OFF → the "Watching…" notification clears and the service stops.
+- **Manual while armed:** with auto-record on, do a manual voice-memo record → it should capture and
+  save a normal pair, then the notification reverts to "Watching for Teams calls" (service stays armed).
+- Still pending from run 1: item 3 (in-person), item 6 (failure-not-silent), item 7 (desktop USB round-trip).
+- **Open product question (minor #3):** toggling auto-record OFF while a *manual* recording is in
+  progress currently finishes+saves it — decide whether disarm should instead leave it running.
