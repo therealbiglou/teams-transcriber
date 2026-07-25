@@ -8,10 +8,10 @@ from types import SimpleNamespace
 from PySide6.QtWidgets import QWidget
 
 
-def test_on_phone_todos_changed_refreshes_history_master_and_wrike(qapp):
-    """_on_phone_todos_changed(rid) must run the same trio as
-    _on_todo_state_changed: history refresh, master-view reload, Wrike
-    close-loop -- this is the ledgered Phase-1 gap (CLI passed None)."""
+def test_on_phone_todos_changed_refreshes_history_and_master(qapp):
+    """_on_phone_todos_changed(rid) must run the same duo as
+    _on_todo_state_changed: history refresh, master-view reload -- this is
+    the ledgered Phase-1 gap (CLI passed None)."""
     from teams_transcriber.ui.app import App
 
     app = App.__new__(App)
@@ -23,14 +23,10 @@ def test_on_phone_todos_changed_refreshes_history_master_and_wrike(qapp):
     reload_calls: list[int] = []
     app.master_todos = SimpleNamespace(reload=lambda: reload_calls.append(1))
 
-    wrike_calls: list[int] = []
-    app._wrike_close_loop_sync = wrike_calls.append
-
     app._on_phone_todos_changed(42)
 
     assert refresh_calls == [None]
     assert reload_calls == [1]
-    assert wrike_calls == [42]
 
 
 def test_phone_sync_cycle_persists_status_and_toasts(qapp, qtbot, tmp_path, monkeypatch):

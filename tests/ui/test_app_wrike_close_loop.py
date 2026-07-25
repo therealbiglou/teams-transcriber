@@ -1,47 +1,5 @@
-def test_close_loop_only_returns_changed_rows():
-    from teams_transcriber.storage.wrike import WrikeTaskRow
-    from teams_transcriber.ui.app import _wrike_close_loop_changes
-    rows = [
-        WrikeTaskRow(id=1, recording_id=10, kind="my", todo_index=0,
-                     wrike_task_id="T1", wrike_folder_id="F1",
-                     created_at="x", last_synced_done=False),
-        WrikeTaskRow(id=2, recording_id=10, kind="my", todo_index=1,
-                     wrike_task_id="T2", wrike_folder_id="F1",
-                     created_at="x", last_synced_done=True),
-    ]
-    # idx 0 toggled True (was False) -> change; idx 1 already True -> no change.
-    changes = _wrike_close_loop_changes(rows, {0: True, 1: True})
-    assert len(changes) == 1
-    row, new_done = changes[0]
-    assert row.wrike_task_id == "T1" and new_done is True
-
-
-def test_close_loop_ignores_other_kind():
-    from teams_transcriber.storage.wrike import WrikeTaskRow
-    from teams_transcriber.ui.app import _wrike_close_loop_changes
-    rows = [
-        WrikeTaskRow(id=1, recording_id=10, kind="other", todo_index=0,
-                     wrike_task_id="T1", wrike_folder_id="F1",
-                     created_at="x", last_synced_done=False),
-    ]
-    # action-items-for-others are not toggleable in the app, so skip.
-    assert _wrike_close_loop_changes(rows, {0: True}) == []
-
-
-def test_close_loop_returns_empty_when_no_changes():
-    from teams_transcriber.storage.wrike import WrikeTaskRow
-    from teams_transcriber.ui.app import _wrike_close_loop_changes
-    rows = [
-        WrikeTaskRow(id=1, recording_id=10, kind="my", todo_index=0,
-                     wrike_task_id="T1", wrike_folder_id="F1",
-                     created_at="x", last_synced_done=False),
-    ]
-    assert _wrike_close_loop_changes(rows, {0: False}) == []
-
-
-def test_master_todo_toggle_triggers_close_loop(qapp, tmp_path):
-    """Master to-do view toggles must run the same Wrike close-loop as the
-    summary pane's checkbox (App._on_master_todo_toggled)."""
+def test_master_todo_toggle_refreshes_history(qapp, tmp_path):
+    """Master to-do view toggles refresh the history chip."""
     from types import SimpleNamespace
 
     from teams_transcriber.paths import AppPaths
@@ -64,13 +22,13 @@ def test_master_todo_toggle_triggers_close_loop(qapp, tmp_path):
         )
         app.history = SimpleNamespace(set_recordings=lambda rows: None)
 
-        calls: list[int] = []
-        app._wrike_close_loop_sync = calls.append  # type: ignore[assignment]
+        refresh_calls: list[int] = []
+        app._refresh_history = lambda query=None: refresh_calls.append(1)
         app.master_todos.todo_toggled.connect(app._on_master_todo_toggled)
 
         app.master_todos.todo_toggled.emit(42)
 
-        assert calls == [42]
+        assert refresh_calls == [1]
     finally:
         db.close()
 

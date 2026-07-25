@@ -40,6 +40,31 @@ from teams_transcriber.ui.labels import make_selectable, make_wrapping
 from teams_transcriber.ui.title_bar import TitleBar
 
 
+def _group_folders_by_space(
+    spaces: list[dict], folders: list[dict],
+) -> dict[str, list[dict]]:
+    """Group top-level Wrike folders under the space they belong to.
+
+    Best-effort, decided independently per space: if a space carries
+    ``childIds``, its folder list is exactly those folders (by id); if a
+    space lacks ``childIds`` (absent/empty — some Wrike accounts/plans
+    don't return it, and a mixed response can have both kinds), fall back
+    to showing every folder under that space so the picker still has
+    something useful to offer.
+    """
+    folders_by_id = {folder["id"]: folder for folder in folders}
+    grouped: dict[str, list[dict]] = {}
+    for space in spaces:
+        child_ids = space.get("childIds")
+        if child_ids:
+            grouped[space["id"]] = [
+                folders_by_id[cid] for cid in child_ids if cid in folders_by_id
+            ]
+        else:
+            grouped[space["id"]] = list(folders)
+    return grouped
+
+
 def _phone_sync_status_text(raw: dict) -> str:
     """Format integrations.phone_sync_last (UTC ISO timestamp) into a
     human-readable, local-time status line for the Settings dialog.
@@ -326,14 +351,31 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         form.addRow("", self._wrike_test_btn)
         form.addRow("", self.wrike_status_label)
 
-        # Enable.
-        self.wrike_enable_cb = QCheckBox(
-            "Send meeting todos to Wrike automatically when a summary is ready"
+        # Project export.
+        integ_raw = self._settings._raw.get("integrations", {})
+        self.wrike_project_export_cb = QCheckBox(
+            "Create a Wrike project for each meeting automatically"
         )
-        self.wrike_enable_cb.setChecked(
-            bool(self._settings._raw.get("integrations", {}).get("wrike_enabled", False))
+        self.wrike_project_export_cb.setChecked(
+            bool(integ_raw.get("wrike_project_export_enabled", False))
         )
-        form.addRow("", self.wrike_enable_cb)
+        form.addRow("", self.wrike_project_export_cb)
+
+        parent_id = integ_raw.get("wrike_parent_id")
+        parent_label = integ_raw.get("wrike_parent_label")
+        self._chosen_parent: tuple[str, str] | None = (
+            (parent_id, parent_label) if parent_id and parent_label else None
+        )
+
+        self._wrike_choose_dest_btn = QPushButton("Choose destination…")
+        self._wrike_choose_dest_btn.setProperty("role", "secondary")
+        self._wrike_choose_dest_btn.clicked.connect(self._choose_wrike_destination)
+        self.wrike_dest_label = make_selectable(
+            QLabel(parent_label or "No destination chosen")
+        )
+        self.wrike_dest_label.setWordWrap(True)
+        form.addRow("", self._wrike_choose_dest_btn)
+        form.addRow("Destination:", self.wrike_dest_label)
 
         # LLM-assisted assignee resolution.
         self.wrike_llm_assignee_cb = QCheckBox(
@@ -404,6 +446,67 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
     def _on_wrike_test_done(self, msg: str) -> None:
         self.wrike_status_label.setText(msg)
         self._wrike_test_btn.setEnabled(True)
+
+    def _choose_wrike_destination(self) -> None:
+        import threading
+
+        from PySide6.QtCore import QTimer
+
+        from teams_transcriber.integrations import wrike_client as _wc
+
+        token = self.wrike_token_input.text().strip() or (
+            keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
+        )
+        if not token:
+            self.wrike_dest_label.setText("Enter a Wrike token first.")
+            return
+        self.wrike_dest_label.setText("Loading spaces…")
+        self._wrike_choose_dest_btn.setEnabled(False)
+
+        def _worker() -> None:
+            try:
+                client = _wc.WrikeClient(token=token)
+                try:
+                    spaces = client.list_spaces()
+                    folders = client.list_folders()
+                finally:
+                    client.close()
+                folders_by_space = _group_folders_by_space(spaces, folders)
+                result = (spaces, folders_by_space, "")
+            except Exception as exc:
+                result = ([], {}, str(exc))
+            QTimer.singleShot(0, self, lambda: self._on_wrike_destinations_fetched(*result))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_wrike_destinations_fetched(
+        self,
+        spaces: list[dict],
+        folders_by_space: dict[str, list[dict]],
+        error: str,
+    ) -> None:
+        self._wrike_choose_dest_btn.setEnabled(True)
+        if error:
+            self.wrike_dest_label.setText(f"Could not load Wrike destinations: {error}")
+            return
+        if not spaces:
+            self.wrike_dest_label.setText("No Wrike spaces found.")
+            return
+
+        from teams_transcriber.ui.scrim import exec_modal
+        from teams_transcriber.ui.wrike_destination_picker import WrikeDestinationPicker
+
+        dlg = WrikeDestinationPicker(
+            spaces=spaces, folders_by_space=folders_by_space, parent=self,
+        )
+        if exec_modal(dlg) == QDialog.DialogCode.Accepted and dlg.selected is not None:
+            self._chosen_parent = dlg.selected
+            self.wrike_dest_label.setText(dlg.selected[1])
+        else:
+            # Restore whatever was previously chosen (or the placeholder).
+            self.wrike_dest_label.setText(
+                self._chosen_parent[1] if self._chosen_parent else "No destination chosen"
+            )
 
     def _build_shortcuts_tab(self) -> QWidget:
         w = QWidget()
@@ -637,16 +740,14 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
             new_hotkeys[key] = value
             s._raw["hotkeys"][key] = value
 
-        # Integrations — Wrike enabled flag.
-        s._raw.setdefault("integrations", {})["wrike_enabled"] = (
-            self.wrike_enable_cb.isChecked()
-        )
-        s._raw.setdefault("integrations", {})["wrike_llm_assignee_fallback"] = (
-            self.wrike_llm_assignee_cb.isChecked()
-        )
-        s._raw.setdefault("integrations", {})["phone_sync_enabled"] = (
-            self.phone_sync_enable_cb.isChecked()
-        )
+        # Integrations — Wrike project export.
+        integ = s._raw.setdefault("integrations", {})
+        integ["wrike_project_export_enabled"] = self.wrike_project_export_cb.isChecked()
+        if self._chosen_parent is not None:
+            integ["wrike_parent_id"] = self._chosen_parent[0]
+            integ["wrike_parent_label"] = self._chosen_parent[1]
+        integ["wrike_llm_assignee_fallback"] = self.wrike_llm_assignee_cb.isChecked()
+        integ["phone_sync_enabled"] = self.phone_sync_enable_cb.isChecked()
 
         save_settings(self._paths, s)
 
