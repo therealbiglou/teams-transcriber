@@ -199,11 +199,8 @@ def test_resolve_wrike_assignees_llm_fallback_off_without_key(qapp, tmp_path, mo
         db.close()
 
 
-def test_on_todo_state_changed_refreshes_without_close_loop(qapp):
-    """_on_todo_state_changed refreshes history + reloads the master view but
-    -- since Task 7 dropped the ledgered close-loop -- must NOT call the
-    (now-unreferenced) close-loop sync. Mirrors the _on_master_todo_toggled
-    test in test_app_wrike_close_loop.py."""
+def test_on_todo_state_changed_refreshes_history_and_master(qapp):
+    """_on_todo_state_changed refreshes history + reloads the master view."""
     from teams_transcriber.ui.app import App
 
     app = App.__new__(App)
@@ -213,11 +210,59 @@ def test_on_todo_state_changed_refreshes_without_close_loop(qapp):
     app._refresh_history = lambda query=None: refresh_calls.append(1)
     reload_calls: list[int] = []
     app.master_todos = SimpleNamespace(reload=lambda: reload_calls.append(1))
-    close_loop_calls: list[int] = []
-    app._wrike_close_loop_sync = close_loop_calls.append  # type: ignore[assignment]
 
     app._on_todo_state_changed(7)
 
     assert refresh_calls == [1]
     assert reload_calls == [1]
-    assert close_loop_calls == []
+
+
+def test_wrike_export_worker_skips_when_already_in_flight(qapp, monkeypatch):
+    """Two entry points racing for the same recording_id (e.g. the
+    SummaryReady auto-push firing while the manual Send button is also
+    clicked) must not both pass the guard -- only the first spawns a worker;
+    the second toasts and returns."""
+    from teams_transcriber.ui.app import App
+
+    app = App.__new__(App)
+    app._wrike_exports_in_flight = {5}
+
+    def _boom(*a, **kw):
+        raise AssertionError("must not spawn a second worker for an in-flight recording_id")
+
+    monkeypatch.setattr("threading.Thread", _boom)
+
+    toasts: list[tuple] = []
+    monkeypatch.setattr(
+        "teams_transcriber.ui.app.show_in_app_toast",
+        lambda *a, **kw: toasts.append(a),
+    )
+
+    app._wrike_export_worker(5)
+
+    assert len(toasts) == 1
+    assert app._wrike_exports_in_flight == {5}  # unchanged -- no duplicate add
+
+
+def test_wrike_export_worker_adds_to_in_flight_and_release_hop_discards(qapp, monkeypatch, qtbot):
+    """A normal (non-racing) call adds recording_id to the in-flight set
+    synchronously (on the main thread, before the worker thread spawns), and
+    the worker's finally-hop discards it back on the main thread once the
+    background worker finishes."""
+    from PySide6.QtWidgets import QWidget
+
+    from teams_transcriber.ui.app import App
+
+    app = App.__new__(App)
+    app._wrike_exports_in_flight = set()
+    # No token/parent_id configured -- the worker thread returns immediately
+    # after the keyring/settings check, so the finally-hop fires promptly.
+    app.settings = SimpleNamespace(_raw={"integrations": {}})
+    app.window = QWidget()  # QTimer.singleShot's 3-arg form needs a real QObject
+    monkeypatch.setattr("keyring.get_password", lambda *a, **kw: "")
+
+    app._wrike_export_worker(5)
+
+    assert app._wrike_exports_in_flight == {5}
+
+    qtbot.waitUntil(lambda: app._wrike_exports_in_flight == set(), timeout=2000)

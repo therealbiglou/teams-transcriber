@@ -196,6 +196,14 @@ class App:
         # and the toast "Add notes" button can find it.
         self._active_recording_id: int | None = None
 
+        # Guards _wrike_export_worker against two concurrent workers for the
+        # same recording -- SummaryReady auto-push, the manual Send button,
+        # the partial-failure toast's Retry, and the startup pending-sync
+        # toast can all reach it back-to-back for the same recording_id, and
+        # two workers both passing the "no project yet" check before either
+        # persists would create a duplicate Wrike project.
+        self._wrike_exports_in_flight: set[int] = set()
+
         self.bridge.meeting_detected.connect(self._on_meeting_detected)
         self.bridge.recording_started.connect(self._on_recording_started)
         self.bridge.recording_finalized.connect(self._on_recording_finalized)
@@ -1017,52 +1025,71 @@ class App:
 
     def _wrike_export_worker(self, recording_id: int) -> None:
         """Worker thread: build+run the Wrike project export, then hop a
-        toast (success/failure/partial) back to the main thread."""
-        import keyring
+        toast (success/failure/partial) back to the main thread.
+
+        Guarded by ``self._wrike_exports_in_flight`` -- this method is only
+        ever called on the main thread (SummaryReady auto-push, the manual
+        Send button, the partial-failure toast's Retry, and the startup
+        pending-sync toast are all main-thread call sites), so the add/check
+        here and the discard in the worker's finally-hop are never touched
+        concurrently.
+        """
         import threading
+
+        import keyring
+        from PySide6.QtCore import QTimer
 
         from teams_transcriber.config import KEYRING_SERVICE, KEYRING_USER_WRIKE
 
-        def _worker() -> None:
-            from PySide6.QtCore import QTimer
+        if recording_id in self._wrike_exports_in_flight:
+            show_in_app_toast("Wrike sync", "Wrike sync already running for this meeting.")
+            return
+        self._wrike_exports_in_flight.add(recording_id)
 
+        def _worker() -> None:
             from teams_transcriber.integrations.wrike_client import WrikeApiError, WrikeClient
             from teams_transcriber.integrations.wrike_project_export import export_recording
             from teams_transcriber.storage.wrike import WrikeSyncRepo
 
-            token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
-            parent_id = self.settings._raw.get("integrations", {}).get("wrike_parent_id")
-            if not token or not parent_id:
-                return
-            client = WrikeClient(token=token)
             try:
-                assignees = self._resolve_wrike_assignees(recording_id, client)
-                report = export_recording(self.db, client, recording_id,
-                                           parent_id=parent_id, assignees=assignees)
-            except WrikeApiError as exc:
-                WrikeSyncRepo(self.db).update(recording_id, status="failed", error_message=str(exc))
-                QTimer.singleShot(0, self.window, lambda e=str(exc): show_in_app_toast("Wrike sync failed", e))
-                return
-            except Exception as exc:
-                logger.exception("wrike export crashed for %d", recording_id)
-                WrikeSyncRepo(self.db).update(recording_id, status="failed", error_message=str(exc))
-                QTimer.singleShot(0, self.window, lambda e=str(exc): show_in_app_toast("Wrike sync failed", e))
-                return
+                token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
+                parent_id = self.settings._raw.get("integrations", {}).get("wrike_parent_id")
+                if not token or not parent_id:
+                    return
+                client = WrikeClient(token=token)
+                try:
+                    assignees = self._resolve_wrike_assignees(recording_id, client)
+                    report = export_recording(self.db, client, recording_id,
+                                               parent_id=parent_id, assignees=assignees)
+                except WrikeApiError as exc:
+                    WrikeSyncRepo(self.db).update(recording_id, status="failed", error_message=str(exc))
+                    QTimer.singleShot(0, self.window, lambda e=str(exc): show_in_app_toast("Wrike sync failed", e))
+                    return
+                except Exception as exc:
+                    logger.exception("wrike export crashed for %d", recording_id)
+                    WrikeSyncRepo(self.db).update(recording_id, status="failed", error_message=str(exc))
+                    QTimer.singleShot(0, self.window, lambda e=str(exc): show_in_app_toast("Wrike sync failed", e))
+                    return
+                finally:
+                    client.close()
+                if report.failures:
+                    WrikeSyncRepo(self.db).update(recording_id, status="failed",
+                                                   error_message="; ".join(report.failures))
+                    QTimer.singleShot(0, self.window, lambda: show_in_app_toast(
+                        "Wrike sync — partial", f"{len(report.failures)} item(s) failed; will retry.",
+                        action_label="Retry", action_callback=lambda: self._wrike_export_worker(recording_id)))
+                else:
+                    WrikeSyncRepo(self.db).update(recording_id, status="synced")
+                    link = report.permalink
+                    QTimer.singleShot(0, self.window, lambda: show_in_app_toast(
+                        "Synced to Wrike", "Project created.",
+                        action_label=("Open in Wrike" if link else None),
+                        action_callback=((lambda: __import__("webbrowser").open(link)) if link else None)))
             finally:
-                client.close()
-            if report.failures:
-                WrikeSyncRepo(self.db).update(recording_id, status="failed",
-                                               error_message="; ".join(report.failures))
-                QTimer.singleShot(0, self.window, lambda: show_in_app_toast(
-                    "Wrike sync — partial", f"{len(report.failures)} item(s) failed; will retry.",
-                    action_label="Retry", action_callback=lambda: self._wrike_export_worker(recording_id)))
-            else:
-                WrikeSyncRepo(self.db).update(recording_id, status="synced")
-                link = report.permalink
-                QTimer.singleShot(0, self.window, lambda: show_in_app_toast(
-                    "Synced to Wrike", "Project created.",
-                    action_label=("Open in Wrike" if link else None),
-                    action_callback=((lambda: __import__("webbrowser").open(link)) if link else None)))
+                QTimer.singleShot(
+                    0, self.window,
+                    lambda rid=recording_id: self._wrike_exports_in_flight.discard(rid),
+                )
 
         threading.Thread(target=_worker, daemon=True).start()
 
