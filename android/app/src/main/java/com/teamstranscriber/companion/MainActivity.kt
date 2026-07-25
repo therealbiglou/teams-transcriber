@@ -1,34 +1,61 @@
 package com.teamstranscriber.companion
 
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.wrapContentSize
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
+import androidx.core.content.ContextCompat
+import com.teamstranscriber.companion.permissions.Permissions
+import com.teamstranscriber.companion.ui.RecorderScreen
 
 class MainActivity : ComponentActivity() {
+    private val requestPermissions =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    Greeting()
+                Surface {
+                    RecorderScreen(
+                        onRequestPermissions = ::requestRuntimePermissions,
+                        onOpenAllFilesAccess = ::openAllFilesAccess,
+                    )
                 }
             }
         }
     }
-}
 
-@Composable
-fun Greeting() {
-    Text(
-        text = "Teams Transcriber Companion",
-        modifier = Modifier.fillMaxSize().wrapContentSize(Alignment.Center),
-    )
+    private fun requestRuntimePermissions() {
+        val granted = buildSet {
+            listOf(
+                android.Manifest.permission.RECORD_AUDIO,
+                android.Manifest.permission.POST_NOTIFICATIONS,
+            ).forEach {
+                if (ContextCompat.checkSelfPermission(this@MainActivity, it) ==
+                    PackageManager.PERMISSION_GRANTED
+                ) add(it)
+            }
+        }
+        val missing = Permissions.missingRuntimePermissions(granted, Build.VERSION.SDK_INT)
+        if (missing.isNotEmpty()) requestPermissions.launch(missing.toTypedArray())
+    }
+
+    private fun openAllFilesAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        }
+    }
 }
