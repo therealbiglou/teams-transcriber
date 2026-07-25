@@ -318,7 +318,11 @@ class MtpTransport:
         # already holds a same-named discard (e.g. this name got pushed and
         # discarded again in a later cycle on a long-lived transport) can
         # pop a native "overwrite?" confirmation dialog and hang.
-        name = item.Name
+        # Use the true filename (B2), not item.Name, which is extension-
+        # stripped when Explorer hides known extensions -- otherwise the
+        # absence poll below checks a name that was never valid and passes
+        # spuriously regardless of whether the move actually completed.
+        name = _item_filename(item)
         discard_dir = Path(tempfile.mkdtemp(dir=self._discard_dir))
         try:
             discard_folder = self._shell.NameSpace(str(discard_dir))

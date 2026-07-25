@@ -138,15 +138,20 @@ class FakeShellFolder:
         self._land(p.name, FakeShellItem(p.name, content=p.read_bytes(), owner=self))
 
     def MoveHere(self, item) -> None:
+        # Use the true on-disk filename (System.FileName), not item.Name --
+        # the device store and an owner's _items are always keyed by the
+        # true name (see add_file), so a move keyed off a stripped display
+        # name (B2) would silently fail to remove the source entry.
+        filename = item._filename
         if self._shell is not None:
-            self._shell.event_log.append(("move_here", self.Name, item.Name))
+            self._shell.event_log.append(("move_here", self.Name, filename))
         if self._local_path is not None:
-            (self._local_path / item.Name).write_bytes(item._content)
+            (self._local_path / filename).write_bytes(item._content)
         else:
-            self._items[item.Name] = item
+            self._items[filename] = item
         if item._owner is not None:
-            item._owner._items.pop(item.Name, None)
-            item._owner._pending.pop(item.Name, None)
+            item._owner._items.pop(filename, None)
+            item._owner._pending.pop(filename, None)
 
     def _land(self, name, item) -> None:
         if self.latency_polls > 0:
@@ -411,6 +416,41 @@ def test_delete_uses_move_here_and_removes_from_device(tmp_path):
 
     assert outbox.ParseName("rec_c.m4a") is None
     assert any(e[0] == "move_here" and e[2] == "rec_c.m4a" for e in shell.event_log)
+
+
+def test_delete_polls_absence_using_true_filename_not_stripped_display_name(tmp_path):
+    # Spike doc B2 (device-verified): with Explorer's "hide known
+    # extensions" on, item.Name comes back extension-stripped. The absence
+    # poll inside _move_to_discard must confirm removal against the true
+    # filename (System.FileName) -- polling the stripped display name
+    # checks a key that was never present in the device store's dict
+    # (always keyed by the true filename), so the poll passes immediately
+    # regardless of whether the move actually completed. That's a spurious
+    # pass, not a real confirmation: a genuinely-failed move wouldn't be
+    # caught either.
+    _shell, root = _make_tree()
+    outbox = root.ParseName("outbox").GetFolder
+    outbox.add_file("rec_h.m4a", b"strip-bytes", strip_ext=True)
+
+    calls: list[str] = []
+    real_parse_name = outbox.ParseName
+
+    def spy_parse_name(name):
+        calls.append(name)
+        return real_parse_name(name)
+
+    outbox.ParseName = spy_parse_name
+
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
+    t.delete("outbox/rec_h.m4a")
+
+    # calls[0] is delete()'s own leaf lookup, using the true name the
+    # caller requested ("rec_h.m4a"). Everything after that is the
+    # absence poll, which must never query the stripped display name.
+    poll_calls = calls[1:]
+    assert poll_calls, "expected at least one absence-poll ParseName call"
+    assert "rec_h" not in poll_calls
+    assert all(name == "rec_h.m4a" for name in poll_calls)
 
 
 def test_delete_missing_file_is_a_noop(tmp_path):
