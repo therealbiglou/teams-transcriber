@@ -30,6 +30,8 @@ class RecordingService : Service() {
     private lateinit var tempFile: File
     private var source: RecordingSource = RecordingSource.MEMO
     private var startedAt: Long = 0L
+    private var finishing = false
+    private var tickerJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.Main + Job())
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -69,8 +71,9 @@ class RecordingService : Service() {
             stopSelf()
             return
         }
+        finishing = false
         RecordingBus.set(RecordingStatus(active = true, source = src, startedAtEpochMillis = startedAt))
-        scope.launch {
+        tickerJob = scope.launch {
             while (RecordingBus.state.value.active) {
                 delay(1_000)
                 val elapsed = System.currentTimeMillis() - startedAt
@@ -81,6 +84,9 @@ class RecordingService : Service() {
     }
 
     private fun finish() {
+        if (finishing) return
+        finishing = true
+        tickerJob?.cancel()
         val endedAt = System.currentTimeMillis()
         val produced = if (::recorder.isInitialized) recorder.stop() else false
         RecordingBus.set(RecordingStatus(active = false))
