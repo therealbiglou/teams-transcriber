@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from teams_transcriber.integrations.wrike_project_body import (
-    build_description, build_transcript_md,
+    build_description,
+    build_transcript_md,
 )
 from teams_transcriber.storage.models import Channel, Summary, TranscriptSegment
 
@@ -16,17 +17,31 @@ def _summary(**kw):
     return Summary(**base)
 
 
-def test_description_without_decisions_is_just_summary():
+def test_description_without_decisions_is_plain_body():
+    # No special chars / newlines → HTML output is identical to the raw body.
     assert build_description(_summary()) == "The summary body."
 
 
-def test_description_appends_key_decisions_section():
+def test_description_appends_key_decisions_as_html():
     out = build_description(_summary(key_decisions=["Ship Friday", "Use SQLite"]))
     assert out == (
-        "The summary body.\n\n"
-        "## Key decisions\n"
-        "- Ship Friday\n"
-        "- Use SQLite"
+        "The summary body."
+        "<br/><br/><b>Key decisions</b>"
+        "<ul><li>Ship Friday</li><li>Use SQLite</li></ul>"
+    )
+
+
+def test_description_newlines_become_br_and_html_is_escaped():
+    out = build_description(
+        _summary(
+            summary="Line 1\nLine 2 with <tag> & ampersand",
+            key_decisions=["Use SQLite <fts5> & keep it"],
+        )
+    )
+    assert out == (
+        "Line 1<br/>Line 2 with &lt;tag&gt; &amp; ampersand"
+        "<br/><br/><b>Key decisions</b>"
+        "<ul><li>Use SQLite &lt;fts5&gt; &amp; keep it</li></ul>"
     )
 
 
