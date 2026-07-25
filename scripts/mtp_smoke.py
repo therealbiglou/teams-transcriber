@@ -24,6 +24,13 @@ from teams_transcriber.phone_sync.mtp import (
 
 
 def main() -> int:
+    # Manual scripts run on the main thread, but CoInitialize is idempotent
+    # (S_FALSE if already inited) and this is the only thing that makes the
+    # async CopyHere/MoveHere ops advance (spike doc B1, device-verified).
+    import pythoncom
+
+    pythoncom.CoInitialize()
+
     try:
         root = find_phone_root()
     except MtpNotReady as exc:

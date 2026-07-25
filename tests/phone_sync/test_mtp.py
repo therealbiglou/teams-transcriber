@@ -26,14 +26,24 @@ from teams_transcriber.phone_sync.mtp import (
 
 class FakeShellItem:
     """Duck-types a Shell FolderItem: .Name, .IsFolder, .IsFileSystem,
-    .GetFolder, .ExtendedProperty('System.Size')."""
+    .GetFolder, .ExtendedProperty('System.Size' / 'System.FileName').
 
-    def __init__(self, name, *, folder=None, content=b"", owner=None, is_file_system=True):
+    `filename` models spike doc B2 ("hide known extensions"): when set to
+    something other than `name`, it's the *true* on-disk filename (with
+    extension) returned by ExtendedProperty('System.FileName'), while
+    `.Name` is the (possibly extension-stripped) display name a real Shell
+    item would show. Defaults to `name` -- i.e. no stripping -- so existing
+    fakes/tests that only ever set `.Name` are unaffected.
+    """
+
+    def __init__(self, name, *, folder=None, content=b"", owner=None,
+                 is_file_system=True, filename=None):
         self.Name = name
         self._folder = folder
         self._content = content
         self._owner = owner  # FakeShellFolder this item currently lives in
         self.is_file_system = is_file_system
+        self._filename = filename if filename is not None else name
 
     @property
     def IsFolder(self):
@@ -48,8 +58,11 @@ class FakeShellItem:
         return self._folder
 
     def ExtendedProperty(self, prop):
-        assert prop == "System.Size", prop
-        return len(self._content)
+        if prop == "System.Size":
+            return len(self._content)
+        if prop == "System.FileName":
+            return self._filename
+        raise AssertionError(prop)
 
 
 class FakeShellFolder:
@@ -82,8 +95,13 @@ class FakeShellFolder:
         self._items[name] = FakeShellItem(name, folder=sub, owner=self)
         return sub
 
-    def add_file(self, name, content=b"data") -> None:
-        self._items[name] = FakeShellItem(name, content=content, owner=self)
+    def add_file(self, name, content=b"data", *, strip_ext=False) -> None:
+        # strip_ext=True models spike doc B2: item.Name comes back
+        # extension-less (Explorer "hide known extensions") while the true
+        # on-disk name -- `name`, the dict key ParseName(leaf) looks up --
+        # keeps its extension.
+        display = name.rsplit(".", 1)[0] if strip_ext and "." in name else name
+        self._items[name] = FakeShellItem(display, content=content, owner=self, filename=name)
 
     def Items(self):
         self._settle()
@@ -100,8 +118,11 @@ class FakeShellFolder:
             self._shell.event_log.append(("copy_here", self.Name, Path(str(src)).name))
         if self._local_path is not None:
             # local mode: src is a FakeShellItem coming FROM the device.
+            # Writes under the TRUE filename (B2) -- on a real device the
+            # arrived local file keeps its extension even when item.Name
+            # (the display name) doesn't.
             item = src
-            (self._local_path / item.Name).write_bytes(item._content)
+            (self._local_path / item._filename).write_bytes(item._content)
             return
         # device mode: src is a local path string (pushing local -> device).
         p = Path(src)
@@ -273,7 +294,7 @@ def test_push_existing_name_deletes_then_copies(tmp_path):
     src = tmp_path / "new.m4a"
     src.write_bytes(b"new-bytes")
 
-    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
     t.push(src, "outbox/rec_a.m4a")
 
     kinds = [e[0] for e in shell.event_log if e[2] == "rec_a.m4a"]
@@ -286,7 +307,7 @@ def test_push_invisible_after_write_raises_stale_session(tmp_path):
     src = tmp_path / "b.m4a"
     src.write_bytes(b"data")
 
-    t = MtpTransport(root, poll_interval=0.005, timeout=0.05)
+    t = MtpTransport(root, poll_interval=0.005, timeout=0.05, pump=lambda: None)
     with pytest.raises(MtpStaleSession) as exc:
         t.push(src, "outbox/rec_b.m4a")
     assert "unplug and replug" in str(exc.value)
@@ -298,7 +319,7 @@ def test_push_succeeds_after_async_arrival_latency(tmp_path):
     src = tmp_path / "slow.m4a"
     src.write_bytes(b"slow-bytes")
 
-    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
     t.push(src, "outbox/slow.m4a")
 
     outbox = root.ParseName("outbox").GetFolder
@@ -310,7 +331,7 @@ def test_push_creates_missing_parent_folder(tmp_path):
     src = tmp_path / "n.json"
     src.write_bytes(b"{}")
 
-    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
     t.push(src, "library/meetings/detail/n.json")
 
     meetings = root.ParseName("library").GetFolder.ParseName("meetings").GetFolder
@@ -327,7 +348,7 @@ def test_pull_and_read_text_round_trip(tmp_path):
     meetings = root.ParseName("library").GetFolder.ParseName("meetings").GetFolder
     meetings.add_file("5.json", b'{"ok": true}')
 
-    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
 
     dest = tmp_path / "pulled" / "5.json"
     t.pull("library/meetings/5.json", dest)
@@ -344,7 +365,7 @@ def test_pull_renames_when_dest_leaf_differs_from_remote_leaf(tmp_path):
     outbox = root.ParseName("outbox").GetFolder
     outbox.add_file("rec_d.m4a", b"renamed-bytes")
 
-    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
     dest = tmp_path / "local_copy.m4a"
     t.pull("outbox/rec_d.m4a", dest)
 
@@ -352,9 +373,26 @@ def test_pull_renames_when_dest_leaf_differs_from_remote_leaf(tmp_path):
     assert not (tmp_path / "rec_d.m4a").exists()
 
 
+def test_pull_finds_true_filename_when_display_name_is_stripped(tmp_path):
+    # Spike doc B2 (device-verified): with Explorer's "hide known
+    # extensions" on, item.Name comes back extension-less while the file
+    # that actually lands locally keeps its extension. pull must wait on
+    # the true filename (System.FileName), not item.Name, or it times out
+    # waiting for a local file that will never appear under that name.
+    _shell, root = _make_tree()
+    outbox = root.ParseName("outbox").GetFolder
+    outbox.add_file("rec_g.m4a", b"true-name-bytes", strip_ext=True)
+
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
+    dest = tmp_path / "rec_g.m4a"
+    t.pull("outbox/rec_g.m4a", dest)
+
+    assert dest.read_bytes() == b"true-name-bytes"
+
+
 def test_push_text_then_read_text(tmp_path):
     _shell, root = _make_tree()
-    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
 
     t.push_text('{"x": 1}', "sync/desktop_ack.json")
     assert t.read_text("sync/desktop_ack.json") == '{"x": 1}'
@@ -368,7 +406,7 @@ def test_delete_uses_move_here_and_removes_from_device(tmp_path):
     outbox = root.ParseName("outbox").GetFolder
     outbox.add_file("rec_c.m4a", b"gone-soon")
 
-    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
     t.delete("outbox/rec_c.m4a")
 
     assert outbox.ParseName("rec_c.m4a") is None
@@ -377,7 +415,7 @@ def test_delete_uses_move_here_and_removes_from_device(tmp_path):
 
 def test_delete_missing_file_is_a_noop(tmp_path):
     _shell, root = _make_tree()
-    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
     t.delete("outbox/does_not_exist.m4a")  # must not raise
 
 
@@ -389,7 +427,7 @@ def test_delete_discard_staging_does_not_accumulate():
     outbox.add_file("rec_e.m4a", b"e" * 64)
     outbox.add_file("rec_f.m4a", b"f" * 64)
 
-    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
     t.delete("outbox/rec_e.m4a")
     t.delete("outbox/rec_f.m4a")
 
@@ -407,7 +445,7 @@ def test_list_files_recurses_with_relative_names_and_sizes():
     meetings = root.ParseName("library").GetFolder.ParseName("meetings").GetFolder
     meetings.add_file("1.json", b"1234")
 
-    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
 
     lib_files = {f.name: f.size for f in t.list_files("library")}
     assert lib_files == {"library/meetings/1.json": 4}
@@ -416,9 +454,24 @@ def test_list_files_recurses_with_relative_names_and_sizes():
     assert outbox_files == {"outbox/a.json": 2, "outbox/b.m4a": 5}
 
 
+def test_list_files_uses_true_filename_when_display_name_is_stripped():
+    # Spike doc B2 (device-verified): with Explorer's "hide known
+    # extensions" on, item.Name is extension-less. If list_files built
+    # RemoteFile.name from item.Name, the engine's endswith(".m4a") match
+    # in run_sync would find nothing to import.
+    _shell, root = _make_tree()
+    outbox = root.ParseName("outbox").GetFolder
+    outbox.add_file("rec_a.m4a", b"xxxxx", strip_ext=True)
+
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
+
+    outbox_files = {f.name: f.size for f in t.list_files("outbox")}
+    assert outbox_files == {"outbox/rec_a.m4a": 5}
+
+
 def test_list_files_missing_prefix_returns_empty():
     _shell, root = _make_tree()
-    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
     assert t.list_files("does/not/exist") == []
 
 
@@ -430,7 +483,7 @@ def test_list_files_missing_prefix_returns_empty():
 ])
 def test_operations_reject_invalid_names(tmp_path, bad):
     _shell, root = _make_tree()
-    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
     src = tmp_path / "f.txt"
     src.write_bytes(b"x")
 
@@ -453,8 +506,30 @@ def test_operations_reject_invalid_names(tmp_path, bad):
 
 def test_close_cleans_up_tempdir():
     _shell, root = _make_tree()
-    t = MtpTransport(root, poll_interval=0.001, timeout=1.0)
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: None)
     tmp_dir = Path(t._tmp)
     assert tmp_dir.exists()
     t.close()
     assert not tmp_dir.exists()
+
+
+# --- async STA pump (B1) ----------------------------------------------------
+
+
+def test_wait_invokes_injected_pump_once_per_poll_iteration(tmp_path):
+    # Spike doc B1 (device-verified): async CopyHere/MoveHere only advance
+    # while the calling STA thread pumps messages. _wait can't prove that
+    # against a fake (there's no real COM async op to advance), but it must
+    # provably call the injected pump on every iteration -- this is what
+    # lets the real pythoncom.PumpWaitingMessages() default do its job.
+    _shell, root = _make_tree(outbox_latency=3)
+    src = tmp_path / "slow.m4a"
+    src.write_bytes(b"pump-me")
+
+    calls = []
+    t = MtpTransport(root, poll_interval=0.001, timeout=1.0, pump=lambda: calls.append(None))
+    t.push(src, "outbox/slow.m4a")
+
+    # Landing takes 3 _settle() calls (one per predicate check), and the
+    # pump runs before each predicate check -- so at least 3 pump calls.
+    assert len(calls) >= 3

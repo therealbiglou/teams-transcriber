@@ -64,10 +64,37 @@ class MtpStaleSession(RuntimeError):
 
 
 def _dispatch_shell():
+    # CopyHere/MoveHere are asynchronous; without the calling thread being
+    # CoInitialize'd STA, the async op silently no-ops from a plain worker
+    # thread (spike doc B1, device-verified). Idempotent -- CoInitialize
+    # returns S_FALSE if this thread is already inited (e.g. the Qt main
+    # thread), which is fine to ignore.
+    try:
+        import pythoncom
+
+        pythoncom.CoInitialize()
+    except Exception:
+        pass
+
     import win32com.client  # imported lazily: keeps this module importable
     # without pywin32 (non-Windows / CI test environments).
 
     return win32com.client.Dispatch("Shell.Application")
+
+
+def _pump_messages() -> None:
+    """Pump the calling thread's Windows message queue once. Async Shell
+    ops (CopyHere/MoveHere) only advance while their originating STA thread
+    pumps messages (spike doc B1) -- every `_wait` poll iteration must call
+    this before checking its predicate. Safe no-op if pythoncom is
+    unavailable or the thread isn't CoInitialized.
+    """
+    try:
+        import pythoncom
+
+        pythoncom.PumpWaitingMessages()
+    except Exception:
+        pass
 
 
 def _require_wpd_service() -> None:
@@ -92,6 +119,22 @@ def _require_wpd_service() -> None:
             hint="Start the 'Portable Device Enumerator Service' (WPDBusEnum) "
                  "— run 'Start-Service WPDBusEnum' as admin.",
         )
+
+
+def _item_filename(item: Any) -> str:
+    """The item's true on-disk filename, extension included.
+
+    With Explorer's "hide known extensions" on, `item.Name` returns the
+    extension-stripped display name (`rec_abc` for `rec_abc.m4a`) while the
+    real file keeps its extension (spike doc B2, device-verified). The
+    `System.FileName` extended property returns the true name; fall back to
+    `.Name` if the property is missing or the call fails.
+    """
+    try:
+        name = item.ExtendedProperty("System.FileName")
+    except Exception:
+        name = None
+    return name if name else item.Name
 
 
 def find_phone_root(shell=None) -> _ComFolder:
@@ -151,10 +194,18 @@ class MtpTransport:
     end of a sync cycle.
     """
 
-    def __init__(self, root: _ComFolder, *, poll_interval: float = 0.2, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        root: _ComFolder,
+        *,
+        poll_interval: float = 0.2,
+        timeout: float = 30.0,
+        pump: Callable[[], None] | None = None,
+    ) -> None:
         self._root = root
         self.poll_interval = poll_interval
         self.timeout = timeout
+        self._pump = pump if pump is not None else _pump_messages
         self._shell = root.Application
         self._tmpdir = tempfile.TemporaryDirectory(prefix="tt-mtp-")
         self._tmp = self._tmpdir.name
@@ -189,7 +240,9 @@ class MtpTransport:
         local_folder.CopyHere(item)
         # CopyHere keeps the source item's name -- rename to the caller's
         # requested dest filename if it differs from the remote leaf name.
-        arrived = dest.parent / item.Name
+        # Use the true filename (B2), not item.Name, which is extension-
+        # stripped when Explorer hides known extensions.
+        arrived = dest.parent / _item_filename(item)
         self._wait(
             lambda: arrived.exists(),
             f"pulled {name} never arrived locally",
@@ -251,6 +304,9 @@ class MtpTransport:
     def _wait(self, predicate: Callable[[], bool], message: str) -> None:
         deadline = time.monotonic() + self.timeout
         while True:
+            # Pump before checking -- async CopyHere/MoveHere only advance
+            # while their originating STA thread pumps messages (spike B1).
+            self._pump()
             if predicate():
                 return
             if time.monotonic() >= deadline:
@@ -325,7 +381,11 @@ class MtpTransport:
 
     def _walk(self, folder: _ComFolder, rel_prefix: str, out: list[RemoteFile]) -> None:
         for item in folder.Items():
-            rel_name = f"{rel_prefix}/{item.Name}" if rel_prefix else item.Name
+            # True filename (B2) -- item.Name is extension-stripped when
+            # Explorer hides known extensions, which would break the
+            # engine's endswith(".m4a")/(".json") matching downstream.
+            item_name = _item_filename(item)
+            rel_name = f"{rel_prefix}/{item_name}" if rel_prefix else item_name
             if item.IsFolder:
                 self._walk(item.GetFolder, rel_name, out)
             else:
