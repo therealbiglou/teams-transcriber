@@ -88,6 +88,7 @@ def test_other_5xx_raises_api_error():
 
 def test_list_spaces():
     def handler(request):
+        assert request.method == "GET"
         assert request.url.path == "/api/v4/spaces"
         return httpx.Response(200, json={"data": [{"id": "sp1", "title": "Team"}]})
     client = _client(handler)
@@ -97,11 +98,13 @@ def test_list_spaces():
 def test_create_project_sets_project_field():
     seen = {}
     def handler(request):
+        seen["method"] = request.method
         seen["path"] = request.url.path
         seen["body"] = json.loads(request.content)
         return httpx.Response(200, json={"data": [{"id": "prj1", "permalink": "https://wrike/open.htm?id=1"}]})
     client = _client(handler)
     out = client.create_project("parent1", "Q3 sync", "the description")
+    assert seen["method"] == "POST"
     assert seen["path"] == "/api/v4/folders/parent1/folders"
     assert seen["body"]["title"] == "Q3 sync"
     assert seen["body"]["description"] == "the description"
@@ -125,12 +128,14 @@ def test_update_project_description():
 def test_upload_attachment_sends_raw_body_and_filename_header():
     seen = {}
     def handler(request):
+        seen["method"] = request.method
         seen["path"] = request.url.path
         seen["name"] = request.headers.get("X-File-Name")
         seen["content"] = request.content
         return httpx.Response(200, json={"data": [{"id": "att9"}]})
     client = _client(handler)
     att_id = client.upload_attachment("prj1", "transcript.md", b"# hi\nbody")
+    assert seen["method"] == "POST"
     assert seen["path"] == "/api/v4/folders/prj1/attachments"
     assert seen["name"] == "transcript.md"
     assert seen["content"] == b"# hi\nbody"
