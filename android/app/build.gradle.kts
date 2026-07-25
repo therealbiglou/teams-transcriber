@@ -49,4 +49,9 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     testImplementation(libs.junit)
+    // Android's org.json is a compile-only stub that throws at runtime in plain JVM unit
+    // tests (no Robolectric here — sync/ stays pure JVM-testable). The real org.json jar
+    // sits ahead of the mockable android.jar on the unit-test classpath, so JSONObject
+    // actually works for round-tripping Sidecar.toJson() in tests.
+    testImplementation(libs.org.json)
 }
