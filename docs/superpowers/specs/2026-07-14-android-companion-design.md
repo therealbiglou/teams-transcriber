@@ -1,7 +1,12 @@
 # Android Companion — Design
 
 **Date:** 2026-07-14
-**Status:** Approved by Brian (brainstorm 2026-07-13/14)
+**Status:** Approved by Brian (brainstorm 2026-07-13/14).
+**Updated 2026-07-25:** Phases 1–3 shipped. **Phase 4 (Android library UI) is
+dropped** — the Wrike project export supersedes it; see Phasing below. The phone
+records; Wrike is where meetings are reviewed. Sections describing the phone-side
+library mirror (Purpose, the `library/` half of the sync contract, the Library UI
+component) are retained for reference but describe unbuilt/idle functionality.
 
 ## Purpose
 
@@ -147,11 +152,35 @@ notification access (special grant, for TeamsCallWatcher only).
 
 1. **Desktop sync engine** — contract, `LocalDirTransport`, import/toggle/
    export/ack logic, UID ledger migration, tests. Immediately usable with
-   any folder-sync tool.
+   any folder-sync tool. ✅ **Shipped** (merge `33c91e8`).
 2. **Desktop USB experience** — `MtpTransport` spike + implementation,
-   device watcher, settings UI.
+   device watcher, settings UI. ✅ **Shipped** (merge `0a5839b`).
 3. **Android recorder** — manual + Teams auto-record, outbox writing.
+   ✅ **Shipped** (merge `7a43e62`), on-device verified.
 4. **Android library** — full-mirror UI + todo toggles.
+   ❌ **DROPPED 2026-07-25 (Brian).** Superseded by the Wrike project export
+   (Phase 17). Every meeting now becomes a Wrike project — summary as the
+   description, transcript as an attachment, todos/follow-ups/action items as
+   checkable tasks — so the **Wrike mobile app already provides the phone-side
+   library**, and over the network rather than only at USB-sync time. Building a
+   second, staler read-only mirror isn't worth it.
+
+   *Accepted losses:* chat history and local full-text transcript search stay
+   desktop-only (neither is exported to Wrike); offline-without-signal browsing
+   is lost (Wrike mobile needs connectivity).
+
+   *Consequence:* the desktop→phone half of the sync contract — the `library/`
+   export and `changes.json` (todo-toggle) handling — now has no consumer. It is
+   **left in place** intentionally: it is built, tested, and inert, and the
+   phone→desktop `outbox` direction (pulling Phase 3 recordings for processing)
+   remains essential. Strip it only if it ever becomes a maintenance burden.
+   Note also that phone-side todo toggles would no longer reach Wrike regardless:
+   Phase 17 deliberately removed the Wrike done-state close-loop (create-once,
+   hands-off), so todos are completed in Wrike itself.
+
+**The Android companion is therefore feature-complete as a recorder:** record on
+the phone → desktop transcribes and summarizes → everything lands in Wrike, which
+is where it is reviewed (desktop or phone).
 
 ## Out of scope (this design)
 
