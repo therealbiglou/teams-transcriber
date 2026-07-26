@@ -87,15 +87,24 @@ class RecordingService : Service() {
     }
 
     private fun disarm() {
-        armed = false // so finishCapture()'s not-armed branch fully tears down
-        if (RecordingBus.state.value.active) {
-            finishCapture()
-        } else {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
-        }
+        // Stop listening for Teams calls first, so nothing can start a capture mid-teardown.
         commandJob?.cancel()
         commandJob = null
+        armed = false // so finishCapture()'s not-armed branch fully tears down
+
+        val status = RecordingBus.state.value
+        when {
+            // An auto-started Teams capture belongs to auto-record: end (and save) it.
+            status.active && status.source == RecordingSource.TEAMS_CALL -> finishCapture()
+            // A MANUAL recording is the user's, not auto-record's — turning the toggle off
+            // must not cut it short. Keep capturing; the service stays foreground for it and
+            // tears down via finishCapture()'s not-armed branch when the user hits Stop.
+            status.active -> Unit
+            else -> {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
+        }
     }
 
     private suspend fun onCommand(command: AutoRecordCommand) {
