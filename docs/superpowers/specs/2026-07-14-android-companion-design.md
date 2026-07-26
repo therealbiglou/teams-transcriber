@@ -1,12 +1,23 @@
 # Android Companion — Design
 
 **Date:** 2026-07-14
-**Status:** Approved by Brian (brainstorm 2026-07-13/14).
-**Updated 2026-07-25:** Phases 1–3 shipped. **Phase 4 (Android library UI) is
-dropped** — the Wrike project export supersedes it; see Phasing below. The phone
-records; Wrike is where meetings are reviewed. Sections describing the phone-side
-library mirror (Purpose, the `library/` half of the sync contract, the Library UI
-component) are retained for reference but describe unbuilt/idle functionality.
+**Status:** ABANDONED (2026-07-25). On-device testing showed Android silences
+the app's own microphone capture while Teams holds the mic during a call, so
+phone-side Teams call recording produces silent audio files and empty
+transcripts — defeating the feature's entire purpose. The user has moved to
+Teams' own built-in meeting recording, imported into the desktop app via its
+existing `.vtt`/`.srt`/`.txt`/`.md` transcript import and audio-file import.
+The Android app (`android/`) and the desktop's `phone_sync` subsystem have
+been deleted from `main`; both are fully recoverable from git history if
+ever revisited. The rest of this document is kept as a historical record of
+the design and is no longer current.
+
+**Updated 2026-07-25 (superseded by the above):** Phases 1–3 shipped. **Phase
+4 (Android library UI) is dropped** — the Wrike project export supersedes it;
+see Phasing below. The phone records; Wrike is where meetings are reviewed.
+Sections describing the phone-side library mirror (Purpose, the `library/`
+half of the sync contract, the Library UI component) are retained for
+reference but describe unbuilt/idle functionality.
 
 ## Purpose
 

@@ -36,7 +36,7 @@ from teams_transcriber.config import (
 )
 from teams_transcriber.paths import AppPaths
 from teams_transcriber.ui.frameless import FramelessWindowMixin
-from teams_transcriber.ui.labels import make_selectable, make_wrapping
+from teams_transcriber.ui.labels import make_selectable
 from teams_transcriber.ui.title_bar import TitleBar
 
 
@@ -63,33 +63,6 @@ def _group_folders_by_space(
         else:
             grouped[space["id"]] = list(folders)
     return grouped
-
-
-def _phone_sync_status_text(raw: dict) -> str:
-    """Format integrations.phone_sync_last (UTC ISO timestamp) into a
-    human-readable, local-time status line for the Settings dialog.
-
-    Runs unguarded inside SettingsDialog.__init__, so it must never raise —
-    a corrupted settings file must degrade to a sane string, not brick the
-    dialog. Every field is shape-checked before use.
-    """
-    integrations = raw.get("integrations") if isinstance(raw, dict) else None
-    last = integrations.get("phone_sync_last") if isinstance(integrations, dict) else None
-    if not isinstance(last, dict) or not last:
-        return "Never synced"
-
-    at = last.get("at")
-    try:
-        from datetime import datetime
-        when = datetime.fromisoformat(at).astimezone().strftime("%Y-%m-%d %H:%M")
-    except (ValueError, TypeError):
-        # Non-string or unparseable timestamp: show it raw rather than crash.
-        when = str(at) if at is not None else ""
-    summary = str(last.get("summary") or "")
-
-    if last.get("ok"):
-        return f"Last sync: {when} — {summary}"
-    return f"Sync failed ({when}): {summary}"
 
 
 def _enumerate_microphones() -> list:
@@ -394,22 +367,6 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
             )
         )
         form.addRow("", self.wrike_llm_assignee_cb)
-
-        # Phone sync.
-        form.addRow(QLabel(""))
-        self.phone_sync_enable_cb = QCheckBox(
-            "Sync my phone automatically when it's plugged in (USB file transfer)"
-        )
-        self.phone_sync_enable_cb.setChecked(
-            bool(self._settings._raw.get("integrations", {}).get("phone_sync_enabled", False))
-        )
-        form.addRow("", self.phone_sync_enable_cb)
-
-        self.phone_sync_status_label = make_wrapping(
-            make_selectable(QLabel(_phone_sync_status_text(self._settings._raw)))
-        )
-        self.phone_sync_status_label.setTextFormat(Qt.TextFormat.PlainText)
-        form.addRow("", self.phone_sync_status_label)
         return w
 
     def _wrike_test_connection(self) -> None:
@@ -747,7 +704,6 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
             integ["wrike_parent_id"] = self._chosen_parent[0]
             integ["wrike_parent_label"] = self._chosen_parent[1]
         integ["wrike_llm_assignee_fallback"] = self.wrike_llm_assignee_cb.isChecked()
-        integ["phone_sync_enabled"] = self.phone_sync_enable_cb.isChecked()
 
         save_settings(self._paths, s)
 

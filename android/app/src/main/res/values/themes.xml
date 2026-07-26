@@ -1,6 +1,0 @@
-<resources>
-    <!-- Compose owns the visual theme (MaterialTheme); this is just the
-         window/launch theme, using a platform parent so no XML Material
-         components dependency is required. -->
-    <style name="Theme.TTCompanion" parent="android:Theme.Material.Light.NoActionBar" />
-</resources>

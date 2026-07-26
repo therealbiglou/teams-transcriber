@@ -2,8 +2,7 @@
 
 todo_state keeps rows for indices beyond a shrunk my_todos (seed never
 prunes on re-summarization); the history chip's done count must be bound
-to the CURRENT summary's todo count, mirroring the fix already applied to
-phone_sync/library_export.py's todos_done.
+to the CURRENT summary's todo count.
 """
 
 from __future__ import annotations

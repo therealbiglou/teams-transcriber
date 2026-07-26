@@ -27,7 +27,6 @@ from teams_transcriber.storage.models import (
     TodoState,
     TranscriptSegment,
 )
-from teams_transcriber.storage.phone import PhoneImportRepo
 from teams_transcriber.storage.recordings import RecordingRepo
 from teams_transcriber.storage.retention import AudioRetentionPruner, PruneReport
 from teams_transcriber.storage.chat import ChatMessage, ChatRepo
@@ -70,7 +69,6 @@ __all__ = [
     "ALL_MIGRATIONS",
     "ChatMessage",
     "ChatRepo",
-    "PhoneImportRepo",
     "SCHEMA_V1",
     "SCHEMA_V5",
     "SCHEMA_V6",

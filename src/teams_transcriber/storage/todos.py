@@ -83,10 +83,9 @@ class TodoStateRepo:
         timestamp instead of wall-clock now() — for both `done_at` (only
         when `done` is True; `done_at` is None whenever `done` is False,
         unchanged) and `toggled_at` (stamped on EVERY call, done or undone).
-        It exists so phone-sync's last-write-wins compares phone timestamps
-        against phone timestamps — stamping wall-clock time would wrongly
-        stale a later toggle for the same todo arriving in the same
-        changes.json batch.
+        It exists so a last-write-wins caller can compare source timestamps
+        against source timestamps — stamping wall-clock time would wrongly
+        stale a later toggle for the same todo arriving in the same batch.
 
         `toggled_at` is a durable LWW baseline (schema v8): unlike
         `done_at`, it is never cleared when a todo is un-checked, so a

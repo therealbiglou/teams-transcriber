@@ -97,6 +97,6 @@ class TodoState:
     # Stamped on EVERY mark_done call (done or undone) -- unlike done_at,
     # which is cleared when the todo is un-checked, toggled_at survives
     # un-checking so it remains a durable last-write-wins baseline for
-    # phone-sync (see phone_sync/sync.py). None for rows never touched
-    # via mark_done/upsert since schema v8 added this column.
+    # cross-device sync callers. None for rows never touched via
+    # mark_done/upsert since schema v8 added this column.
     toggled_at: str | None = None

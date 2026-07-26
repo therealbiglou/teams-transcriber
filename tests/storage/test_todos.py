@@ -179,8 +179,8 @@ def test_mark_done_override_sets_both(db: Database, recording_id: int) -> None:
     assert item.toggled_at == "2026-07-24T10:00:00+00:00"
 
     # done=False WITH an override: done_at stays None (unchanged semantics)
-    # but toggled_at takes the override value -- this is exactly what
-    # phone-sync's engine needs when applying a phone "undone" toggle.
+    # but toggled_at takes the override value -- this is what a last-write-
+    # wins sync caller needs when applying an "undone" toggle from elsewhere.
     repo.mark_done(
         recording_id, todo_index=0, done=False,
         done_at_override="2026-07-24T11:00:00+00:00",

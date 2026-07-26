@@ -6,7 +6,6 @@ import logging
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime
 
 import numpy as np
 
@@ -77,7 +76,6 @@ class Pipeline:
         """The Database this pipeline was wired with.
 
         Public so callers that need a repo/db handle alongside the pipeline
-        (e.g. cli.py's phone-sync command, which hands the db to run_sync)
         don't have to reach into the private attribute -- mirrors how
         ui/app.py keeps its own `self.db` next to `self.pipeline`.
         """
@@ -112,22 +110,6 @@ class Pipeline:
         from pathlib import Path
         from teams_transcriber.audio.importer import import_audio_file
         rid = import_audio_file(Path(src_path), db=self._db, paths=self._paths)
-        self._submit_post_processing(rid)
-        return rid
-
-    def import_phone_recording(
-        self, src_path: str, *, title: str | None, started_at: datetime | None,
-    ) -> int:
-        """Import a phone-recorded file with sidecar metadata and enqueue
-        post-processing. Same flow as import_audio_file, but the title and
-        start time come from the phone's sidecar instead of the filename.
-        """
-        from pathlib import Path
-        from teams_transcriber.audio.importer import import_audio_file
-        rid = import_audio_file(
-            Path(src_path), db=self._db, paths=self._paths,
-            title=title, started_at_override=started_at,
-        )
         self._submit_post_processing(rid)
         return rid
 
