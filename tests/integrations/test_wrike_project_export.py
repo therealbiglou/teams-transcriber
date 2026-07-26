@@ -312,3 +312,50 @@ def test_new_todo_added_on_repush(db_seeded):
     assert len(tasks) == 3
     kinds = {(t.kind, t.todo_index) for t in tasks}
     assert kinds == {("my", 0), ("my", 1), ("my", 2)}
+
+
+def test_task_contexts_set_description_only_when_supplied(db_seeded):
+    db = db_seeded
+    rid = _seed_recording(
+        db,
+        my_todos=[TodoItem(task="Do A"), TodoItem(task="Do B")],
+        action_items_others=[ActionItemOther(who="Sam", task="Send doc")],
+        follow_ups=["Revisit pricing"],
+    )
+    fake = FakeClient()
+
+    report = export_recording(
+        db, fake, rid, parent_id="P", assignees={0: "c-sam"},
+        task_contexts={
+            ("my", 0): "You committed to Do A after the demo.",
+            ("follow_up", 0): "Pricing needs a second look next quarter.",
+        },
+    )
+
+    assert report.failures == []
+    payload_by_title = {p["title"]: p for _folder, p in fake.create_task_calls}
+
+    assert payload_by_title["Do A"]["description"] == "You committed to Do A after the demo."
+    assert payload_by_title["Revisit pricing"]["description"] == (
+        "Pricing needs a second look next quarter."
+    )
+    # No context supplied for these two -> no description key at all.
+    assert "description" not in payload_by_title["Do B"]
+    assert "description" not in payload_by_title["Sam: Send doc"]
+
+
+def test_task_contexts_none_means_no_descriptions_anywhere(db_seeded):
+    db = db_seeded
+    rid = _seed_recording(
+        db,
+        my_todos=[TodoItem(task="Do A")],
+        action_items_others=[],
+        follow_ups=[],
+    )
+    fake = FakeClient()
+
+    report = export_recording(db, fake, rid, parent_id="P", assignees={})
+
+    assert report.failures == []
+    payload = fake.create_task_calls[0][1]
+    assert "description" not in payload

@@ -1023,6 +1023,33 @@ class App:
             llm_fallback=llm_enabled and bool(anthropic_key),
         )
 
+    def _build_wrike_task_contexts(self, recording_id: int) -> dict[tuple[str, int], str] | None:
+        """One batched Claude call generating a transcript-grounded context
+        blurb per exported to-do/action-item/follow-up (see
+        ``integrations/wrike_task_context.py``). Returns None on ANY failure
+        (no API key, network error, ...) -- tasks are then created with no
+        description, exactly as before this feature existed.
+        """
+        from teams_transcriber.integrations.wrike_task_context import build_task_contexts
+        from teams_transcriber.storage import SummaryRepo, TranscriptRepo
+
+        try:
+            anthropic_key = self._anthropic_key()
+            if not anthropic_key:
+                return None
+            summary = SummaryRepo(self.db).get(recording_id)
+            if summary is None:
+                return None
+            segments = TranscriptRepo(self.db).list_for_recording(recording_id)
+            import anthropic
+            client = anthropic.Anthropic(api_key=anthropic_key)
+            return build_task_contexts(
+                client, summary=summary, segments=segments, model=self.settings.ai_model,
+            )
+        except Exception:
+            logger.exception("wrike task-context generation failed for %d", recording_id)
+            return None
+
     def _wrike_export_worker(self, recording_id: int) -> None:
         """Worker thread: build+run the Wrike project export, then hop a
         toast (success/failure/partial) back to the main thread.
@@ -1059,8 +1086,10 @@ class App:
                 client = WrikeClient(token=token)
                 try:
                     assignees = self._resolve_wrike_assignees(recording_id, client)
+                    task_contexts = self._build_wrike_task_contexts(recording_id)
                     report = export_recording(self.db, client, recording_id,
-                                               parent_id=parent_id, assignees=assignees)
+                                               parent_id=parent_id, assignees=assignees,
+                                               task_contexts=task_contexts)
                 except WrikeApiError as exc:
                     WrikeSyncRepo(self.db).update(recording_id, status="failed", error_message=str(exc))
                     QTimer.singleShot(0, self.window, lambda e=str(exc): show_in_app_toast("Wrike sync failed", e))

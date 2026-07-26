@@ -16,6 +16,7 @@ from typing import Any, Protocol
 
 from teams_transcriber.integrations.wrike_project_body import (
     build_description,
+    build_task_description,
     build_transcript_md,
 )
 from teams_transcriber.storage.db import Database
@@ -77,6 +78,7 @@ def _due_date(raw: str | None) -> str | None:
 def export_recording(
     db: Database, client: _ClientProto, recording_id: int,
     *, parent_id: str, assignees: dict[int, str | None],
+    task_contexts: dict[tuple[str, int], str] | None = None,
 ) -> ExportReport:
     report = ExportReport()
     rec = RecordingRepo(db).get(recording_id)
@@ -141,6 +143,9 @@ def export_recording(
         payload: dict[str, Any] = {"title": name}
         if assignee:
             payload["responsibles"] = [assignee]
+        context = (task_contexts or {}).get((kind, index))
+        if context:
+            payload["description"] = build_task_description(context)
         d = _due_date(due)
         if d:
             # A single-day Planned task carries a real Wrike due date; a due-only

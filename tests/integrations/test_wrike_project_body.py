@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from teams_transcriber.integrations.wrike_project_body import (
     build_description,
+    build_task_description,
     build_transcript_md,
 )
 from teams_transcriber.storage.models import Channel, Summary, TranscriptSegment
@@ -62,3 +63,12 @@ def test_transcript_md_formats_channel_and_timestamp():
 
 def test_transcript_md_empty():
     assert build_transcript_md([]) == "# Transcript\n\n_(no transcript)_"
+
+
+def test_task_description_escapes_html_and_converts_newlines():
+    out = build_task_description("Line 1\nLine 2 with <tag> & ampersand")
+    assert out == "Line 1<br/>Line 2 with &lt;tag&gt; &amp; ampersand"
+
+
+def test_task_description_plain_text_is_unchanged():
+    assert build_task_description("A short context blurb.") == "A short context blurb."
