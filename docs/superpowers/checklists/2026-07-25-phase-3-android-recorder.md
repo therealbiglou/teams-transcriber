@@ -106,5 +106,26 @@ background FGS start occurs. Reinstall and verify:
 - **Manual while armed:** with auto-record on, do a manual voice-memo record → it should capture and
   save a normal pair, then the notification reverts to "Watching for Teams calls" (service stays armed).
 - Still pending from run 1: item 3 (in-person), item 6 (failure-not-silent), item 7 (desktop USB round-trip).
-- **Open product question (minor #3):** toggling auto-record OFF while a *manual* recording is in
-  progress currently finishes+saves it — decide whether disarm should instead leave it running.
+- ~~Open product question (minor #3)~~ **RESOLVED 2026-07-25 (commit `3529d2d`):** disarm no longer
+  cuts short a manual recording. Spot-check when convenient: start a voice memo, toggle auto-record
+  OFF mid-recording → recording continues (notification still "Recording — Voice memo"); press Stop
+  → the pair saves and the service stops. Toggling OFF during an auto-started Teams capture still
+  ends and saves that capture.
+
+## Run 2 results (2026-07-25, build 57b30b0) — auto-record PASS
+
+- **Arm:** app launch re-armed from the foreground → mic FGS (type `0x80`), persistent
+  "Watching for Teams calls" notification, no crash. ✅
+- **Auto-capture a real Teams meeting:** notification swapped to Recording, captured, auto-stopped
+  on meeting end, wrote `rec_16fe38fbd001.m4a` (390390 B ≈ 64 kbps / 49 s) +
+  `{"source":"teams_call","started_at":"2026-07-25T21:25:49+00:00",…}`. **No SecurityException —
+  the run-1 blocker is resolved.** ✅
+- **Teams notification shape confirmed:** `pkg=com.microsoft.teams`,
+  `channel=com.microsoft.teams.CallsOngoing`, `category=call`, `flags=ONGOING_EVENT` — the detector
+  matched with no tuning needed. ✅
+- **Manual while armed:** voice memo saved `rec_175dfd37cc9b` (`source":"memo"`) and the service
+  stayed foreground/armed. ✅
+- **Disarm:** toggle OFF → service stopped, "Watching" notification cleared, pref persisted false. ✅
+- Test recordings cleared from the phone afterward.
+- Still not run (non-blocking): item 3 (in-person — same code path as memo), item 6
+  (failure-not-silent), item 7 (desktop USB round-trip).
