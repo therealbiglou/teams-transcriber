@@ -95,6 +95,25 @@ def test_list_spaces():
     assert client.list_spaces() == [{"id": "sp1", "title": "Team"}]
 
 
+def test_get_folder_returns_single_dict_with_child_ids():
+    def handler(request):
+        assert request.method == "GET"
+        assert request.url.path == "/api/v4/folders/sp1"
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "sp1", "title": "Team", "childIds": ["f1", "f2"]}]},
+        )
+    client = _client(handler)
+    out = client.get_folder("sp1")
+    assert out == {"id": "sp1", "title": "Team", "childIds": ["f1", "f2"]}
+
+
+def test_get_folder_returns_empty_dict_when_no_data():
+    def handler(request): return httpx.Response(200, json={"data": []})
+    client = _client(handler)
+    assert client.get_folder("missing") == {}
+
+
 def test_create_project_sets_project_field():
     seen = {}
     def handler(request):

@@ -148,45 +148,107 @@ def test_old_auto_send_todos_checkbox_is_gone(qapp, paths):
     assert "wrike_project_export_cb" in src
 
 
-def test_group_folders_by_space_uses_child_ids_when_present():
+def test_group_folders_by_space_uses_real_space_child_ids():
     from teams_transcriber.ui.settings_dialog import _group_folders_by_space
 
-    spaces = [
-        {"id": "sp1", "title": "Team", "childIds": ["f1"]},
-        {"id": "sp2", "title": "Personal", "childIds": ["f2"]},
-    ]
+    space_child_ids = {"sp1": ["f1"], "sp2": ["f2"]}
     folders = [{"id": "f1", "title": "Meetings"}, {"id": "f2", "title": "Notes"}]
 
-    grouped = _group_folders_by_space(spaces, folders)
+    grouped = _group_folders_by_space(space_child_ids, folders)
 
     assert grouped == {"sp1": [{"id": "f1", "title": "Meetings"}],
                        "sp2": [{"id": "f2", "title": "Notes"}]}
 
 
-def test_group_folders_by_space_falls_back_when_child_ids_absent():
+def test_group_folders_by_space_with_no_children_yields_empty_list():
+    # A space with no children must yield [], never "every folder in the
+    # account" — that global fallback is exactly the bug this replaces.
     from teams_transcriber.ui.settings_dialog import _group_folders_by_space
 
-    spaces = [{"id": "sp1", "title": "Team"}]  # no childIds
+    space_child_ids = {"sp1": []}
     folders = [{"id": "f1", "title": "Meetings"}, {"id": "f2", "title": "Notes"}]
 
-    grouped = _group_folders_by_space(spaces, folders)
+    grouped = _group_folders_by_space(space_child_ids, folders)
 
-    assert grouped == {"sp1": folders}
+    assert grouped == {"sp1": []}
+    assert grouped["sp1"] != folders
 
 
-def test_group_folders_by_space_mixed_child_ids_per_space():
-    # The case the old global fallback broke: one space with childIds, one
-    # without. The childId space gets its subset; the childless space gets
-    # all folders (not an empty list).
+def test_folder_from_another_space_never_appears_under_a_space():
+    # The regression, stated explicitly: space A's subtree has a folder
+    # titled "Meetings"; space B's subtree has a *different* folder also
+    # titled "Meetings". A's list must contain only A's folder id, and B's
+    # folder must never leak into A's list (this is what the old
+    # childIds-on-/spaces fallback did — it showed every folder in the
+    # account under every space).
     from teams_transcriber.ui.settings_dialog import _group_folders_by_space
 
-    spaces = [
-        {"id": "sp1", "title": "Team", "childIds": ["f1"]},
-        {"id": "sp2", "title": "Personal"},  # no childIds
+    space_child_ids = {
+        "spA": ["fA_meetings"],
+        "spB": ["fB_admin"],
+    }
+    folders = [
+        {"id": "fA_meetings", "title": "Meetings"},
+        {"id": "fB_admin", "title": "Admin", "childIds": ["fB_meetings"]},
+        {"id": "fB_meetings", "title": "Meetings"},
     ]
-    folders = [{"id": "f1", "title": "Meetings"}, {"id": "f2", "title": "Notes"}]
 
-    grouped = _group_folders_by_space(spaces, folders)
+    grouped = _group_folders_by_space(space_child_ids, folders)
 
-    assert grouped["sp1"] == [{"id": "f1", "title": "Meetings"}]
-    assert grouped["sp2"] == folders
+    a_ids = {f["id"] for f in grouped["spA"]}
+    assert a_ids == {"fA_meetings"}
+    assert "fB_meetings" not in a_ids
+    assert "fB_admin" not in a_ids
+
+    b_ids = {f["id"] for f in grouped["spB"]}
+    assert b_ids == {"fB_admin", "fB_meetings"}
+
+
+def test_group_folders_by_space_nested_folder_gets_path_label():
+    from teams_transcriber.ui.settings_dialog import _group_folders_by_space
+
+    space_child_ids = {"sp1": ["admin"]}
+    folders = [
+        {"id": "admin", "title": "Admin", "childIds": ["meetings"]},
+        {"id": "meetings", "title": "Meetings"},
+    ]
+
+    grouped = _group_folders_by_space(space_child_ids, folders)
+
+    titles = {f["id"]: f["title"] for f in grouped["sp1"]}
+    assert titles == {"admin": "Admin", "meetings": "Admin / Meetings"}
+
+
+def test_group_folders_by_space_skips_unknown_child_ids():
+    from teams_transcriber.ui.settings_dialog import _group_folders_by_space
+
+    space_child_ids = {"sp1": ["f1", "ghost"]}
+    folders = [{"id": "f1", "title": "Meetings"}]
+
+    grouped = _group_folders_by_space(space_child_ids, folders)
+
+    assert grouped == {"sp1": [{"id": "f1", "title": "Meetings"}]}
+
+
+def test_group_folders_by_space_missing_child_ids_degrades_to_top_level():
+    from teams_transcriber.ui.settings_dialog import _group_folders_by_space
+
+    space_child_ids = {"sp1": ["f1"]}
+    # Folder present but with no childIds key at all — must not raise, and
+    # must not attempt to descend further.
+    folders = [{"id": "f1", "title": "Meetings"}]
+
+    grouped = _group_folders_by_space(space_child_ids, folders)
+
+    assert grouped == {"sp1": [{"id": "f1", "title": "Meetings"}]}
+
+
+def test_group_folders_by_space_sorted_by_path():
+    from teams_transcriber.ui.settings_dialog import _group_folders_by_space
+
+    space_child_ids = {"sp1": ["z", "a"]}
+    folders = [{"id": "z", "title": "Zulu"}, {"id": "a", "title": "Alpha"}]
+
+    grouped = _group_folders_by_space(space_child_ids, folders)
+
+    assert [f["title"] for f in grouped["sp1"]] == ["Alpha", "Zulu"]

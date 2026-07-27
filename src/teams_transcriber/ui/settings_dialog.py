@@ -41,27 +41,53 @@ from teams_transcriber.ui.title_bar import TitleBar
 
 
 def _group_folders_by_space(
-    spaces: list[dict], folders: list[dict],
+    space_child_ids: dict[str, list[str]], folders: list[dict],
 ) -> dict[str, list[dict]]:
-    """Group top-level Wrike folders under the space they belong to.
+    """Build each space's real folder subtree for the destination picker.
 
-    Best-effort, decided independently per space: if a space carries
-    ``childIds``, its folder list is exactly those folders (by id); if a
-    space lacks ``childIds`` (absent/empty — some Wrike accounts/plans
-    don't return it, and a mixed response can have both kinds), fall back
-    to showing every folder under that space so the picker still has
-    something useful to offer.
+    Wrike's ``GET /spaces`` does not return ``childIds`` at all, so grouping
+    folders by a single global folder list was guesswork — it leaked every
+    folder in the account into every space. The real source of truth is
+    ``GET /folders/{space_id}`` (``WrikeClient.get_folder``), which returns
+    the space's own ``childIds``; the caller fetches that per space and
+    passes the result here as ``space_child_ids``.
+
+    Each space's list is built by walking its subtree: starting from its
+    child ids, descending into each folder's own ``childIds`` (looked up in
+    ``folders``) to pick up nested folders too. A visited set guards against
+    cycles/repeats. Every returned entry has ``id`` and ``title``, where
+    ``title`` is the display path *relative to the space* — top-level
+    "Meetings", nested "Admin / Meetings" — so two folders with the same
+    name in different spaces (or different branches of the same space) are
+    never confused with each other. Folder ids absent from ``folders`` are
+    skipped; folders missing ``childIds`` are simply treated as leaves
+    (no further descent) rather than raising. A space with no children
+    yields an empty list — that is correct, not a fallback to "show
+    everything".
     """
     folders_by_id = {folder["id"]: folder for folder in folders}
     grouped: dict[str, list[dict]] = {}
-    for space in spaces:
-        child_ids = space.get("childIds")
-        if child_ids:
-            grouped[space["id"]] = [
-                folders_by_id[cid] for cid in child_ids if cid in folders_by_id
-            ]
-        else:
-            grouped[space["id"]] = list(folders)
+    for space_id, child_ids in space_child_ids.items():
+        entries: list[dict] = []
+        visited: set[str] = set()
+        stack: list[tuple[str, str]] = [
+            (cid, folders_by_id[cid]["title"])
+            for cid in reversed(child_ids or [])
+            if cid in folders_by_id
+        ]
+        while stack:
+            folder_id, path = stack.pop()
+            if folder_id in visited:
+                continue
+            visited.add(folder_id)
+            entries.append({"id": folder_id, "title": path})
+            folder = folders_by_id[folder_id]
+            for child_id in folder.get("childIds") or []:
+                if child_id in folders_by_id and child_id not in visited:
+                    child_title = folders_by_id[child_id]["title"]
+                    stack.append((child_id, f"{path} / {child_title}"))
+        entries.sort(key=lambda entry: entry["title"])
+        grouped[space_id] = entries
     return grouped
 
 
@@ -426,9 +452,19 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
                 try:
                     spaces = client.list_spaces()
                     folders = client.list_folders()
+                    space_child_ids: dict[str, list[str]] = {}
+                    for space in spaces:
+                        try:
+                            space_folder = client.get_folder(space["id"])
+                            space_child_ids[space["id"]] = space_folder.get("childIds") or []
+                        except Exception:
+                            # One space failing to resolve its tree shouldn't
+                            # break the whole picker — it just offers no
+                            # folders (space root only) for that space.
+                            space_child_ids[space["id"]] = []
                 finally:
                     client.close()
-                folders_by_space = _group_folders_by_space(spaces, folders)
+                folders_by_space = _group_folders_by_space(space_child_ids, folders)
                 result = (spaces, folders_by_space, "")
             except Exception as exc:
                 result = ([], {}, str(exc))

@@ -60,6 +60,16 @@ class WrikeClient:
     def list_folders(self) -> list[dict[str, Any]]:
         return self._request("GET", "/folders")
 
+    def get_folder(self, folder_id: str) -> dict[str, Any]:
+        """GET /folders/{id}. Works for a space id too, returning its childIds.
+
+        Wrike's `/spaces` list endpoint does not include `childIds`, so the
+        destination picker fetches each space's real folder tree through this
+        (space ids and folder ids share the same `/folders/{id}` endpoint).
+        """
+        data = self._request("GET", f"/folders/{folder_id}")
+        return data[0] if data else {}
+
     def list_contacts(self) -> list[dict[str, Any]]:
         return self._request("GET", "/contacts")
 
