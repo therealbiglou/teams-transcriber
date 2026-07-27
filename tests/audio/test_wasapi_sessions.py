@@ -51,3 +51,41 @@ def test_filters_only_active_state(monkeypatch):
         lambda: fake_sessions,
     )
     assert wasapi_sessions.teams_active_capture_pids() == {200}
+
+
+def test_repeated_probe_failures_are_logged_once_not_every_poll(caplog):
+    """A persistent COM failure must not write a line on every ~2s poll.
+
+    Regression: 'Element not found' from GetSpeakers() (no default playback
+    device) spammed a full traceback every poll, burying the whole log.
+    """
+    import logging
+
+    from teams_transcriber.audio import wasapi_sessions as ws
+
+    ws._probe_failure.update(signature=None, last_logged_at=0.0, suppressed=0)
+    exc = OSError("Element not found.")
+    with caplog.at_level(logging.DEBUG, logger=ws.logger.name):
+        for _ in range(50):
+            ws._note_probe_failure(exc)
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1, f"expected 1 warning for 50 identical failures, got {len(warnings)}"
+    assert "no default audio" in warnings[0].getMessage()
+    assert ws._probe_failure["suppressed"] == 49
+
+
+def test_probe_recovery_is_logged_and_resets_state(caplog):
+    import logging
+
+    from teams_transcriber.audio import wasapi_sessions as ws
+
+    ws._probe_failure.update(signature=None, last_logged_at=0.0, suppressed=0)
+    ws._note_probe_failure(OSError("boom"))
+    with caplog.at_level(logging.INFO, logger=ws.logger.name):
+        ws._note_probe_recovered()
+        ws._note_probe_recovered()  # already clear -> silent
+
+    recovered = [r for r in caplog.records if "recovered" in r.getMessage()]
+    assert len(recovered) == 1
+    assert ws._probe_failure["signature"] is None
