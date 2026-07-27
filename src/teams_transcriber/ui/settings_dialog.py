@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 import keyring
@@ -38,6 +39,8 @@ from teams_transcriber.paths import AppPaths
 from teams_transcriber.ui.frameless import FramelessWindowMixin
 from teams_transcriber.ui.labels import make_selectable
 from teams_transcriber.ui.title_bar import TitleBar
+
+logger = logging.getLogger(__name__)
 
 
 def _group_folders_by_space(
@@ -89,6 +92,34 @@ def _group_folders_by_space(
         entries.sort(key=lambda entry: entry["title"])
         grouped[space_id] = entries
     return grouped
+
+
+def _build_project_type_choices(
+    custom_item_types: list[dict], spaces: list[dict],
+) -> list[tuple[str, str]]:
+    """(id, label) pairs for space-scoped custom item types usable as a
+    project's type — ``relatedType == "Project"``, not soft-deleted.
+
+    Custom item types are space-scoped, so the label includes the owning
+    space's name where it can be resolved from ``spaces`` (e.g.
+    ``"Meeting — Brian's Sandbox"``) so the user can tell apart two
+    same-named types living in different spaces. Falls back to the bare
+    title when the space id isn't found. Sorted by title.
+    """
+    space_titles = {s.get("id"): s.get("title") for s in spaces}
+    rows: list[tuple[str, str, str]] = []
+    for t in custom_item_types:
+        if t.get("relatedType") != "Project" or t.get("isDeleted"):
+            continue
+        item_id = t.get("id")
+        title = t.get("title") or ""
+        if not item_id or not title:
+            continue
+        space_title = space_titles.get(t.get("spaceId"))
+        label = f"{title} — {space_title}" if space_title else title
+        rows.append((item_id, label, title))
+    rows.sort(key=lambda r: r[2])
+    return [(item_id, label) for item_id, label, _ in rows]
 
 
 def _enumerate_microphones() -> list:
@@ -376,6 +407,26 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         form.addRow("", self._wrike_choose_dest_btn)
         form.addRow("Destination:", self.wrike_dest_label)
 
+        # Project type (custom item type) — populated lazily by the same
+        # worker that fetches spaces/folders for the destination picker
+        # (custom item types are space-scoped, so it makes sense to fetch
+        # them together). Until that runs (or if it fails), only the
+        # standard-project entry is available.
+        self._custom_item_type_id = integ_raw.get("wrike_custom_item_type_id")
+        self._custom_item_type_label = integ_raw.get("wrike_custom_item_type_label")
+        self.wrike_item_type_combo = QComboBox()
+        self.wrike_item_type_combo.addItem("(Standard project)", userData=None)
+        if self._custom_item_type_id:
+            # Seed the saved choice so it's visible before/if the fetch runs;
+            # replaced (by id) once the fetch completes, or left as-is if the
+            # fetch fails or no longer offers this id.
+            self.wrike_item_type_combo.addItem(
+                self._custom_item_type_label or self._custom_item_type_id,
+                userData=self._custom_item_type_id,
+            )
+            self.wrike_item_type_combo.setCurrentIndex(1)
+        form.addRow("Project type:", self.wrike_item_type_combo)
+
         # LLM-assisted assignee resolution.
         self.wrike_llm_assignee_cb = QCheckBox(
             "Use Claude to suggest assignees for ambiguous names"
@@ -462,12 +513,22 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
                             # break the whole picker — it just offers no
                             # folders (space root only) for that space.
                             space_child_ids[space["id"]] = []
+                    try:
+                        custom_item_types = client.list_custom_item_types()
+                    except Exception:
+                        # Custom item types are a nice-to-have on top of the
+                        # destination picker -- a failure here must not break
+                        # loading destinations, it just leaves the project-type
+                        # combo at "(Standard project)" only.
+                        logger.exception("wrike list_custom_item_types failed")
+                        custom_item_types = []
                 finally:
                     client.close()
                 folders_by_space = _group_folders_by_space(space_child_ids, folders)
-                result = (spaces, folders_by_space, "")
+                type_choices = _build_project_type_choices(custom_item_types, spaces)
+                result = (spaces, folders_by_space, type_choices, "")
             except Exception as exc:
-                result = ([], {}, str(exc))
+                result = ([], {}, [], str(exc))
             QTimer.singleShot(0, self, lambda: self._on_wrike_destinations_fetched(*result))
 
         threading.Thread(target=_worker, daemon=True).start()
@@ -476,9 +537,11 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         self,
         spaces: list[dict],
         folders_by_space: dict[str, list[dict]],
+        type_choices: list[tuple[str, str]],
         error: str,
     ) -> None:
         self._wrike_choose_dest_btn.setEnabled(True)
+        self._populate_wrike_item_type_combo(type_choices)
         if error:
             self.wrike_dest_label.setText(f"Could not load Wrike destinations: {error}")
             return
@@ -500,6 +563,36 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
             self.wrike_dest_label.setText(
                 self._chosen_parent[1] if self._chosen_parent else "No destination chosen"
             )
+
+    def _populate_wrike_item_type_combo(self, type_choices: list[tuple[str, str]]) -> None:
+        """Rebuild the project-type combo from a freshly fetched list.
+
+        Preserves the user's saved selection: if the saved id is present in
+        the fetched list it's selected there (using the freshly-fetched
+        label); if it's absent (deleted, different space fetch, fetch
+        failed, ...) it's kept as a trailing entry using the saved label so
+        the choice isn't silently lost.
+        """
+        combo = self.wrike_item_type_combo
+        previous_id = combo.currentData()
+        combo.blockSignals(True)
+        try:
+            combo.clear()
+            combo.addItem("(Standard project)", userData=None)
+            for item_id, label in type_choices:
+                combo.addItem(label, userData=item_id)
+
+            target_id = previous_id if previous_id is not None else self._custom_item_type_id
+            if target_id:
+                idx = combo.findData(target_id)
+                if idx < 0:
+                    combo.addItem(self._custom_item_type_label or target_id, userData=target_id)
+                    idx = combo.count() - 1
+                combo.setCurrentIndex(idx)
+            else:
+                combo.setCurrentIndex(0)
+        finally:
+            combo.blockSignals(False)
 
     def _build_shortcuts_tab(self) -> QWidget:
         w = QWidget()
@@ -740,6 +833,12 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
             integ["wrike_parent_id"] = self._chosen_parent[0]
             integ["wrike_parent_label"] = self._chosen_parent[1]
         integ["wrike_llm_assignee_fallback"] = self.wrike_llm_assignee_cb.isChecked()
+        integ["wrike_custom_item_type_id"] = self.wrike_item_type_combo.currentData()
+        integ["wrike_custom_item_type_label"] = (
+            self.wrike_item_type_combo.currentText()
+            if self.wrike_item_type_combo.currentData()
+            else None
+        )
 
         save_settings(self._paths, s)
 

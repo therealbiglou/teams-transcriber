@@ -972,7 +972,9 @@ class App:
 
             try:
                 token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
-                parent_id = self.settings._raw.get("integrations", {}).get("wrike_parent_id")
+                integ = self.settings._raw.get("integrations", {})
+                parent_id = integ.get("wrike_parent_id")
+                custom_item_type_id = integ.get("wrike_custom_item_type_id")
                 if not token or not parent_id:
                     logger.warning("wrike export skipped for %d: not configured", recording_id)
                     QTimer.singleShot(0, self.window, lambda: show_in_app_toast(
@@ -990,6 +992,7 @@ class App:
                         self.db, client, recording_id,
                         parent_id=parent_id, assignees=assignees,
                         task_context_provider=lambda: self._build_wrike_task_contexts(recording_id),
+                        custom_item_type_id=custom_item_type_id,
                     )
                 except WrikeApiError as exc:
                     WrikeSyncRepo(self.db).update(recording_id, status="failed", error_message=str(exc))

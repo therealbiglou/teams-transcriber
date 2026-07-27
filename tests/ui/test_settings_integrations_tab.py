@@ -148,6 +148,111 @@ def test_old_auto_send_todos_checkbox_is_gone(qapp, paths):
     assert "wrike_project_export_cb" in src
 
 
+def test_build_project_type_choices_filters_and_labels_with_space_names():
+    from teams_transcriber.ui.settings_dialog import _build_project_type_choices
+
+    spaces = [
+        {"id": "sp1", "title": "Brian's Sandbox"},
+        {"id": "sp2", "title": "Ops"},
+    ]
+    custom_item_types = [
+        {"id": "t1", "title": "Meeting", "relatedType": "Project", "spaceId": "sp1",
+         "isDeleted": False},
+        {"id": "t2", "title": "Project Phase", "relatedType": "Project", "spaceId": "sp2",
+         "isDeleted": False},
+        # Not a Project type -> excluded.
+        {"id": "t3", "title": "User Story", "relatedType": "Task", "spaceId": "sp1",
+         "isDeleted": False},
+        # Deleted -> excluded even though relatedType matches.
+        {"id": "t4", "title": "Old Type", "relatedType": "Project", "spaceId": "sp1",
+         "isDeleted": True},
+        # Unknown space -> falls back to the bare title.
+        {"id": "t5", "title": "Mystery", "relatedType": "Project", "spaceId": "sp-unknown",
+         "isDeleted": False},
+    ]
+
+    choices = _build_project_type_choices(custom_item_types, spaces)
+
+    assert choices == [
+        ("t1", "Meeting — Brian's Sandbox"),
+        ("t5", "Mystery"),
+        ("t2", "Project Phase — Ops"),
+    ]
+
+
+def test_project_type_combo_defaults_to_standard_project(qapp, paths):
+    settings = load_settings(paths)
+    dlg = SettingsDialog(settings, paths)
+    assert dlg.wrike_item_type_combo.count() == 1
+    assert dlg.wrike_item_type_combo.currentData() is None
+    assert dlg.wrike_item_type_combo.currentText() == "(Standard project)"
+
+
+def test_populate_wrike_item_type_combo_selects_fetched_match(qapp, paths):
+    settings = load_settings(paths)
+    dlg = SettingsDialog(settings, paths)
+    dlg._custom_item_type_id = "t1"
+    dlg._custom_item_type_label = "Meeting — Brian's Sandbox"
+
+    dlg._populate_wrike_item_type_combo([
+        ("t1", "Meeting — Brian's Sandbox"),
+        ("t2", "Project Phase — Ops"),
+    ])
+
+    assert dlg.wrike_item_type_combo.currentData() == "t1"
+    assert dlg.wrike_item_type_combo.currentText() == "Meeting — Brian's Sandbox"
+    assert dlg.wrike_item_type_combo.count() == 3  # standard + 2 fetched
+
+
+def test_populate_wrike_item_type_combo_keeps_saved_choice_when_absent_from_fetch(qapp, paths):
+    """If the saved custom-item-type id isn't among the freshly-fetched
+    types (deleted, different account state, ...), the user's prior choice
+    must not be silently dropped -- it stays selected via its saved label."""
+    settings = load_settings(paths)
+    dlg = SettingsDialog(settings, paths)
+    dlg._custom_item_type_id = "gone"
+    dlg._custom_item_type_label = "Vanished Type"
+
+    dlg._populate_wrike_item_type_combo([
+        ("t1", "Meeting — Brian's Sandbox"),
+    ])
+
+    assert dlg.wrike_item_type_combo.currentData() == "gone"
+    assert dlg.wrike_item_type_combo.currentText() == "Vanished Type"
+    assert dlg.wrike_item_type_combo.count() == 3  # standard + fetched + saved-but-missing
+
+
+def test_project_type_setting_persists_round_trip(qapp, paths):
+    settings = load_settings(paths)
+    dlg = SettingsDialog(settings, paths)
+    dlg._populate_wrike_item_type_combo([("t1", "Meeting — Brian's Sandbox")])
+    idx = dlg.wrike_item_type_combo.findData("t1")
+    dlg.wrike_item_type_combo.setCurrentIndex(idx)
+
+    dlg._on_accept()
+
+    reloaded = load_settings(paths)
+    integ = reloaded._raw["integrations"]
+    assert integ["wrike_custom_item_type_id"] == "t1"
+    assert integ["wrike_custom_item_type_label"] == "Meeting — Brian's Sandbox"
+
+    dlg2 = SettingsDialog(reloaded, paths)
+    assert dlg2.wrike_item_type_combo.currentData() == "t1"
+    assert dlg2.wrike_item_type_combo.currentText() == "Meeting — Brian's Sandbox"
+
+
+def test_project_type_setting_defaults_to_none_when_left_standard(qapp, paths):
+    settings = load_settings(paths)
+    dlg = SettingsDialog(settings, paths)
+
+    dlg._on_accept()
+
+    reloaded = load_settings(paths)
+    integ = reloaded._raw["integrations"]
+    assert integ["wrike_custom_item_type_id"] is None
+    assert integ["wrike_custom_item_type_label"] is None
+
+
 def test_group_folders_by_space_uses_real_space_child_ids():
     from teams_transcriber.ui.settings_dialog import _group_folders_by_space
 

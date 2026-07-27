@@ -35,7 +35,14 @@ _TAG_RE = re.compile(r"<[^>]+>")
 
 
 class _ClientProto(Protocol):
-    def create_project(self, parent_id: str, title: str, description: str) -> dict[str, Any]: ...
+    def create_project(
+        self,
+        parent_id: str,
+        title: str,
+        description: str,
+        *,
+        custom_item_type_id: str | None = None,
+    ) -> dict[str, Any]: ...
     def update_project(self, project_id: str, *, description: str) -> dict[str, Any]: ...
     def upload_attachment(self, entity_id: str, filename: str, content: bytes) -> str: ...
     def delete_attachment(self, attachment_id: str) -> None: ...
@@ -80,6 +87,7 @@ def export_recording(
     db: Database, client: _ClientProto, recording_id: int,
     *, parent_id: str, assignees: dict[int, str | None],
     task_context_provider: Callable[[], dict[tuple[str, int], str]] | None = None,
+    custom_item_type_id: str | None = None,
 ) -> ExportReport:
     logger.info("wrike export starting for recording %d", recording_id)
     report = ExportReport()
@@ -100,7 +108,10 @@ def export_recording(
     # 1. find-or-create project
     if existing is None:
         try:
-            folder = client.create_project(parent_id, title, description)
+            folder = client.create_project(
+                parent_id, title, description,
+                custom_item_type_id=custom_item_type_id,
+            )
             project_id = str(folder["id"])
             proj_repo.upsert(recording_id, project_id=project_id,
                              permalink=folder.get("permalink"))

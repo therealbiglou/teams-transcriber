@@ -131,6 +131,50 @@ def test_create_project_sets_project_field():
     assert out["id"] == "prj1" and out["permalink"].endswith("id=1")
 
 
+def test_list_custom_item_types():
+    def handler(request):
+        assert request.method == "GET"
+        assert request.url.path == "/api/v4/custom_item_types"
+        return httpx.Response(200, json={"data": [
+            {"id": "IEAGW7W6PIAJCFTL", "title": "Meeting", "relatedType": "Project"},
+        ]})
+    client = _client(handler)
+    out = client.list_custom_item_types()
+    assert out[0]["id"] == "IEAGW7W6PIAJCFTL"
+    assert out[0]["title"] == "Meeting"
+
+
+def test_create_project_includes_custom_item_type_id_when_supplied():
+    seen = {}
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": [{"id": "prj1", "permalink": "https://wrike/open.htm?id=1"}]})
+    client = _client(handler)
+    client.create_project("parent1", "Q3 sync", "desc", custom_item_type_id="IEAGW7W6PIAJCFTL")
+    assert seen["body"]["customItemTypeId"] == "IEAGW7W6PIAJCFTL"
+
+
+def test_create_project_omits_custom_item_type_id_when_not_supplied():
+    seen = {}
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": [{"id": "prj1", "permalink": "https://wrike/open.htm?id=1"}]})
+    client = _client(handler)
+    client.create_project("parent1", "Q3 sync", "desc")
+    assert "customItemTypeId" not in seen["body"]
+    assert seen["body"] == {"title": "Q3 sync", "description": "desc", "project": {}}
+
+
+def test_create_project_omits_custom_item_type_id_when_empty_string():
+    seen = {}
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"data": [{"id": "prj1"}]})
+    client = _client(handler)
+    client.create_project("parent1", "Q3 sync", "desc", custom_item_type_id="")
+    assert "customItemTypeId" not in seen["body"]
+
+
 def test_update_project_description():
     seen = {}
     def handler(request):

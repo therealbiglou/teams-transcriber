@@ -37,6 +37,7 @@ class FakeClient:
         self._counters = {"prj": 0, "att": 0, "tsk": 0, "cmt": 0}
 
         self.create_project_calls: list[tuple[str, str, str]] = []
+        self.create_project_kwargs: list[dict] = []
         self.update_project_calls: list[tuple[str, str]] = []
         self.upload_attachment_calls: list[tuple[str, str, bytes]] = []
         self.delete_attachment_calls: list[str] = []
@@ -47,9 +48,10 @@ class FakeClient:
         self._counters[prefix] += 1
         return f"{prefix}{self._counters[prefix]}"
 
-    def create_project(self, parent_id, title, description):
+    def create_project(self, parent_id, title, description, *, custom_item_type_id=None):
         pid = self._next("prj")
         self.create_project_calls.append((parent_id, title, description))
+        self.create_project_kwargs.append({"custom_item_type_id": custom_item_type_id})
         return {"id": pid, "permalink": f"https://w/open.htm?id={pid[3:]}"}
 
     def update_project(self, project_id, *, description):
@@ -240,6 +242,46 @@ def test_second_export_updates_not_duplicates(db_seeded):
 
     proj_row = WrikeProjectRepo(db).get(rid)
     assert proj_row.attachment_id == "att2"
+
+
+def test_custom_item_type_id_forwarded_on_first_create(db_seeded):
+    db = db_seeded
+    rid = _seed_recording(
+        db, my_todos=[], action_items_others=[], follow_ups=[],
+    )
+    fake = FakeClient()
+
+    report = export_recording(
+        db, fake, rid, parent_id="P", assignees={},
+        custom_item_type_id="IEAGW7W6PIAJCFTL",
+    )
+
+    assert report.failures == []
+    assert len(fake.create_project_kwargs) == 1
+    assert fake.create_project_kwargs[0]["custom_item_type_id"] == "IEAGW7W6PIAJCFTL"
+
+
+def test_custom_item_type_id_not_applied_on_repush(db_seeded):
+    """Re-pushing an already-exported recording must never try to change the
+    type of an existing project -- create_project (the only place the type
+    is set) must not be called a second time regardless of what
+    custom_item_type_id is passed on the re-push call."""
+    db = db_seeded
+    rid = _seed_recording(
+        db, my_todos=[], action_items_others=[], follow_ups=[],
+    )
+    fake = FakeClient()
+    export_recording(db, fake, rid, parent_id="P", assignees={},
+                      custom_item_type_id="IEAGW7W6PIAJCFTL")
+
+    report = export_recording(db, fake, rid, parent_id="P", assignees={},
+                               custom_item_type_id="SOME_OTHER_TYPE")
+
+    assert report.failures == []
+    assert report.updated is True
+    assert len(fake.create_project_calls) == 1  # still just the one create
+    assert len(fake.create_project_kwargs) == 1
+    assert fake.create_project_kwargs[0]["custom_item_type_id"] == "IEAGW7W6PIAJCFTL"
 
 
 def test_partial_failure_records_success_and_resumes(db_seeded):

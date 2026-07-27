@@ -101,10 +101,23 @@ class WrikeClient:
     def list_spaces(self) -> list[dict[str, Any]]:
         return self._request("GET", "/spaces")
 
-    def create_project(self, parent_id: str, title: str, description: str) -> dict[str, Any]:
+    def list_custom_item_types(self) -> list[dict[str, Any]]:
+        return self._request("GET", "/custom_item_types")
+
+    def create_project(
+        self,
+        parent_id: str,
+        title: str,
+        description: str,
+        *,
+        custom_item_type_id: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"title": title, "description": description, "project": {}}
+        if custom_item_type_id:
+            body["customItemTypeId"] = custom_item_type_id
         data = self._request(
             "POST", f"/folders/{parent_id}/folders",
-            json={"title": title, "description": description, "project": {}},
+            json=body,
         )
         if not data:
             raise WrikeApiError(f"Wrike returned no folder for create_project under {parent_id}")
