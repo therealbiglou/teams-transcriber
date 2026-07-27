@@ -31,6 +31,15 @@ logger = logging.getLogger(__name__)
 # per item without blowing the request budget.
 _TRANSCRIPT_CHAR_BUDGET = 60_000
 
+# The Anthropic SDK's default request timeout is ~600s; that's long enough to
+# make a Wrike export (which now waits on this call before creating tasks --
+# see wrike_project_export.py) appear hung. Cap it explicitly and don't
+# retry more than once -- any failure degrades to {} anyway (see
+# build_task_contexts's docstring), so there's no value in the SDK's default
+# retry budget here.
+_REQUEST_TIMEOUT_SECONDS = 90.0
+_MAX_RETRIES = 1
+
 _TOOL_NAME = "save_task_contexts"
 _VALID_KINDS = {"my", "other", "follow_up"}
 
@@ -139,7 +148,9 @@ def build_task_contexts(
             "understandable in Wrike without opening the meeting. Do not use "
             "markdown or HTML in the context text."
         )
-        response = client.messages.create(
+        response = client.with_options(
+            timeout=_REQUEST_TIMEOUT_SECONDS, max_retries=_MAX_RETRIES,
+        ).messages.create(
             model=model,
             max_tokens=max_tokens,
             tools=[_TOOL],

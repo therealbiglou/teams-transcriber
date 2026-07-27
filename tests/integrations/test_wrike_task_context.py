@@ -6,7 +6,11 @@ from typing import Any
 
 import pytest
 
-from teams_transcriber.integrations.wrike_task_context import build_task_contexts
+from teams_transcriber.integrations.wrike_task_context import (
+    _MAX_RETRIES,
+    _REQUEST_TIMEOUT_SECONDS,
+    build_task_contexts,
+)
 from teams_transcriber.storage.models import (
     ActionItemOther,
     Channel,
@@ -60,8 +64,18 @@ class _FakeMessages:
 
 
 class _FakeClient:
-    def __init__(self, scripted: _FakeResp | Exception) -> None:
+    def __init__(
+        self, scripted: _FakeResp | Exception, *, raise_on_with_options: bool = False,
+    ) -> None:
         self.messages = _FakeMessages(scripted)
+        self.with_options_calls: list[dict[str, Any]] = []
+        self._raise_on_with_options = raise_on_with_options
+
+    def with_options(self, **kwargs: Any) -> _FakeClient:
+        self.with_options_calls.append(kwargs)
+        if self._raise_on_with_options:
+            raise RuntimeError("with_options boom")
+        return self
 
 
 def _summary_with_items() -> Summary:
@@ -95,6 +109,11 @@ def test_maps_contexts_to_kind_index_pairs() -> None:
         ("follow_up", 0): "Pricing needs revisiting.",
     }
     assert len(client.messages.calls) == 1
+    # The call must carry an explicit timeout + capped retries -- the SDK
+    # default (~600s, up to 2 retries) is what made a stalled export look hung.
+    assert client.with_options_calls == [
+        {"timeout": _REQUEST_TIMEOUT_SECONDS, "max_retries": _MAX_RETRIES},
+    ]
 
 
 def test_unknown_or_out_of_range_entries_are_dropped() -> None:
@@ -120,6 +139,16 @@ def test_unknown_or_out_of_range_entries_are_dropped() -> None:
 
 def test_client_exception_yields_empty_dict() -> None:
     client = _FakeClient(RuntimeError("network down"))
+    out = build_task_contexts(
+        client, summary=_summary_with_items(), segments=_segments(), model="claude-sonnet-4-6",
+    )
+    assert out == {}
+
+
+def test_with_options_failure_yields_empty_dict() -> None:
+    """Even a client that blows up applying the timeout/retry options
+    (not just the .create() call itself) must fail soft."""
+    client = _FakeClient(_FakeResp(content=[]), raise_on_with_options=True)
     out = build_task_contexts(
         client, summary=_summary_with_items(), segments=_segments(), model="claude-sonnet-4-6",
     )

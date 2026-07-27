@@ -7,7 +7,13 @@ import pytest
 from teams_transcriber.cli import main
 
 
-def test_cli_help_runs(capsys: pytest.CaptureFixture[str]) -> None:
+def test_cli_help_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    # main() configures logging (incl. a rotating file under AppPaths().logs_dir)
+    # before argparse even runs -- point that at tmp_path so the test suite
+    # never touches the real %LOCALAPPDATA%\TeamsTranscriber on the dev machine.
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
     with pytest.raises(SystemExit) as ei:
         main(["--help"])
     assert ei.value.code == 0

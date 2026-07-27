@@ -960,6 +960,10 @@ class App:
             show_in_app_toast("Wrike sync", "Wrike sync already running for this meeting.")
             return
         self._wrike_exports_in_flight.add(recording_id)
+        show_in_app_toast(
+            "Sending to Wrike",
+            "Creating the project — this can take a minute.",
+        )
 
         def _worker() -> None:
             from teams_transcriber.integrations.wrike_client import WrikeApiError, WrikeClient
@@ -970,14 +974,23 @@ class App:
                 token = keyring.get_password(KEYRING_SERVICE, KEYRING_USER_WRIKE) or ""
                 parent_id = self.settings._raw.get("integrations", {}).get("wrike_parent_id")
                 if not token or not parent_id:
+                    logger.warning("wrike export skipped for %d: not configured", recording_id)
+                    QTimer.singleShot(0, self.window, lambda: show_in_app_toast(
+                        "Wrike not configured",
+                        "Add your Wrike token and choose a destination in "
+                        "Settings → Integrations.",
+                        action_label="Open Settings",
+                        action_callback=lambda: self._open_settings_tab("Integrations"),
+                    ))
                     return
                 client = WrikeClient(token=token)
                 try:
                     assignees = self._resolve_wrike_assignees(recording_id, client)
-                    task_contexts = self._build_wrike_task_contexts(recording_id)
-                    report = export_recording(self.db, client, recording_id,
-                                               parent_id=parent_id, assignees=assignees,
-                                               task_contexts=task_contexts)
+                    report = export_recording(
+                        self.db, client, recording_id,
+                        parent_id=parent_id, assignees=assignees,
+                        task_context_provider=lambda: self._build_wrike_task_contexts(recording_id),
+                    )
                 except WrikeApiError as exc:
                     WrikeSyncRepo(self.db).update(recording_id, status="failed", error_message=str(exc))
                     QTimer.singleShot(0, self.window, lambda e=str(exc): show_in_app_toast("Wrike sync failed", e))
@@ -1153,10 +1166,8 @@ class App:
 
 
 def main() -> int:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    from teams_transcriber.logging_config import configure_logging
+    configure_logging()
     app = App()
     return app.run()
 

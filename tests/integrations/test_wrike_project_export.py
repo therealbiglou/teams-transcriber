@@ -326,7 +326,7 @@ def test_task_contexts_set_description_only_when_supplied(db_seeded):
 
     report = export_recording(
         db, fake, rid, parent_id="P", assignees={0: "c-sam"},
-        task_contexts={
+        task_context_provider=lambda: {
             ("my", 0): "You committed to Do A after the demo.",
             ("follow_up", 0): "Pricing needs a second look next quarter.",
         },
@@ -357,5 +357,60 @@ def test_task_contexts_none_means_no_descriptions_anywhere(db_seeded):
     report = export_recording(db, fake, rid, parent_id="P", assignees={})
 
     assert report.failures == []
+    payload = fake.create_task_calls[0][1]
+    assert "description" not in payload
+
+
+def test_task_context_provider_is_not_called_before_project_created(db_seeded):
+    """The provider does the (possibly slow, Anthropic-backed) work -- it
+    must run lazily, after the project already exists in Wrike, so the user
+    sees something show up before that call even starts."""
+    db = db_seeded
+    rid = _seed_recording(
+        db, my_todos=[TodoItem(task="Do A")], action_items_others=[], follow_ups=[],
+    )
+    fake = FakeClient()
+    call_order: list[str] = []
+
+    orig_create_project = fake.create_project
+
+    def _recording_create_project(*args, **kwargs):
+        call_order.append("create_project")
+        return orig_create_project(*args, **kwargs)
+
+    fake.create_project = _recording_create_project
+
+    def _provider():
+        call_order.append("provider")
+        assert fake.create_project_calls, "provider ran before the project was created"
+        return {}
+
+    report = export_recording(
+        db, fake, rid, parent_id="P", assignees={}, task_context_provider=_provider,
+    )
+
+    assert report.failures == []
+    assert call_order == ["create_project", "provider"]
+
+
+def test_task_context_provider_exception_still_creates_tasks_without_descriptions(db_seeded):
+    """A raising provider (Anthropic call failed/timed out) must never fail
+    the export -- tasks are created with no description, same as before this
+    feature existed."""
+    db = db_seeded
+    rid = _seed_recording(
+        db, my_todos=[TodoItem(task="Do A")], action_items_others=[], follow_ups=[],
+    )
+    fake = FakeClient()
+
+    def _boom():
+        raise RuntimeError("anthropic call timed out")
+
+    report = export_recording(
+        db, fake, rid, parent_id="P", assignees={}, task_context_provider=_boom,
+    )
+
+    assert report.failures == []
+    assert report.created_tasks == 1
     payload = fake.create_task_calls[0][1]
     assert "description" not in payload

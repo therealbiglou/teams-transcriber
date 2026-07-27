@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from typing import Any, Protocol
@@ -78,12 +79,15 @@ def _due_date(raw: str | None) -> str | None:
 def export_recording(
     db: Database, client: _ClientProto, recording_id: int,
     *, parent_id: str, assignees: dict[int, str | None],
-    task_contexts: dict[tuple[str, int], str] | None = None,
+    task_context_provider: Callable[[], dict[tuple[str, int], str]] | None = None,
 ) -> ExportReport:
+    logger.info("wrike export starting for recording %d", recording_id)
     report = ExportReport()
     rec = RecordingRepo(db).get(recording_id)
     summary = SummaryRepo(db).get(recording_id)
     if rec is None or summary is None:
+        logger.warning("wrike export aborted for recording %d: recording or summary missing",
+                       recording_id)
         report.failures.append("recording or summary missing")
         return report
 
@@ -102,6 +106,7 @@ def export_recording(
                              permalink=folder.get("permalink"))
             report.project_id = project_id
             report.permalink = folder.get("permalink")
+            logger.info("wrike project created for recording %d: %s", recording_id, project_id)
         except Exception as exc:
             logger.exception("wrike create_project failed for %d", recording_id)
             report.failures.append(f"create project: {exc}")
@@ -129,9 +134,23 @@ def export_recording(
                 logger.warning("could not delete old attachment %s", old.attachment_id)
         att_id = client.upload_attachment(project_id, "transcript.md", md.encode("utf-8"))
         proj_repo.set_attachment(recording_id, att_id)
+        logger.info("wrike transcript attachment done for recording %d", recording_id)
     except Exception as exc:
         logger.exception("wrike transcript attach failed for %d", recording_id)
         report.failures.append(f"transcript: {exc}")
+
+    # 2.5 lazily resolve per-task context blurbs now that the project already
+    # exists in Wrike -- this is the (possibly slow, Anthropic-backed) call,
+    # deferred until after the user has something to see. Any failure here
+    # must never fail the export; tasks are simply created without a
+    # description, exactly as if the provider had returned {}.
+    task_contexts: dict[tuple[str, int], str] = {}
+    if task_context_provider is not None:
+        try:
+            task_contexts = task_context_provider() or {}
+        except Exception:
+            logger.exception("wrike task-context provider failed for %d", recording_id)
+            task_contexts = {}
 
     # 3. tasks (my_todos, action_items_others[assigned], follow_ups) — add only new
     def _ensure_task(
@@ -143,7 +162,7 @@ def export_recording(
         payload: dict[str, Any] = {"title": name}
         if assignee:
             payload["responsibles"] = [assignee]
-        context = (task_contexts or {}).get((kind, index))
+        context = task_contexts.get((kind, index))
         if context:
             payload["description"] = build_task_description(context)
         d = _due_date(due)
@@ -173,6 +192,7 @@ def export_recording(
         # "follow_up" (not "follow") — matches the wrike_tasks.kind CHECK constraint
         # from schema v6, which already reserves this literal for follow-up items.
         _ensure_task("follow_up", k, f, None)
+    logger.info("wrike created %d task(s) for recording %d", report.created_tasks, recording_id)
 
     # 4. notes comment (once)
     notes = _plain(rec.manual_notes)
@@ -181,8 +201,16 @@ def export_recording(
         try:
             cid = client.create_comment(entity_type="folder", entity_id=project_id, text=notes)
             proj_repo.set_notes_comment(recording_id, cid)
+            logger.info("wrike notes comment posted for recording %d", recording_id)
         except Exception as exc:
             logger.exception("wrike notes comment failed for %d", recording_id)
             report.failures.append(f"notes: {exc}")
 
+    if report.failures:
+        logger.warning(
+            "wrike export finished for recording %d with %d failure(s): %s",
+            recording_id, len(report.failures), "; ".join(report.failures),
+        )
+    else:
+        logger.info("wrike export complete for recording %d", recording_id)
     return report

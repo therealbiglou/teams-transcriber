@@ -118,7 +118,8 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    from teams_transcriber.logging_config import configure_logging
+    configure_logging()
 
     parser = argparse.ArgumentParser(prog="teams-transcriber")
     sub = parser.add_subparsers(dest="cmd", required=True)
