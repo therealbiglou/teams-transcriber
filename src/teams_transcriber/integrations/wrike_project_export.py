@@ -20,6 +20,7 @@ from teams_transcriber.integrations.wrike_project_body import (
     build_task_description,
     build_transcript_md,
 )
+from teams_transcriber.integrations.wrike_task_context import TaskCopy
 from teams_transcriber.storage.db import Database
 from teams_transcriber.storage.recordings import RecordingRepo
 from teams_transcriber.storage.summaries import SummaryRepo
@@ -86,7 +87,7 @@ def _due_date(raw: str | None) -> str | None:
 def export_recording(
     db: Database, client: _ClientProto, recording_id: int,
     *, parent_id: str, assignees: dict[int, str | None],
-    task_context_provider: Callable[[], dict[tuple[str, int], str]] | None = None,
+    task_context_provider: Callable[[], dict[tuple[str, int], TaskCopy]] | None = None,
     custom_item_type_id: str | None = None,
 ) -> ExportReport:
     logger.info("wrike export starting for recording %d", recording_id)
@@ -150,12 +151,13 @@ def export_recording(
         logger.exception("wrike transcript attach failed for %d", recording_id)
         report.failures.append(f"transcript: {exc}")
 
-    # 2.5 lazily resolve per-task context blurbs now that the project already
-    # exists in Wrike -- this is the (possibly slow, Anthropic-backed) call,
-    # deferred until after the user has something to see. Any failure here
-    # must never fail the export; tasks are simply created without a
-    # description, exactly as if the provider had returned {}.
-    task_contexts: dict[tuple[str, int], str] = {}
+    # 2.5 lazily resolve per-task title/context copy now that the project
+    # already exists in Wrike -- this is the (possibly slow, Anthropic-backed)
+    # call, deferred until after the user has something to see. Any failure
+    # here must never fail the export; tasks are simply created with the
+    # full item text as their title and no description, exactly as if the
+    # provider had returned {}.
+    task_contexts: dict[tuple[str, int], TaskCopy] = {}
     if task_context_provider is not None:
         try:
             task_contexts = task_context_provider() or {}
@@ -166,16 +168,24 @@ def export_recording(
     # 3. tasks (my_todos, action_items_others[assigned], follow_ups) — add only new
     def _ensure_task(
         kind: str, index: int, name: str, assignee: str | None,
-        due: str | None = None,
+        due: str | None = None, who: str | None = None,
     ) -> None:
+        """``name`` is the original full item text (already "{who}: ..."
+        prefixed for kind=="other", matching today's behavior). ``who`` is
+        the bare assignee name, used to re-apply that prefix to a short
+        title from a ``TaskCopy``."""
         if task_repo.get(recording_id, kind, index) is not None:
             return
-        payload: dict[str, Any] = {"title": name}
+        copy = task_contexts.get((kind, index))
+        if copy is not None and copy.title:
+            title = f"{who}: {copy.title}" if who else copy.title
+        else:
+            title = name
+        payload: dict[str, Any] = {"title": title}
         if assignee:
             payload["responsibles"] = [assignee]
-        context = task_contexts.get((kind, index))
-        if context:
-            payload["description"] = build_task_description(context)
+        if copy is not None:
+            payload["description"] = build_task_description(name, copy.context)
         d = _due_date(due)
         if d:
             # A single-day Planned task carries a real Wrike due date; a due-only
@@ -198,7 +208,7 @@ def export_recording(
         _ensure_task("my", i, td.task, None, due=td.due)
     for j, ai in enumerate(summary.action_items_others):
         title_txt = f"{ai.who}: {ai.task}" if ai.who else ai.task
-        _ensure_task("other", j, title_txt, assignees.get(j), due=ai.due)
+        _ensure_task("other", j, title_txt, assignees.get(j), due=ai.due, who=ai.who)
     for k, f in enumerate(summary.follow_ups):
         # "follow_up" (not "follow") — matches the wrike_tasks.kind CHECK constraint
         # from schema v6, which already reserves this literal for follow-up items.

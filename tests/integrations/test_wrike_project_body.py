@@ -72,3 +72,36 @@ def test_task_description_escapes_html_and_converts_newlines():
 
 def test_task_description_plain_text_is_unchanged():
     assert build_task_description("A short context blurb.") == "A short context blurb."
+
+
+def test_task_description_with_context_renders_statement_then_blank_line_then_context():
+    out = build_task_description(
+        "Confirm availability for the pre-con site visit the week of Sept 29.",
+        "Whitney raised this during the scheduling discussion around minute 12.",
+    )
+    assert out == (
+        "Confirm availability for the pre-con site visit the week of Sept 29."
+        "<br/><br/>"
+        "Whitney raised this during the scheduling discussion around minute 12."
+    )
+
+
+def test_task_description_with_no_context_renders_statement_only():
+    assert build_task_description("Kick the naming brief back to the team.", None) == (
+        "Kick the naming brief back to the team."
+    )
+    assert build_task_description("Kick the naming brief back to the team.", "") == (
+        "Kick the naming brief back to the team."
+    )
+
+
+def test_task_description_statement_and_context_are_both_escaped():
+    out = build_task_description(
+        "Statement with <b>tag</b> & ampersand\nsecond line",
+        "Context with <i>tag</i> & ampersand\nsecond line",
+    )
+    assert out == (
+        "Statement with &lt;b&gt;tag&lt;/b&gt; &amp; ampersand<br/>second line"
+        "<br/><br/>"
+        "Context with &lt;i&gt;tag&lt;/i&gt; &amp; ampersand<br/>second line"
+    )

@@ -9,6 +9,7 @@ import pytest
 from teams_transcriber.integrations.wrike_task_context import (
     _MAX_RETRIES,
     _REQUEST_TIMEOUT_SECONDS,
+    TaskCopy,
     build_task_contexts,
 )
 from teams_transcriber.storage.models import (
@@ -92,9 +93,12 @@ def test_maps_contexts_to_kind_index_pairs() -> None:
             name="save_task_contexts",
             input_={
                 "contexts": [
-                    {"kind": "my", "index": 0, "context": "You committed to the shot list."},
-                    {"kind": "other", "index": 0, "context": "Sam agreed to send the doc."},
-                    {"kind": "follow_up", "index": 0, "context": "Pricing needs revisiting."},
+                    {"kind": "my", "index": 0, "title": "Write shot list",
+                     "context": "You committed to the shot list."},
+                    {"kind": "other", "index": 0, "title": "Send the doc",
+                     "context": "Sam agreed to send the doc."},
+                    {"kind": "follow_up", "index": 0, "title": "Revisit pricing",
+                     "context": "Pricing needs revisiting."},
                 ],
             },
         ),
@@ -104,9 +108,9 @@ def test_maps_contexts_to_kind_index_pairs() -> None:
         client, summary=_summary_with_items(), segments=_segments(), model="claude-sonnet-4-6",
     )
     assert out == {
-        ("my", 0): "You committed to the shot list.",
-        ("other", 0): "Sam agreed to send the doc.",
-        ("follow_up", 0): "Pricing needs revisiting.",
+        ("my", 0): TaskCopy(title="Write shot list", context="You committed to the shot list."),
+        ("other", 0): TaskCopy(title="Send the doc", context="Sam agreed to send the doc."),
+        ("follow_up", 0): TaskCopy(title="Revisit pricing", context="Pricing needs revisiting."),
     }
     assert len(client.messages.calls) == 1
     # The call must carry an explicit timeout + capped retries -- the SDK
@@ -122,10 +126,12 @@ def test_unknown_or_out_of_range_entries_are_dropped() -> None:
             name="save_task_contexts",
             input_={
                 "contexts": [
-                    {"kind": "my", "index": 0, "context": "Valid."},
-                    {"kind": "my", "index": 99, "context": "Out of range index."},
-                    {"kind": "bogus", "index": 0, "context": "Unknown kind."},
-                    {"kind": "other", "index": 5, "context": "Also out of range."},
+                    {"kind": "my", "index": 0, "title": "Valid", "context": "Valid."},
+                    {"kind": "my", "index": 99, "title": "Out of range",
+                     "context": "Out of range index."},
+                    {"kind": "bogus", "index": 0, "title": "Unknown", "context": "Unknown kind."},
+                    {"kind": "other", "index": 5, "title": "Also out of range",
+                     "context": "Also out of range."},
                 ],
             },
         ),
@@ -134,7 +140,73 @@ def test_unknown_or_out_of_range_entries_are_dropped() -> None:
     out = build_task_contexts(
         client, summary=_summary_with_items(), segments=_segments(), model="claude-sonnet-4-6",
     )
-    assert out == {("my", 0): "Valid."}
+    assert out == {("my", 0): TaskCopy(title="Valid", context="Valid.")}
+
+
+def test_blank_or_missing_title_becomes_none() -> None:
+    fake = _FakeResp(content=[
+        _FakeBlock(
+            name="save_task_contexts",
+            input_={
+                "contexts": [
+                    {"kind": "my", "index": 0, "title": "   ", "context": "Blank title."},
+                    {"kind": "other", "index": 0, "context": "Missing title key entirely."},
+                ],
+            },
+        ),
+    ])
+    client = _FakeClient(fake)
+    out = build_task_contexts(
+        client, summary=_summary_with_items(), segments=_segments(), model="claude-sonnet-4-6",
+    )
+    assert out == {
+        ("my", 0): TaskCopy(title=None, context="Blank title."),
+        ("other", 0): TaskCopy(title=None, context="Missing title key entirely."),
+    }
+
+
+def test_trailing_period_is_stripped_from_title() -> None:
+    fake = _FakeResp(content=[
+        _FakeBlock(
+            name="save_task_contexts",
+            input_={
+                "contexts": [
+                    {"kind": "my", "index": 0, "title": "Confirm pre-con site visit.",
+                     "context": "Some context."},
+                ],
+            },
+        ),
+    ])
+    client = _FakeClient(fake)
+    out = build_task_contexts(
+        client, summary=_summary_with_items(), segments=_segments(), model="claude-sonnet-4-6",
+    )
+    assert out[("my", 0)].title == "Confirm pre-con site visit"
+
+
+def test_overlong_title_is_truncated_on_word_boundary() -> None:
+    long_title = "Confirm availability for the pre-con site visit " + ("word " * 10) + "tail"
+    assert len(long_title) > 80
+    fake = _FakeResp(content=[
+        _FakeBlock(
+            name="save_task_contexts",
+            input_={
+                "contexts": [
+                    {"kind": "my", "index": 0, "title": long_title, "context": "Some context."},
+                ],
+            },
+        ),
+    ])
+    client = _FakeClient(fake)
+    out = build_task_contexts(
+        client, summary=_summary_with_items(), segments=_segments(), model="claude-sonnet-4-6",
+    )
+    title = out[("my", 0)].title
+    assert title is not None
+    assert title.endswith("…")
+    assert len(title) <= 81  # 80 chars + ellipsis
+    assert not title[:-1].endswith(" ")  # truncated at a word boundary, no trailing space
+    assert long_title.startswith(title[:-1])
 
 
 def test_client_exception_yields_empty_dict() -> None:
@@ -187,7 +259,7 @@ def test_json_string_tool_input_is_parsed() -> None:
     out = build_task_contexts(
         client, summary=_summary_with_items(), segments=_segments(), model="claude-sonnet-4-6",
     )
-    assert out == {("my", 0): "Valid via JSON string."}
+    assert out == {("my", 0): TaskCopy(title=None, context="Valid via JSON string.")}
 
 
 def test_transcript_is_truncated_to_char_budget() -> None:

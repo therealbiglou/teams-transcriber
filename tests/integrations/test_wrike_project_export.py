@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from teams_transcriber.integrations.wrike_project_export import export_recording
+from teams_transcriber.integrations.wrike_task_context import TaskCopy
 from teams_transcriber.storage import (
     ActionItemOther,
     Channel,
@@ -356,7 +357,7 @@ def test_new_todo_added_on_repush(db_seeded):
     assert kinds == {("my", 0), ("my", 1), ("my", 2)}
 
 
-def test_task_contexts_set_description_only_when_supplied(db_seeded):
+def test_task_contexts_use_short_title_and_full_statement_plus_context_in_description(db_seeded):
     db = db_seeded
     rid = _seed_recording(
         db,
@@ -369,21 +370,62 @@ def test_task_contexts_set_description_only_when_supplied(db_seeded):
     report = export_recording(
         db, fake, rid, parent_id="P", assignees={0: "c-sam"},
         task_context_provider=lambda: {
-            ("my", 0): "You committed to Do A after the demo.",
-            ("follow_up", 0): "Pricing needs a second look next quarter.",
+            ("my", 0): TaskCopy(title="Finish A", context="You committed to Do A after the demo."),
+            ("other", 0): TaskCopy(title="Send the doc", context="Sam agreed to send it Friday."),
+            ("follow_up", 0): TaskCopy(
+                title="Revisit pricing next quarter",
+                context="Pricing needs a second look next quarter.",
+            ),
         },
     )
 
     assert report.failures == []
     payload_by_title = {p["title"]: p for _folder, p in fake.create_task_calls}
 
-    assert payload_by_title["Do A"]["description"] == "You committed to Do A after the demo."
-    assert payload_by_title["Revisit pricing"]["description"] == (
-        "Pricing needs a second look next quarter."
-    )
-    # No context supplied for these two -> no description key at all.
+    # Short titles replace the full statement as the task title...
+    assert "Finish A" in payload_by_title
+    assert "Sam: Send the doc" in payload_by_title  # "other" kind keeps its who-prefix
+    assert "Revisit pricing next quarter" in payload_by_title
+
+    # ...while the description carries BOTH the original full statement and the context.
+    my_desc = payload_by_title["Finish A"]["description"]
+    assert "Do A" in my_desc
+    assert "You committed to Do A after the demo." in my_desc
+
+    other_desc = payload_by_title["Sam: Send the doc"]["description"]
+    assert "Sam: Send doc" in other_desc  # original who-prefixed statement text
+    assert "Sam agreed to send it Friday." in other_desc
+
+    follow_desc = payload_by_title["Revisit pricing next quarter"]["description"]
+    assert "Revisit pricing" in follow_desc
+    assert "Pricing needs a second look next quarter." in follow_desc
+
+    # No context supplied for "Do B" -> unchanged fallback (full text title, no description).
+    assert "Do B" in payload_by_title
     assert "description" not in payload_by_title["Do B"]
-    assert "description" not in payload_by_title["Sam: Send doc"]
+
+
+def test_task_context_with_no_title_falls_back_to_full_text_title(db_seeded):
+    """A TaskCopy with title=None (model omitted/blanked it) must still fall
+    back to the full item text as the title -- same fallback as no TaskCopy
+    at all -- while the description is still built from statement + context."""
+    db = db_seeded
+    rid = _seed_recording(
+        db, my_todos=[TodoItem(task="Do A")], action_items_others=[], follow_ups=[],
+    )
+    fake = FakeClient()
+
+    report = export_recording(
+        db, fake, rid, parent_id="P", assignees={},
+        task_context_provider=lambda: {
+            ("my", 0): TaskCopy(title=None, context="You committed to Do A after the demo."),
+        },
+    )
+
+    assert report.failures == []
+    payload = fake.create_task_calls[0][1]
+    assert payload["title"] == "Do A"
+    assert payload["description"] == "Do A<br/><br/>You committed to Do A after the demo."
 
 
 def test_task_contexts_none_means_no_descriptions_anywhere(db_seeded):

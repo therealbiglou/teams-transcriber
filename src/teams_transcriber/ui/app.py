@@ -911,12 +911,14 @@ class App:
             llm_fallback=llm_enabled and bool(anthropic_key),
         )
 
-    def _build_wrike_task_contexts(self, recording_id: int) -> dict[tuple[str, int], str] | None:
-        """One batched Claude call generating a transcript-grounded context
-        blurb per exported to-do/action-item/follow-up (see
-        ``integrations/wrike_task_context.py``). Returns None on ANY failure
-        (no API key, network error, ...) -- tasks are then created with no
-        description, exactly as before this feature existed.
+    def _build_wrike_task_contexts(self, recording_id: int) -> dict[tuple[str, int], Any] | None:
+        """One batched Claude call generating a short title + transcript-
+        grounded context blurb (a ``TaskCopy`` per item -- see
+        ``integrations/wrike_task_context.py``) for every exported
+        to-do/action-item/follow-up. Returns None on ANY failure (no API
+        key, network error, ...) -- tasks are then created with the full
+        item text as their title and no description, exactly as before this
+        feature existed.
         """
         from teams_transcriber.integrations.wrike_task_context import build_task_contexts
         from teams_transcriber.storage import SummaryRepo, TranscriptRepo

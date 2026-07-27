@@ -29,10 +29,20 @@ def build_description(summary: Summary) -> str:
     return body
 
 
-def build_task_description(text: str) -> str:
-    """HTML for a task's *description* field: same escaping + ``<br/>`` rule
-    as ``build_description``, for a transcript-grounded context blurb."""
-    return _html_text(text)
+def build_task_description(statement: str, context: str | None = None) -> str:
+    """HTML for a task's *description* field.
+
+    Renders the original full item ``statement`` first (the exported task's
+    title is now a short paraphrase, so the full statement has to live
+    somewhere), then -- if a transcript-grounded ``context`` blurb is
+    supplied -- a blank line followed by that context. Same escaping +
+    ``<br/>`` rule as ``build_description``. With no context, renders just
+    the statement.
+    """
+    body = _html_text(statement)
+    if context:
+        return f"{body}<br/><br/>{_html_text(context)}"
+    return body
 
 
 def _mmss(ms: int) -> str:

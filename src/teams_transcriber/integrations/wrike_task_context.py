@@ -20,11 +20,31 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from teams_transcriber.storage.models import Summary, TranscriptSegment
 
 logger = logging.getLogger(__name__)
+
+# Defensive ceiling on a model-returned title -- the prompt asks for <=60
+# chars, but if the model overshoots we truncate on a word boundary rather
+# than reject the whole entry.
+_TITLE_MAX_CHARS = 80
+
+
+@dataclass(frozen=True, slots=True)
+class TaskCopy:
+    """Per-item copy for an exported Wrike task.
+
+    ``title`` is a short imperative task name (``None`` if the model didn't
+    supply a usable one -- callers then fall back to the original full item
+    text, exactly as before this feature existed). ``context`` is the
+    existing 2-3 sentence transcript-grounded blurb.
+    """
+
+    title: str | None
+    context: str
 
 # Keep the transcript payload sane for very long meetings. At ~4 chars/token
 # this is ~15k tokens -- plenty for the model to ground a 2-3 sentence blurb
@@ -46,8 +66,9 @@ _VALID_KINDS = {"my", "other", "follow_up"}
 _TOOL: dict[str, Any] = {
     "name": _TOOL_NAME,
     "description": (
-        "Save a short context blurb for each to-do / action-item / follow-up, "
-        "summarizing what was actually said about it in the meeting transcript."
+        "Save a short title and context blurb for each to-do / action-item / "
+        "follow-up, summarizing what was actually said about it in the "
+        "meeting transcript."
     ),
     "input_schema": {
         "type": "object",
@@ -59,9 +80,17 @@ _TOOL: dict[str, Any] = {
                     "properties": {
                         "kind": {"type": "string", "enum": sorted(_VALID_KINDS)},
                         "index": {"type": "integer"},
+                        "title": {
+                            "type": "string",
+                            "description": (
+                                "Short, imperative task title, target 60 characters "
+                                "or fewer, no trailing period, no assignee-name "
+                                "prefix -- capture only the action itself."
+                            ),
+                        },
                         "context": {"type": "string"},
                     },
-                    "required": ["kind", "index", "context"],
+                    "required": ["kind", "index", "title", "context"],
                 },
             },
         },
@@ -108,6 +137,29 @@ def _extract_tool_payload(response: Any) -> dict[str, Any] | None:
     return None
 
 
+def _process_title(raw: Any) -> str | None:
+    """Clean up a model-returned title, or ``None`` if it's unusable.
+
+    Strips whitespace, drops a trailing period, and truncates on a word
+    boundary (appending "…") if the model overshoots the requested length.
+    """
+    if raw is None:
+        return None
+    title = str(raw).strip()
+    if not title:
+        return None
+    if title.endswith("."):
+        title = title[:-1].rstrip()
+    if not title:
+        return None
+    if len(title) > _TITLE_MAX_CHARS:
+        truncated = title[:_TITLE_MAX_CHARS]
+        if " " in truncated:
+            truncated = truncated.rsplit(" ", 1)[0]
+        title = f"{truncated.rstrip()}…"
+    return title or None
+
+
 def build_task_contexts(
     client: Any,
     *,
@@ -116,14 +168,15 @@ def build_task_contexts(
     model: str,
     max_tokens: int = 4096,
     char_budget: int = _TRANSCRIPT_CHAR_BUDGET,
-) -> dict[tuple[str, int], str]:
-    """One batched Claude call: {(kind, index): context_text} for every item.
+) -> dict[tuple[str, int], TaskCopy]:
+    """One batched Claude call: {(kind, index): TaskCopy} for every item.
 
     ``kind`` is one of "my" / "other" / "follow_up", matching
     ``wrike_project_export``'s task kinds; ``index`` is the item's position
     in the corresponding summary list. Any exception, or a response missing
     the expected tool_use block, yields ``{}`` -- callers then create tasks
-    with no description.
+    with no title override and no description, exactly as before this
+    feature existed.
     """
     items = _enumerate_items(summary)
     if not items:
@@ -139,14 +192,17 @@ def build_task_contexts(
             "Meeting transcript (may be truncated; \"ME\" is the app's user, "
             "\"OTHER\" is remote participants):\n\n"
             f"{transcript}\n\n"
-            "Items needing context (one per to-do / action-item / follow-up "
-            "from the meeting summary):\n"
+            "Items needing a short title and context (one per to-do / "
+            "action-item / follow-up from the meeting summary):\n"
             f"{items_block}\n\n"
-            "For EVERY item above, call save_task_contexts with a short (2-3 "
-            "sentence) plain-text context blurb drawn from the transcript, "
-            "explaining what was actually said about it so the task is "
-            "understandable in Wrike without opening the meeting. Do not use "
-            "markdown or HTML in the context text."
+            "For EVERY item above, call save_task_contexts with:\n"
+            "- title: a short, imperative task name (target 60 characters or "
+            "fewer) capturing only the action -- no trailing period, and no "
+            "assignee-name prefix (the caller adds that separately).\n"
+            "- context: a short (2-3 sentence) plain-text blurb drawn from "
+            "the transcript, explaining what was actually said about it so "
+            "the task is understandable in Wrike without opening the "
+            "meeting. Do not use markdown or HTML in the context text."
         )
         response = client.with_options(
             timeout=_REQUEST_TIMEOUT_SECONDS, max_retries=_MAX_RETRIES,
@@ -162,7 +218,7 @@ def build_task_contexts(
             logger.warning("wrike task-context call returned no usable tool_use block")
             return {}
 
-        out: dict[tuple[str, int], str] = {}
+        out: dict[tuple[str, int], TaskCopy] = {}
         for entry in payload.get("contexts", []) or []:
             try:
                 kind = str(entry["kind"])
@@ -172,7 +228,8 @@ def build_task_contexts(
                 continue
             if kind not in _VALID_KINDS or (kind, index) not in valid_keys or not context:
                 continue
-            out[(kind, index)] = context
+            title = _process_title(entry.get("title"))
+            out[(kind, index)] = TaskCopy(title=title, context=context)
         return out
     except Exception:
         logger.warning("wrike task-context generation failed", exc_info=True)
