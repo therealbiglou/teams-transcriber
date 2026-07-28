@@ -9,7 +9,7 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QVBoxLayout, QWidget
 
 from teams_transcriber.audio.source import RealAudioSource
 from teams_transcriber.config import load_settings
@@ -145,6 +145,8 @@ class App:
         self.tray.quit_requested.connect(self._quit)
         self.tray.settings_action.triggered.connect(self._open_settings)
         self.window.title_bar.settings_requested.connect(self._open_settings)
+        self.window.record_requested.connect(self._toggle_manual)
+        self.window.import_requested.connect(self._import_audio_file)
 
         # Tracks the currently-recording recording id so the tray notes action
         # and the toast "Add notes" button can find it.
@@ -318,6 +320,63 @@ class App:
         else:
             self._start_manual()
 
+    def _update_record_button(self) -> None:
+        """Sync the main window's Record/Stop button to current recording state."""
+        self.window.set_recording_active(self._active_recording_id is not None)
+
+    def _import_audio_file(self) -> None:
+        """Pick an external audio OR transcript file and run it through the pipeline.
+
+        Audio files (.opus/.wav/.mp3/.m4a/.flac/.ogg/.mp4) are copied into the
+        audio dir, transcribed, then summarized — useful for phone recordings,
+        other devices, or recovering orphaned .opus files. Transcript files
+        (.txt/.md/.vtt/.srt) skip transcription entirely and go straight to
+        the summarizer — useful for transcripts exported from another tool.
+        """
+        from teams_transcriber.transcript_importer import is_transcript_file
+        path, _ = QFileDialog.getOpenFileName(
+            self.window, "Import",
+            str(self.paths.audio_dir),
+            (
+                "Audio or transcript "
+                "(*.opus *.wav *.mp3 *.m4a *.flac *.ogg *.mp4 *.txt *.md *.vtt *.srt);;"
+                "Audio (*.opus *.wav *.mp3 *.m4a *.flac *.ogg *.mp4);;"
+                "Transcript (*.txt *.md *.vtt *.srt);;"
+                "All files (*.*)"
+            ),
+        )
+        if not path:
+            return
+        src = Path(path)
+        is_transcript = is_transcript_file(src)
+        try:
+            if is_transcript:
+                self.pipeline.import_transcript_file(path)
+            else:
+                self.pipeline.import_audio_file(path)
+        except FileNotFoundError:
+            show_in_app_toast("Import failed", "That file no longer exists.")
+            return
+        except Exception as exc:
+            logger.exception("import failed for %r", path)
+            kind = "transcript" if is_transcript else "audio"
+            show_in_app_toast(
+                "Import failed",
+                f"Couldn't read that file as {kind}: {exc}",
+            )
+            return
+        if is_transcript:
+            show_in_app_toast(
+                "Importing transcript",
+                f"Summarizing {src.name} — you'll get a notification when it's ready.",
+            )
+        else:
+            show_in_app_toast(
+                "Importing audio",
+                f"Transcribing {src.name} — you'll get a notification when it's ready.",
+            )
+        self._refresh_history()
+
     def _marshal(self, fn):
         """Wrap a callback so it executes on the Qt main thread.
 
@@ -403,6 +462,7 @@ class App:
             action_label="Open notes",
             action_callback=lambda: self._open_notes_window(recording_id),
         )
+        self._update_record_button()
         self._refresh_history()
 
     def _should_defer_processing(self, recording_id: int) -> bool:
@@ -426,6 +486,7 @@ class App:
                 "Recording stopped",
                 "Transcribing and summarizing — you'll get a notification when it's ready.",
             )
+        self._update_record_button()
         self._refresh_history()
 
     def _on_recording_failed(self, evt: RecordingFailed) -> None:
@@ -441,6 +502,7 @@ class App:
         else:
             show_in_app_toast("Recording failed", msg)
         self.active_banner.hide_banner()
+        self._update_record_button()
         self._refresh_history()
 
     def _on_recording_device_fallback(self, evt) -> None:

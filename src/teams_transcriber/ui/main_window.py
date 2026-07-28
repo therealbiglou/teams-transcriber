@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
+    QHBoxLayout,
     QMainWindow,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -19,9 +21,13 @@ from teams_transcriber.ui.title_bar import TitleBar
 class MainWindow(FramelessWindowMixin, QMainWindow):
     """Frameless window with rounded corners (when not maximized), drag-resize from edges.
 
-    Body is title bar + a single content area (the meeting history list, wired
-    up by ``App``). No sidebar, no splitter, no content stack.
+    Body is title bar + a compact action row (Record / Import) + a single
+    content area (the meeting history list, wired up by ``App``). No
+    sidebar, no splitter, no content stack.
     """
+
+    record_requested = Signal()
+    import_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -44,6 +50,31 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         self.title_bar.maximize_requested.connect(self.toggle_max)
         self.title_bar.close_requested.connect(self.close)
         outer_layout.addWidget(self.title_bar)
+
+        action_row = QWidget()
+        action_layout = QHBoxLayout(action_row)
+        action_layout.setContentsMargins(24, 16, 24, 0)
+        action_layout.setSpacing(8)
+
+        self.record_btn = QPushButton("Record")
+        self.record_btn.setProperty("role", "primary")
+        self.record_btn.setFixedHeight(36)
+        self.record_btn.clicked.connect(self.record_requested)
+        action_layout.addWidget(self.record_btn)
+
+        self.import_btn = QPushButton("Import…")
+        self.import_btn.setProperty("role", "secondary")
+        self.import_btn.setFixedHeight(36)
+        self.import_btn.setToolTip(
+            "Import an audio file (.opus/.wav/.mp3/.m4a/.flac/.ogg/.mp4) "
+            "to transcribe + summarize, OR a transcript file "
+            "(.txt/.md/.vtt/.srt) to summarize directly."
+        )
+        self.import_btn.clicked.connect(self.import_requested)
+        action_layout.addWidget(self.import_btn)
+
+        action_layout.addStretch(1)
+        outer_layout.addWidget(action_row)
 
         self.content = QWidget()
         self.content.setObjectName("ContentArea")
@@ -69,6 +100,10 @@ class MainWindow(FramelessWindowMixin, QMainWindow):
         from teams_transcriber.ui.window_state import save_window_geometry
         save_window_geometry(self, "main")
         super().closeEvent(ev)
+
+    def set_recording_active(self, active: bool) -> None:
+        """Sync the Record/Stop button label to current recording state."""
+        self.record_btn.setText("Stop" if active else "Record")
 
     def set_content(self, widget: QWidget) -> None:
         """Replace the content area's child widget."""
