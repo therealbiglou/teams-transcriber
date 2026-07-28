@@ -53,3 +53,37 @@ def app_with_db(tmp_path, qapp):
     yield app
 
     db.close()
+
+
+@pytest.fixture
+def tmp_db_with_recording(tmp_path, qapp):
+    """A fresh temp database holding one ``RECORDING``-status row.
+
+    Returns ``(db, recording_id)``. Used by tests that only need a database
+    and a recording row -- not the full ``App`` scaffolding ``app_with_db``
+    builds.
+    """
+    from teams_transcriber.paths import AppPaths
+    from teams_transcriber.storage import (
+        Recording,
+        RecordingRepo,
+        RecordingSource,
+        RecordingStatus,
+        build_database,
+    )
+
+    paths = AppPaths(root=tmp_path)
+    paths.ensure_dirs()
+    db = build_database(paths.db_path)
+    db.initialize()
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-07-26T15:00:00+00:00", ended_at=None,
+        source=RecordingSource.MANUAL, detected_title=None, display_title="Q3 Sync",
+        audio_path=None, audio_deleted_at=None, duration_ms=None,
+        status=RecordingStatus.RECORDING, error_message=None,
+    ))
+    assert rec.id is not None
+
+    yield db, rec.id
+
+    db.close()

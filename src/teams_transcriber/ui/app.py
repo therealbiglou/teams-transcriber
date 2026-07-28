@@ -302,11 +302,54 @@ class App:
     def _open_notes_window(self, recording_id: int | None = None) -> None:
         """Open (or raise) the capture-only notes window for a recording.
 
-        Stub for now -- the real NotesWindow lands in a follow-up task. Until
-        then this is a deliberate no-op so the tray action, hotkey, and
-        active-recording banner click all have somewhere safe to point.
+        With no id (tray action / hotkey), targets the active recording, or
+        the most recent one if nothing is currently recording.
         """
-        del recording_id
+        if recording_id is None:
+            if self._active_recording_id is not None:
+                recording_id = self._active_recording_id
+            else:
+                recents = RecordingRepo(self.db).list_recent(limit=1)
+                if recents and recents[0].id is not None:
+                    recording_id = recents[0].id
+                else:
+                    show_in_app_toast(
+                        "Nothing to show yet",
+                        "Start a recording to open notes.",
+                    )
+                    return
+
+        windows = getattr(self, "_notes_windows", {})
+        existing = windows.get(recording_id)
+        if existing is not None and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return
+
+        from teams_transcriber.ui.notes_window import NotesWindow
+        win = NotesWindow(self.db, recording_id)
+        win.stop_requested.connect(self._stop_manual)
+        win.closed.connect(self._on_notes_window_closed)
+        self._notes_windows = getattr(self, "_notes_windows", {})
+        self._notes_windows[recording_id] = win
+        self._workspace_tracker.mark_open(recording_id)
+        win.show()
+
+    def _on_notes_window_closed(self, recording_id: int) -> None:
+        windows = getattr(self, "_notes_windows", {})
+        windows.pop(recording_id, None)
+        self._workspace_tracker.mark_closed(recording_id)
+        rec = RecordingRepo(self.db).get(recording_id)
+        was_waiting = rec is not None and rec.status == RecordingStatus.WAITING_FOR_NOTES
+        self.pipeline.release_processing(recording_id)
+        if was_waiting:
+            self.tray.set_state(TrayState.PROCESSING)
+            self.active_banner.set_processing()
+            show_in_app_toast(
+                "Processing started",
+                "Transcribing and summarizing your meeting now.",
+            )
+        self._refresh_history()
 
     def _show_window(self) -> None:
         self.window.show()
