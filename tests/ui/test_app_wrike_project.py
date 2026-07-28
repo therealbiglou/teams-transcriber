@@ -199,24 +199,6 @@ def test_resolve_wrike_assignees_llm_fallback_off_without_key(qapp, tmp_path, mo
         db.close()
 
 
-def test_on_todo_state_changed_refreshes_history_and_master(qapp):
-    """_on_todo_state_changed refreshes history + reloads the master view."""
-    from teams_transcriber.ui.app import App
-
-    app = App.__new__(App)
-    app.search = SimpleNamespace(input=SimpleNamespace(text=lambda: ""))
-
-    refresh_calls: list[int] = []
-    app._refresh_history = lambda query=None: refresh_calls.append(1)
-    reload_calls: list[int] = []
-    app.master_todos = SimpleNamespace(reload=lambda: reload_calls.append(1))
-
-    app._on_todo_state_changed(7)
-
-    assert refresh_calls == [1]
-    assert reload_calls == [1]
-
-
 def test_wrike_export_worker_skips_when_already_in_flight(qapp, monkeypatch):
     """Two entry points racing for the same recording_id (e.g. the
     SummaryReady auto-push firing while the manual Send button is also

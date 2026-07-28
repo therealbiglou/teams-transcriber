@@ -5,17 +5,11 @@ from __future__ import annotations
 import logging
 import sys
 import threading
+import webbrowser
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QApplication,
-    QFileDialog,
-    QHBoxLayout,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QApplication, QVBoxLayout, QWidget
 
 from teams_transcriber.audio.source import RealAudioSource
 from teams_transcriber.config import load_settings
@@ -36,29 +30,25 @@ from teams_transcriber.storage import (
     RecordingRepo,
     RecordingSource,
     RecordingStatus,
-    SummaryRepo,
-    TodoStateRepo,
     build_database,
 )
 from teams_transcriber.storage.models import Recording
+from teams_transcriber.storage.wrike import WrikeProjectRepo, WrikeSyncRepo
 from teams_transcriber.summarizer import Summarizer
 from teams_transcriber.transcriber import Transcriber
 from teams_transcriber.ui.active_recording_banner import ActiveRecordingBanner
 from teams_transcriber.ui.confirm_dialog import ConfirmDialog
-from teams_transcriber.ui.history_list import HistoryList, filter_for_bucket
+from teams_transcriber.ui.history_list import HistoryList
 from teams_transcriber.ui.hotkeys import HotkeyManager
 from teams_transcriber.ui.icons import TrayState
 from teams_transcriber.ui.main_window import MainWindow
+from teams_transcriber.ui.meeting_status import RowAction, RowState, derive_row_state
 from teams_transcriber.ui.qt_bridge import QtEventBridge
 from teams_transcriber.ui.scrim import exec_modal
-from teams_transcriber.ui.search_bar import SearchBar
 from teams_transcriber.ui.settings_dialog import SettingsDialog
-from teams_transcriber.ui.sidebar import SidebarBucket
-from teams_transcriber.ui.summary_pane import SummaryPane
 from teams_transcriber.ui.theme import app_stylesheet
 from teams_transcriber.ui.toast_banner import show_in_app_toast
 from teams_transcriber.ui.tray import AppTray
-from teams_transcriber.ui.workspace_window import WorkspaceWindow
 
 logger = logging.getLogger(__name__)
 
@@ -85,34 +75,6 @@ class _WorkspaceTracker:
     def is_open(self, recording_id: int) -> bool:
         with self._lock:
             return recording_id in self._ids
-
-
-def _default_export_name(title: str, started_at: str) -> str:
-    import re
-    from datetime import datetime
-    slug = re.sub(r"[^a-z0-9]+", "-", (title or "meeting").lower()).strip("-") or "meeting"
-    try:
-        day = datetime.fromisoformat(started_at).astimezone().strftime("%Y-%m-%d")
-    except ValueError:
-        day = "export"
-    return f"{slug}-{day}.pdf"
-
-
-def _chat_should_send(*, api_key: str, text: str) -> bool:
-    return bool(api_key) and bool(text.strip())
-
-
-def _build_columns_splitter(history, summary):
-    """History | Summary as a user-resizable splitter (was a fixed 50/50 box)."""
-    from PySide6.QtWidgets import QSplitter
-    sp = QSplitter(Qt.Orientation.Horizontal)
-    sp.setHandleWidth(6)
-    sp.setChildrenCollapsible(False)
-    sp.addWidget(history)
-    sp.addWidget(summary)
-    sp.setStretchFactor(0, 1)
-    sp.setStretchFactor(1, 1)
-    return sp
 
 
 def _wrike_pick_pending(rows: list) -> int | None:
@@ -179,7 +141,7 @@ class App:
         self.tray.start_manual_requested.connect(self._start_manual)
         self.tray.stop_manual_requested.connect(self._stop_manual)
         self.tray.pause_detection_toggled.connect(self._on_pause_toggled)
-        self.tray.open_workspace_requested.connect(self._open_workspace_for_active)
+        self.tray.open_workspace_requested.connect(self._open_notes_window)
         self.tray.quit_requested.connect(self._quit)
         self.tray.settings_action.triggered.connect(self._open_settings)
         self.window.title_bar.settings_requested.connect(self._open_settings)
@@ -249,144 +211,95 @@ class App:
             threading.Thread(target=self._background_update_check, daemon=True).start()
 
     def _build_main_content(self) -> None:
-        from PySide6.QtWidgets import QPushButton
-
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
 
-        # Top row: Record button + search
-        top_row = QHBoxLayout()
-        top_row.setSpacing(8)
-        self.record_btn = QPushButton("Record")
-        self.record_btn.setProperty("role", "primary")
-        self.record_btn.setFixedHeight(36)
-        self.record_btn.clicked.connect(self._toggle_manual)
-        top_row.addWidget(self.record_btn)
-
-        self.import_btn = QPushButton("Import…")
-        self.import_btn.setProperty("role", "secondary")
-        self.import_btn.setFixedHeight(36)
-        self.import_btn.setToolTip(
-            "Import an audio file (.opus/.wav/.mp3/.m4a/.flac/.ogg/.mp4) "
-            "to transcribe + summarize, OR a transcript file "
-            "(.txt/.md/.vtt/.srt) to summarize directly."
-        )
-        self.import_btn.clicked.connect(self._import_audio_file)
-        top_row.addWidget(self.import_btn)
-
-        self.search = SearchBar()
-        self.search.query_changed.connect(self._on_search)
-        top_row.addWidget(self.search, 1)
-        layout.addLayout(top_row)
-
         self.active_banner = ActiveRecordingBanner()
-        self.active_banner.clicked.connect(self._open_workspace)
+        self.active_banner.clicked.connect(self._open_notes_window)
         layout.addWidget(self.active_banner)
 
         self.history = HistoryList()
-        self.history.recording_selected.connect(self._show_summary)
-        self.summary = SummaryPane(
-            self.db,
-            wrike_available=self._wrike_project_enabled,
-            anthropic_key_getter=self._anthropic_key,
-        )
-        self.summary.export_requested.connect(self._export_summary)
-        self.summary.delete_requested.connect(self._delete_recording)
-        self.summary.notes_requested.connect(self._open_workspace)
-        self.summary.retry_requested.connect(self._retry_recording)
-        self.summary.transcript_requested.connect(self._show_transcript)
-        self.summary.todo_state_changed.connect(self._on_todo_state_changed)
-        self.summary.wrike_sync_requested.connect(self._wrike_export_worker)
-        self.summary.chat_send_requested.connect(self._on_chat_send)
-        from teams_transcriber.ui.window_state import (
-            restore_splitter_state,
-            save_splitter_state,
-        )
-        body = _build_columns_splitter(self.history, self.summary)
-        restore_splitter_state(body, "main_columns")
-        body.splitterMoved.connect(
-            lambda *_: save_splitter_state(body, "main_columns")
-        )
-
-        from PySide6.QtWidgets import QStackedWidget
-
-        from teams_transcriber.ui.master_todo_view import MasterTodoView
-
-        self._content_stack = QStackedWidget()
-        self._content_stack.addWidget(body)                  # index 0
-        self.master_todos = MasterTodoView(self.db)
-        self._content_stack.addWidget(self.master_todos)     # index 1
-        self.master_todos.go_to_summary.connect(self._go_to_summary_from_todos)
-        self.master_todos.todo_toggled.connect(self._on_master_todo_toggled)
-        layout.addWidget(self._content_stack, 1)
+        self.history.action_requested.connect(self._on_row_action)
+        self.history.delete_requested.connect(self._on_row_delete)
+        layout.addWidget(self.history, 1)
 
         self.window.set_content(content)
-        self.window.sidebar.bucket_selected.connect(self._on_bucket)
-        self.window.sidebar.todos_selected.connect(self._show_master_todos)
 
-    def _refresh_history(self, query: str | None = None) -> None:
+    def _refresh_history(self) -> None:
+        """Rebuild the history list from the DB: one row per recording, with
+        status + Wrike state derived via ``derive_row_state``."""
         rec_repo = RecordingRepo(self.db)
-        sum_repo = SummaryRepo(self.db)
-        todo_repo = TodoStateRepo(self.db)
-        rows: list[tuple[Recording, str | None, int, int]] = []
+        project_repo = WrikeProjectRepo(self.db)
+        sync_repo = WrikeSyncRepo(self.db)
+        rows: list[tuple[Recording, RowState]] = []
         for rec in rec_repo.list_recent(limit=200):
             if rec.id is None:
                 continue
-            s = sum_repo.get(rec.id)
-            one_line = s.one_line if s else None
-            todos = len(s.my_todos) if s else 0
-            # Bound the done count to the CURRENT summary's todos: todo_state
-            # keeps stale rows for indices beyond a shrunk my_todos (seed
-            # never prunes on re-summarization), and those must not inflate
-            # the history chip's done count.
-            done = (
-                sum(
-                    1 for st in todo_repo.list_for_recording(rec.id)
-                    if st.done and st.todo_index < todos
-                )
-                if s else 0
+            project = project_repo.get(rec.id)
+            sync = sync_repo.get(rec.id)
+            state = derive_row_state(
+                status=rec.status,
+                error_message=rec.error_message,
+                has_wrike_project=project is not None,
+                wrike_permalink=project.permalink if project else None,
+                wrike_sync_status=sync.status if sync else None,
+                wrike_error_message=sync.error_message if sync else None,
             )
-            rows.append((rec, one_line, todos, done))
-        if query:
-            ql = query.lower()
-            rows = [
-                r for r in rows
-                if (r[0].display_title and ql in r[0].display_title.lower())
-                or (r[1] and ql in r[1].lower())
-            ]
-        bucket = self.window.sidebar.active_bucket
-        rows = filter_for_bucket(rows, bucket)
-        self.history.set_recordings(rows)
+            rows.append((rec, state))
+        self.history.set_rows(rows)
 
-    def _on_search(self, text: str) -> None:
-        self._refresh_history(query=text or None)
+    def _on_row_action(self, recording_id: int, action: str) -> None:
+        if action == RowAction.RETRY.value:
+            self._retry_recording(recording_id)
+        elif action == RowAction.SEND_TO_WRIKE.value:
+            self._wrike_export_worker(recording_id)
+        elif action == RowAction.OPEN_IN_WRIKE.value:
+            project = WrikeProjectRepo(self.db).get(recording_id)
+            if project is not None and project.permalink:
+                webbrowser.open(project.permalink)
 
-    def _on_bucket(self, _bucket: SidebarBucket) -> None:
-        self._content_stack.setCurrentIndex(0)
-        self._refresh_history(query=self.search.input.text() or None)
+    def _on_row_delete(self, recording_id: int) -> None:
+        """Confirm and delete a recording (DB row + audio file). Cascading delete
+        removes the summary, transcript segments, and Wrike sync/project rows."""
+        rec_repo = RecordingRepo(self.db)
+        rec = rec_repo.get(recording_id)
+        if rec is None:
+            return
+        title = rec.display_title or rec.detected_title or "this recording"
+        confirmed = ConfirmDialog.ask(
+            self.window,
+            title="Delete meeting?",
+            body=(
+                f"Permanently delete “{title}”, its transcript, summary, "
+                "and notes? The audio file on disk will also be removed."
+            ),
+            confirm_label="Delete",
+            cancel_label="Cancel",
+            danger=True,
+        )
+        if not confirmed:
+            return
 
-    def _on_todo_state_changed(self, rid: int) -> None:
-        self._refresh_history(query=self.search.input.text() or None)
-        self.master_todos.reload()
+        if rec.audio_path:
+            audio = Path(rec.audio_path)
+            if audio.exists():
+                try:
+                    audio.unlink()
+                except OSError:
+                    logger.exception("could not delete audio file %s", audio)
+        rec_repo.delete(recording_id)
+        self._refresh_history()
 
-    def _on_master_todo_toggled(self, recording_id: int) -> None:
-        """Master-view toggle: refresh history's done-count chip.
-        No master_todos.reload() here — the toggled checkbox is the sender and
-        reload would delete it mid-signal; the view already shows the new state."""
-        self._refresh_history(query=self.search.input.text() or None)
+    def _open_notes_window(self, recording_id: int | None = None) -> None:
+        """Open (or raise) the capture-only notes window for a recording.
 
-    def _show_master_todos(self) -> None:
-        self.master_todos.reload()
-        self._content_stack.setCurrentIndex(1)
-
-    def _go_to_summary_from_todos(self, recording_id: int) -> None:
-        # Return to History (ALL so the card exists), select + show the meeting.
-        self.window.sidebar.select_bucket(SidebarBucket.ALL)
-        self._content_stack.setCurrentIndex(0)
-        self._show_window()
-        self.history.select(recording_id)
+        Stub for now -- the real NotesWindow lands in a follow-up task. Until
+        then this is a deliberate no-op so the tray action, hotkey, and
+        active-recording banner click all have somewhere safe to point.
+        """
+        del recording_id
 
     def _show_window(self) -> None:
         self.window.show()
@@ -421,7 +334,7 @@ class App:
             (hotkey_map.get("toggle_manual_recording", "ctrl+alt+r"),
              self._marshal(self._toggle_manual)),
             (hotkey_map.get("open_workspace", "ctrl+alt+n"),
-             self._marshal(self._open_workspace_for_active)),
+             self._marshal(self._open_notes_window)),
             (hotkey_map.get("toggle_pause_detection", "ctrl+alt+p"),
              self._marshal(self._toggle_pause_detection)),
         ])
@@ -469,131 +382,10 @@ class App:
         self.settings = load_settings(self.paths)
         self._apply_hotkeys(new_hotkeys)
 
-    def _show_summary(self, recording_id: int) -> None:
-        self._show_window()
-        self.summary.show_recording(recording_id)
-
-    def _import_audio_file(self) -> None:
-        """Pick an external audio OR transcript file and run it through the pipeline.
-
-        Audio files (.opus/.wav/.mp3/.m4a/.flac/.ogg/.mp4) are copied into the
-        audio dir, transcribed, then summarized — useful for phone recordings,
-        other devices, or recovering orphaned .opus files. Transcript files
-        (.txt/.md/.vtt/.srt) skip transcription entirely and go straight to
-        the summarizer — useful for transcripts exported from another tool.
-        """
-        from pathlib import Path
-
-        from teams_transcriber.transcript_importer import is_transcript_file
-        path, _ = QFileDialog.getOpenFileName(
-            self.window, "Import",
-            str(self.paths.audio_dir),
-            (
-                "Audio or transcript "
-                "(*.opus *.wav *.mp3 *.m4a *.flac *.ogg *.mp4 *.txt *.md *.vtt *.srt);;"
-                "Audio (*.opus *.wav *.mp3 *.m4a *.flac *.ogg *.mp4);;"
-                "Transcript (*.txt *.md *.vtt *.srt);;"
-                "All files (*.*)"
-            ),
-        )
-        if not path:
-            return
-        src = Path(path)
-        is_transcript = is_transcript_file(src)
-        try:
-            if is_transcript:
-                rid = self.pipeline.import_transcript_file(path)
-            else:
-                rid = self.pipeline.import_audio_file(path)
-        except FileNotFoundError:
-            show_in_app_toast("Import failed", "That file no longer exists.")
-            return
-        except Exception as exc:
-            logger.exception("import failed for %r", path)
-            kind = "transcript" if is_transcript else "audio"
-            show_in_app_toast(
-                "Import failed",
-                f"Couldn't read that file as {kind}: {exc}",
-            )
-            return
-        if is_transcript:
-            show_in_app_toast(
-                "Importing transcript",
-                f"Summarizing {src.name} — you'll get a notification when it's ready.",
-            )
-        else:
-            show_in_app_toast(
-                "Importing audio",
-                f"Transcribing {src.name} — you'll get a notification when it's ready.",
-            )
-        self._refresh_history(query=self.search.input.text() or None)
-        # Highlight the new card.
-        self.history.select(rid)
-
-    def _export_summary(self, recording_id: int) -> None:
-        rec = RecordingRepo(self.db).get(recording_id)
-        s = SummaryRepo(self.db).get(recording_id)
-        if rec is None or s is None:
-            return
-        default_name = _default_export_name(rec.display_title or s.title or "meeting", rec.started_at)
-        path, _ = QFileDialog.getSaveFileName(
-            self.window, "Export summary", default_name,
-            "PDF (*.pdf);;Markdown (*.md);;Plain text (*.txt)",
-        )
-        if not path:
-            return
-        from teams_transcriber.storage import TodoStateRepo
-        from teams_transcriber.ui.pdf_export import write_summary_export
-        states = {
-            st.todo_index: st.done
-            for st in TodoStateRepo(self.db).list_for_recording(recording_id)
-        }
-        write_summary_export(path, s, rec, states)
-
-    def _delete_recording(self, recording_id: int) -> None:
-        """Confirm and delete a recording (DB row + audio file). Cascading delete
-        removes the summary, transcript segments, and todo states."""
-        rec_repo = RecordingRepo(self.db)
-        rec = rec_repo.get(recording_id)
-        if rec is None:
-            return
-        title = rec.display_title or rec.detected_title or "this recording"
-        confirmed = ConfirmDialog.ask(
-            self.window,
-            title="Delete recording?",
-            body=(
-                f"Permanently delete “{title}”, its transcript, summary, "
-                "and notes? The audio file on disk will also be removed."
-            ),
-            confirm_label="Delete",
-            cancel_label="Cancel",
-            danger=True,
-        )
-        if not confirmed:
-            return
-
-        if rec.audio_path:
-            audio = Path(rec.audio_path)
-            if audio.exists():
-                try:
-                    audio.unlink()
-                except OSError:
-                    logger.exception("could not delete audio file %s", audio)
-        rec_repo.delete(recording_id)
-        self.summary.clear()
-        self._refresh_history()
-
     def _on_meeting_detected(self, evt: MeetingDetected) -> None:
         # Toast appears when the recorder actually starts (we have the recording_id then).
         # No-op here — _on_recording_started handles the toast.
         del evt
-
-    def _update_record_button(self) -> None:
-        """Sync the Record/Stop button label to current recording state."""
-        if self._active_recording_id is not None:
-            self.record_btn.setText("Stop")
-        else:
-            self.record_btn.setText("Record")
 
     def _on_recording_started(self, evt: RecordingStarted) -> None:
         self.tray.set_state(TrayState.RECORDING, label=Path(evt.audio_path).stem)
@@ -604,14 +396,13 @@ class App:
         title = (rec.display_title if rec else None) or (rec.detected_title if rec else None) or "Manual recording"
         self.active_banner.show_recording(recording_id, title, status_label="Recording")
         if is_manual:
-            self._open_workspace(recording_id)
+            self._open_notes_window(recording_id)
         show_in_app_toast(
             "Recording started",
-            "Open workspace to take notes and watch live transcription.",
-            action_label="Open workspace",
-            action_callback=lambda: self._open_workspace(recording_id),
+            "Open notes to jot context while it records.",
+            action_label="Open notes",
+            action_callback=lambda: self._open_notes_window(recording_id),
         )
-        self._update_record_button()
         self._refresh_history()
 
     def _should_defer_processing(self, recording_id: int) -> bool:
@@ -621,15 +412,9 @@ class App:
         rid = self._active_recording_id
         self._active_recording_id = None
         deferred = rid is not None and self._should_defer_processing(rid)
-        workspaces = getattr(self, "_workspace_windows", {})
-        ws = workspaces.get(rid) if rid is not None else None
-        if ws is not None:
-            ws.set_recording_finished()
         if deferred:
             self.tray.set_state(TrayState.IDLE)
             self.active_banner.hide_banner()
-            if ws is not None:
-                ws.show_waiting_for_processing()
             show_in_app_toast(
                 "Waiting for notes",
                 "Transcription will start when you close the notes window.",
@@ -641,7 +426,6 @@ class App:
                 "Recording stopped",
                 "Transcribing and summarizing — you'll get a notification when it's ready.",
             )
-        self._update_record_button()
         self._refresh_history()
 
     def _on_recording_failed(self, evt: RecordingFailed) -> None:
@@ -657,7 +441,6 @@ class App:
         else:
             show_in_app_toast("Recording failed", msg)
         self.active_banner.hide_banner()
-        self._update_record_button()
         self._refresh_history()
 
     def _on_recording_device_fallback(self, evt) -> None:
@@ -672,7 +455,6 @@ class App:
 
     def _retry_recording(self, recording_id: int) -> None:
         """Re-run the failed step (transcription or summary) for a recording."""
-        from teams_transcriber.storage import RecordingStatus
         rec = RecordingRepo(self.db).get(recording_id)
         if rec is None:
             return
@@ -753,11 +535,10 @@ class App:
             self.active_banner.hide_banner()
         rec = RecordingRepo(self.db).get(evt.recording_id)
         title = (rec.display_title if rec else None) or "Meeting"
-        recording_id = evt.recording_id
         show_in_app_toast(
             "Summary ready", title,
             action_label="Open",
-            action_callback=lambda: self._show_summary(recording_id),
+            action_callback=lambda: self._show_window(),
         )
         self._refresh_history()
 
@@ -770,84 +551,6 @@ class App:
             return keyring.get_password(KEYRING_SERVICE, KEYRING_USER_ANTHROPIC) or ""
         except Exception:
             return ""
-
-    def _on_chat_send(self, recording_id: int, text: str) -> None:
-        """Show user turn immediately + dispatch to a background worker."""
-        import threading
-        api_key = self._anthropic_key()
-        if not _chat_should_send(api_key=api_key, text=text):
-            return
-        card = getattr(self.summary, "_chat_card", None)
-        if card is None:
-            return
-        card.append_user_message(text)
-        card.set_pending(True)
-        threading.Thread(
-            target=self._chat_worker,
-            args=(recording_id, text, api_key),
-            daemon=True,
-        ).start()
-
-    def _chat_worker(self, recording_id: int, text: str, api_key: str) -> None:
-        """Worker thread: call chat.ask; hop result back via QTimer with self.window context."""
-        from PySide6.QtCore import QTimer
-
-        from teams_transcriber.chat import (
-            ChatApiError,
-            ChatAuthError,
-            ChatTokenLimitError,
-            ask,
-        )
-        try:
-            reply = ask(
-                self.db, recording_id, text,
-                api_key=api_key, model=self.settings.ai_model,
-            )
-        except ChatAuthError:
-            err = "Anthropic key invalid — reset in Settings → AI."
-            QTimer.singleShot(0, self.window,
-                              lambda: self._on_chat_failed(recording_id, err))
-            return
-        except ChatTokenLimitError as exc:
-            err = str(exc)
-            QTimer.singleShot(0, self.window,
-                              lambda: self._on_chat_failed(recording_id, err))
-            return
-        except ChatApiError as exc:
-            err = f"Chat failed: {exc}"
-            QTimer.singleShot(0, self.window,
-                              lambda: self._on_chat_failed(recording_id, err))
-            return
-        except Exception as exc:
-            logger.exception("chat worker crashed unexpectedly")
-            err = f"Chat failed: {exc}"
-            QTimer.singleShot(0, self.window,
-                              lambda: self._on_chat_failed(recording_id, err))
-            return
-        QTimer.singleShot(0, self.window,
-                          lambda: self._on_chat_done(recording_id, reply))
-
-    def _on_chat_done(self, recording_id: int, reply: str) -> None:
-        """Main-thread callback for a successful chat reply."""
-        # Only update UI if the user is still on this recording — message is
-        # persisted in the DB either way, so it'll show on revisit.
-        if self.summary._current_recording_id != recording_id:
-            return
-        card = getattr(self.summary, "_chat_card", None)
-        if card is None:
-            return
-        card.set_pending(False)
-        card.append_assistant_message(reply)
-
-    def _on_chat_failed(self, recording_id: int, err: str) -> None:
-        """Main-thread callback for a failed chat call."""
-        if self.summary._current_recording_id != recording_id:
-            return
-        card = getattr(self.summary, "_chat_card", None)
-        if card is None:
-            return
-        card.set_pending(False)
-        card.append_error_message(err)
 
     def _wrike_project_enabled(self) -> bool:
         """True when auto Wrike-project-export is fully configured: a token
@@ -1019,7 +722,7 @@ class App:
                     QTimer.singleShot(0, self.window, lambda: show_in_app_toast(
                         "Synced to Wrike", "Project created.",
                         action_label=("Open in Wrike" if link else None),
-                        action_callback=((lambda: __import__("webbrowser").open(link)) if link else None)))
+                        action_callback=((lambda: webbrowser.open(link)) if link else None)))
             finally:
                 QTimer.singleShot(
                     0, self.window,
@@ -1088,77 +791,6 @@ class App:
             quit_callback=self._quit_for_update,
         )
         exec_modal(dlg)
-
-    def _open_workspace_for_active(self) -> None:
-        if self._active_recording_id is not None:
-            self._open_workspace(self._active_recording_id)
-            return
-        recents = RecordingRepo(self.db).list_recent(limit=1)
-        if recents and recents[0].id is not None:
-            self._open_workspace(recents[0].id)
-        else:
-            show_in_app_toast(
-                "Nothing to show yet",
-                "Start a recording to open the workspace.",
-            )
-
-    def _open_workspace(self, recording_id: int) -> None:
-        """Open (or raise) the workspace window for a recording.
-
-        Live mode if the recording is still recording, past mode otherwise.
-        """
-        existing = getattr(self, "_workspace_windows", {}).get(recording_id)
-        if existing is not None and existing.isVisible():
-            existing.raise_()
-            existing.activateWindow()
-            return
-
-        rec = RecordingRepo(self.db).get(recording_id)
-        live = (rec is not None and rec.status == RecordingStatus.RECORDING)
-        win = WorkspaceWindow(
-            db=self.db,
-            recording_id=recording_id,
-            bridge=self.bridge,
-            live=live,
-            settings=self.settings,
-        )
-        win.stop_recording_requested.connect(lambda _rid: self._stop_manual())
-        win.closed.connect(self._on_workspace_closed)
-        self._workspace_windows = getattr(self, "_workspace_windows", {})
-        self._workspace_windows[recording_id] = win
-        self._workspace_tracker.mark_open(recording_id)
-        win.show()
-
-    def _on_workspace_closed(self, recording_id: int) -> None:
-        windows = getattr(self, "_workspace_windows", {})
-        windows.pop(recording_id, None)
-        self._workspace_tracker.mark_closed(recording_id)
-        rec = RecordingRepo(self.db).get(recording_id)
-        was_waiting = rec is not None and rec.status == RecordingStatus.WAITING_FOR_NOTES
-        self.pipeline.release_processing(recording_id)
-        if was_waiting:
-            self.tray.set_state(TrayState.PROCESSING)
-            self.active_banner.set_processing()
-            show_in_app_toast(
-                "Processing started",
-                "Transcribing and summarizing your meeting now.",
-            )
-        self._refresh_history()
-
-    def _show_transcript(self, recording_id: int) -> None:
-        from teams_transcriber.ui.transcript_window import TranscriptWindow
-        self._transcript_windows = getattr(self, "_transcript_windows", {})
-        existing = self._transcript_windows.get(recording_id)
-        if existing is not None and existing.isVisible():
-            existing.raise_()
-            existing.activateWindow()
-            return
-        win = TranscriptWindow(db=self.db, recording_id=recording_id)
-        win.closed.connect(
-            lambda rid: self._transcript_windows.pop(rid, None)
-        )
-        self._transcript_windows[recording_id] = win
-        win.show()
 
     def _quit(self) -> None:
         self.hotkeys.stop()
