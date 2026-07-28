@@ -27,7 +27,10 @@ Everything that exists only to *read* a meeting inside the app is removed.
 - **No per-meeting detail view at all.** The history list is the whole reading
   surface.
 - **Rows keep a Delete action** (removes the recording and its audio).
-- **Buttons are the only interaction** — clicking a row itself does nothing.
+- **Buttons and failure chips are the only interaction** — clicking a row
+  itself does nothing; clicking a failure chip explains the failure.
+- **`todo_state` is removed**, not left write-only: the repo, the summarizer's
+  writes, and the table itself all go.
 
 ## Architecture
 
@@ -52,11 +55,18 @@ testable without Qt:
 | Recording status | Wrike state | Chip | Primary action |
 |---|---|---|---|
 | `recording`, `transcribing`, `summarizing`, `waiting_for_notes` | any | `Processing…` | none |
-| `transcription_failed`, `summary_failed` | any | `Failed` (error text in tooltip) | Retry |
-| `recording_failed` | any | `Recording failed` (error in tooltip) | none — Delete only |
+| `transcription_failed`, `summary_failed` | any | `Failed` * | Retry |
+| `recording_failed` | any | `Recording failed` * | none — Delete only |
 | `done` | no `wrike_projects` row | `Not in Wrike` | **Send to Wrike** |
 | `done` | `wrike_projects` row exists, `wrike_sync.status` not `failed` | `In Wrike` | **Open in Wrike** |
-| `done` | `wrike_sync.status == "failed"` | `Wrike failed` (error in tooltip) | Retry |
+| `done` | `wrike_sync.status == "failed"` | `Wrike failed` * | Retry |
+
+\* **Failure chips are clickable.** Clicking one opens a themed detail dialog
+showing the meeting title and the full stored `error_message` as selectable,
+wrapping text, so a long API error can be read and copied rather than
+squinted at in a tooltip. It is informational — a single dismiss button, no
+action. Implemented as an info mode on `ui/confirm_dialog.py` (never
+`QMessageBox`, per the project's UI rules). Non-failure chips are inert.
 
 `Open in Wrike` uses the stored `wrike_projects.permalink`; if it is missing,
 the row falls back to `Send to Wrike` (a re-push is idempotent and repairs the
@@ -90,18 +100,27 @@ a stop-recording button. It replaces `WorkspaceWindow`. The existing
 | `ui/live_transcript_view.py` | live transcript cut |
 | `ui/transcript_window.py` | transcript reading surface |
 | `ui/pdf_export.py`, `summary_export.py` | export cut |
+| `storage/todos.py` (`TodoStateRepo`) | to-do state removed entirely |
 
 Their tests are removed with them, along with the now-dead wiring in
-`ui/app.py` and `ui/main_window.py`. `ui/history_list.py` and
-`ui/meeting_card.py` are reworked into the new row rather than deleted.
+`ui/app.py` and `ui/main_window.py`, and the summarizer's `TodoStateRepo`
+writes. `ui/history_list.py` and `ui/meeting_card.py` are reworked into the
+new row rather than deleted.
 
 ### Database
 
-**No migrations are removed or altered.** The migration chain is already
-applied in the user's database; deleting a migration would break upgrades.
-`chat_messages` and `todo_state` remain as tables. The summarizer keeps
-writing `todo_state` rows; they simply have no reader. Existing chat history
-becomes unreachable rather than deleted.
+**No existing migration is removed or altered.** The chain is already applied
+in the user's database; deleting a migration would break upgrades.
+
+One migration is **added** — `schema_v10`, which drops the `todo_state`
+table. To-do done-state was only ever read by the removed UI; Wrike tasks are
+the checkboxes now, so the data has no remaining consumer. This discards
+existing done-state, which is accepted.
+
+`chat_messages` is deliberately **kept**. Chat is unreachable once its UI and
+backend are gone, but the stored conversations are user content and dropping
+them was not asked for. Removing that table later is a one-line migration if
+wanted.
 
 ## Error handling
 
@@ -123,10 +142,15 @@ the audio file.
 
 - The status/action mapping is a pure function with table-driven tests over
   every `RecordingStatus` × Wrike-state combination, including the
-  missing-permalink fallback.
+  missing-permalink fallback and which chips are clickable.
 - The list renders rows for a seeded database, and each action emits the right
   signal for the right recording id (`pytest-qt`, matching existing UI tests).
+- Clicking a failure chip opens the detail dialog carrying that recording's
+  `error_message`; clicking a non-failure chip does nothing.
 - Delete asks for confirmation and removes the row and audio file.
+- `schema_v10` drops `todo_state` and leaves every other table intact, and a
+  database already at v9 upgrades cleanly (matching the existing migration
+  tests).
 - Deleted modules' tests are removed; the remaining suite must stay green.
 
 ## Accepted trade-offs
