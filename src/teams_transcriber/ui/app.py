@@ -7,7 +7,7 @@ import sys
 import threading
 import webbrowser
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from PySide6.QtWidgets import QApplication, QFileDialog, QVBoxLayout, QWidget
 
@@ -49,6 +49,9 @@ from teams_transcriber.ui.settings_dialog import SettingsDialog
 from teams_transcriber.ui.theme import app_stylesheet
 from teams_transcriber.ui.toast_banner import show_in_app_toast
 from teams_transcriber.ui.tray import AppTray
+
+if TYPE_CHECKING:
+    from teams_transcriber.ui.notes_window import NotesWindow
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +154,10 @@ class App:
         # Tracks the currently-recording recording id so the tray notes action
         # and the toast "Add notes" button can find it.
         self._active_recording_id: int | None = None
+
+        # Open notes windows, keyed by recording_id -- lets _open_notes_window
+        # raise/focus an existing window instead of opening a duplicate.
+        self._notes_windows: dict[int, NotesWindow] = {}
 
         # Guards _wrike_export_worker against two concurrent workers for the
         # same recording -- SummaryReady auto-push, the manual Send button,
@@ -309,18 +316,18 @@ class App:
             if self._active_recording_id is not None:
                 recording_id = self._active_recording_id
             else:
-                recents = RecordingRepo(self.db).list_recent(limit=1)
-                if recents and recents[0].id is not None:
-                    recording_id = recents[0].id
-                else:
-                    show_in_app_toast(
-                        "Nothing to show yet",
-                        "Start a recording to open notes.",
-                    )
-                    return
+                # Notes are a capture-only channel that only makes sense
+                # while a meeting is recording -- there is no fallback to
+                # the most recent (already summarized/exported) recording,
+                # which would open notes with a dead Stop button and edits
+                # that never reach Wrike.
+                show_in_app_toast(
+                    "Nothing to show yet",
+                    "Start a recording to open notes.",
+                )
+                return
 
-        windows = getattr(self, "_notes_windows", {})
-        existing = windows.get(recording_id)
+        existing = self._notes_windows.get(recording_id)
         if existing is not None and existing.isVisible():
             existing.raise_()
             existing.activateWindow()
@@ -330,14 +337,12 @@ class App:
         win = NotesWindow(self.db, recording_id)
         win.stop_requested.connect(self._stop_manual)
         win.closed.connect(self._on_notes_window_closed)
-        self._notes_windows = getattr(self, "_notes_windows", {})
         self._notes_windows[recording_id] = win
         self._workspace_tracker.mark_open(recording_id)
         win.show()
 
     def _on_notes_window_closed(self, recording_id: int) -> None:
-        windows = getattr(self, "_notes_windows", {})
-        windows.pop(recording_id, None)
+        self._notes_windows.pop(recording_id, None)
         self._workspace_tracker.mark_closed(recording_id)
         rec = RecordingRepo(self.db).get(recording_id)
         was_waiting = rec is not None and rec.status == RecordingStatus.WAITING_FOR_NOTES
@@ -834,10 +839,10 @@ class App:
                         action_label=("Open in Wrike" if link else None),
                         action_callback=((lambda: webbrowser.open(link)) if link else None)))
             finally:
-                QTimer.singleShot(
-                    0, self.window,
-                    lambda rid=recording_id: self._wrike_exports_in_flight.discard(rid),
-                )
+                def _finish(rid=recording_id) -> None:
+                    self._wrike_exports_in_flight.discard(rid)
+                    self._refresh_history()
+                QTimer.singleShot(0, self.window, _finish)
 
         threading.Thread(target=_worker, daemon=True).start()
 

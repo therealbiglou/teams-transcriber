@@ -47,7 +47,7 @@ class AppTray(QSystemTrayIcon):
         menu.addAction(self.stop_action)
 
         self.notes_action = QAction(
-            get_icon(IconName.COPY), "Open workspace…", self,
+            get_icon(IconName.COPY), "Open notes…", self,
         )
         self.notes_action.triggered.connect(self.open_workspace_requested.emit)
         self.notes_action.setEnabled(False)

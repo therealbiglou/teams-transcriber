@@ -42,3 +42,38 @@ def test_selectable_body_can_be_copied(qtbot):
     qtbot.addWidget(dlg)
     flags = _body_label(dlg).textInteractionFlags()
     assert flags & Qt.TextInteractionFlag.TextSelectableByMouse
+
+
+def test_html_looking_body_is_displayed_literally(qtbot):
+    """Stored error_message strings come from HTTP/proxy layers and can look
+    like HTML (e.g. a 502 Bad Gateway response body). QLabel's default
+    AutoText would render that as rich text -- tags vanish and the user
+    can't see what actually happened. The label must be forced to
+    PlainText so the raw string round-trips through .text() unchanged."""
+    body = "<html><head><title>502 Bad Gateway</title></head><body>oops</body></html>"
+    dlg = ConfirmDialog(title="Sync failed", body=body)
+    qtbot.addWidget(dlg)
+    label = _body_label(dlg)
+    assert label.textFormat() == Qt.TextFormat.PlainText
+    assert label.text() == body
+
+
+def test_html_looking_title_is_displayed_literally(qtbot):
+    """The same label renders the delete-confirmation body, which
+    interpolates the LLM-generated meeting title -- a title containing
+    e.g. '<div>' must not silently vanish."""
+    body = 'Permanently delete "<div>Weekly Sync</div>"?'
+    dlg = ConfirmDialog(title="Delete meeting?", body=body)
+    qtbot.addWidget(dlg)
+    assert _body_label(dlg).text() == body
+
+
+def test_long_body_does_not_grow_dialog_past_a_bounded_height(qtbot):
+    """A failure body can be up to ~2000 chars; the dialog must stay
+    scrollable rather than growing taller than the screen (which would push
+    the Close button off-screen)."""
+    body = "line\n" * 400  # long enough to dwarf any reasonable screen height
+    dlg = ConfirmDialog(title="Sync failed", body=body, cancel_label=None)
+    qtbot.addWidget(dlg)
+    dlg.show()
+    assert dlg.height() < 1000

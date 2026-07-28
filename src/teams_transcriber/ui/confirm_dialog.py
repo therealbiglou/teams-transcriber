@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -68,6 +69,7 @@ class ConfirmDialog(QDialog):
         card_layout.addWidget(title_lbl)
 
         body_lbl = QLabel(body)
+        body_lbl.setTextFormat(Qt.TextFormat.PlainText)
         body_lbl.setWordWrap(True)
         body_lbl.setMinimumWidth(0)
         body_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
@@ -77,7 +79,19 @@ class ConfirmDialog(QDialog):
                 Qt.TextInteractionFlag.TextSelectableByMouse
             )
             body_lbl.setCursor(Qt.CursorShape.IBeamCursor)
-        card_layout.addWidget(body_lbl)
+
+        # Long bodies (e.g. a stored HTTP/proxy error_message, up to ~2000
+        # chars) must not push the dialog taller than the screen -- bound it
+        # in a scroll area so the Close/Confirm button row stays reachable.
+        body_scroll = QScrollArea()
+        body_scroll.setWidgetResizable(True)
+        body_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        body_scroll.setMaximumHeight(320)
+        body_scroll.setStyleSheet("background: transparent; border: none;")
+        body_scroll.viewport().setStyleSheet("background: transparent;")
+        body_scroll.setWidget(body_lbl)
+        card_layout.addWidget(body_scroll)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)

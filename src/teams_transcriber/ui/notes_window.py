@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from teams_transcriber.storage import Database
+from teams_transcriber.storage import Database, RecordingRepo, RecordingStatus
 from teams_transcriber.ui.frameless import FramelessWindowMixin
 from teams_transcriber.ui.notes_editor import NotesEditor
 from teams_transcriber.ui.title_bar import TitleBar
@@ -78,6 +78,14 @@ class NotesWindow(FramelessWindowMixin, QWidget):
         self.stop_button.clicked.connect(self._on_stop_clicked)
         footer.addWidget(self.stop_button)
         inner.addLayout(footer)
+
+        # Notes are never displayed/edited after a meeting ends (edits made
+        # then never reach Wrike -- the notes comment is posted once), so a
+        # window opened on a non-active recording must not present a Stop
+        # button that would silently do nothing.
+        rec = RecordingRepo(db).get(recording_id)
+        if rec is None or rec.status != RecordingStatus.RECORDING:
+            self.stop_button.hide()
 
         self._init_frameless(
             self._frame, resizable=True, title_bar=self._title_bar, shell_layout=outer,

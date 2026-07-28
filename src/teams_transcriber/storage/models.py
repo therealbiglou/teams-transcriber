@@ -84,19 +84,3 @@ class Summary:
     topics: list[str]
     generated_at: str
     model_used: str
-
-
-@dataclass(slots=True)
-class TodoState:
-    id: int | None
-    recording_id: int
-    todo_index: int
-    task_text: str
-    done: bool
-    done_at: str | None
-    # Stamped on EVERY mark_done call (done or undone) -- unlike done_at,
-    # which is cleared when the todo is un-checked, toggled_at survives
-    # un-checking so it remains a durable last-write-wins baseline for
-    # cross-device sync callers. None for rows never touched via
-    # mark_done/upsert since schema v8 added this column.
-    toggled_at: str | None = None

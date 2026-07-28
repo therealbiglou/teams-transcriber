@@ -248,3 +248,30 @@ def test_wrike_export_worker_adds_to_in_flight_and_release_hop_discards(qapp, mo
     assert app._wrike_exports_in_flight == {5}
 
     qtbot.waitUntil(lambda: app._wrike_exports_in_flight == set(), timeout=2000)
+
+
+def test_wrike_export_worker_refreshes_history_on_every_exit_path(qapp, monkeypatch, qtbot):
+    """A successful (or failed, or not-configured) export must refresh the
+    history list on the main thread -- otherwise a row stays stuck reading
+    "Not in Wrike" / "Send to Wrike" after the project already exists, and
+    re-clicking re-runs a paid Anthropic call for an already-idempotent push.
+    Exercised via the same not-configured short-circuit as the test above
+    (fastest path through the worker) so this only needs keyring + settings,
+    no real Wrike client."""
+    from PySide6.QtWidgets import QWidget
+
+    from teams_transcriber.ui.app import App
+
+    app = App.__new__(App)
+    app._wrike_exports_in_flight = set()
+    app.settings = SimpleNamespace(_raw={"integrations": {}})
+    app.window = QWidget()
+    monkeypatch.setattr("keyring.get_password", lambda *a, **kw: "")
+
+    refresh_calls: list[bool] = []
+    app._refresh_history = lambda: refresh_calls.append(True)
+
+    app._wrike_export_worker(5)
+
+    qtbot.waitUntil(lambda: app._wrike_exports_in_flight == set(), timeout=2000)
+    assert refresh_calls == [True]
