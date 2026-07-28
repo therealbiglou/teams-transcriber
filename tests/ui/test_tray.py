@@ -13,6 +13,13 @@ def test_tray_constructs_with_idle_state(qapp, qtbot) -> None:
     assert tray.toolTip().startswith("Teams Transcriber")
 
 
+def test_notes_action_text_refers_to_notes_not_workspace(qapp, qtbot) -> None:
+    """The action opens a window titled "Meeting notes" -- its label must
+    say so, not the stale pre-Phase-19 "workspace" wording."""
+    tray = AppTray()
+    assert tray.notes_action.text() == "Open notes…"
+
+
 def test_set_state_updates_tooltip(qapp, qtbot) -> None:
     tray = AppTray()
     tray.set_state(TrayState.RECORDING, label="Q2 sync")

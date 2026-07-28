@@ -1,7 +1,7 @@
 """Tests for the create-once Wrike project export orchestrator.
 
-Seeding mirrors tests/ui/test_summary_pane.py: build_database (full
-migration set) + RecordingRepo/SummaryRepo/TranscriptRepo.
+Seeding uses build_database (full migration set) + RecordingRepo/
+SummaryRepo/TranscriptRepo.
 """
 
 from __future__ import annotations

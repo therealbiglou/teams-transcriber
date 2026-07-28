@@ -14,7 +14,6 @@ from teams_transcriber.storage import (
     Summary,
     SummaryRepo,
     TodoItem,
-    TodoStateRepo,
     TranscriptRepo,
     TranscriptSegment,
     build_database,
@@ -28,7 +27,6 @@ def test_full_lifecycle(tmp_path: Path) -> None:
     recordings = RecordingRepo(db)
     transcripts = TranscriptRepo(db)
     summaries = SummaryRepo(db)
-    todos = TodoStateRepo(db)
 
     started = datetime(2026, 5, 14, 10, 0, tzinfo=UTC)
     audio = tmp_path / "rec.opus"
@@ -89,15 +87,12 @@ def test_full_lifecycle(tmp_path: Path) -> None:
     recordings.update_status(rec.id, RecordingStatus.DONE)
     recordings.set_display_title(rec.id, "Q2 roadmap sync")
 
-    # 5. Mark the my_todo as done.
-    todos.mark_done(rec.id, todo_index=0, done=True, task_text="Write API stub spec")
-
-    # 6. Search across the transcript.
+    # 5. Search across the transcript.
     hits = transcripts.search("billing rewrite")
     assert len(hits) >= 1
     assert any(h.recording_id == rec.id for h in hits)
 
-    # 7. Read back everything end-to-end.
+    # 6. Read back everything end-to-end.
     fetched = recordings.get(rec.id)
     assert fetched is not None
     assert fetched.display_title == "Q2 roadmap sync"
@@ -108,13 +103,10 @@ def test_full_lifecycle(tmp_path: Path) -> None:
     assert summary.title == "Q2 roadmap sync"
     assert summary.my_todos[0].task == "Write API stub spec"
 
-    state = todos.list_for_recording(rec.id)
-    assert state[0].done is True
-
     segs = transcripts.list_for_recording(rec.id)
     assert len(segs) == 3
 
-    # 8. Run retention 100 days later and confirm audio is pruned, transcripts/summaries kept.
+    # 7. Run retention 100 days later and confirm audio is pruned, transcripts/summaries kept.
     future = started + timedelta(days=100)
     pruner = AudioRetentionPruner(db, retention_days=30, now=lambda: future)
     report = pruner.run()

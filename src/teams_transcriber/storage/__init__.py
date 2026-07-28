@@ -24,12 +24,10 @@ from teams_transcriber.storage.models import (
     RecordingStatus,
     Summary,
     TodoItem,
-    TodoState,
     TranscriptSegment,
 )
 from teams_transcriber.storage.recordings import RecordingRepo
 from teams_transcriber.storage.retention import AudioRetentionPruner, PruneReport
-from teams_transcriber.storage.chat import ChatMessage, ChatRepo
 from teams_transcriber.storage.schema_v1 import SCHEMA_V1
 from teams_transcriber.storage.schema_v2 import SCHEMA_V2
 from teams_transcriber.storage.schema_v3 import SCHEMA_V3
@@ -39,8 +37,8 @@ from teams_transcriber.storage.schema_v6 import SCHEMA_V6
 from teams_transcriber.storage.schema_v7 import SCHEMA_V7
 from teams_transcriber.storage.schema_v8 import SCHEMA_V8
 from teams_transcriber.storage.schema_v9 import SCHEMA_V9
+from teams_transcriber.storage.schema_v10 import SCHEMA_V10
 from teams_transcriber.storage.summaries import SummaryRepo
-from teams_transcriber.storage.todos import TodoStateRepo
 from teams_transcriber.storage.transcripts import SearchHit, TranscriptRepo
 from teams_transcriber.storage.wrike import (
     WrikeProjectRepo,
@@ -53,7 +51,7 @@ from teams_transcriber.storage.wrike import (
 
 ALL_MIGRATIONS: tuple[Migration, ...] = (
     SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8,
-    SCHEMA_V9,
+    SCHEMA_V9, SCHEMA_V10,
 )
 
 
@@ -67,14 +65,13 @@ def build_database(path: Path | str) -> Database:
 
 __all__ = [
     "ALL_MIGRATIONS",
-    "ChatMessage",
-    "ChatRepo",
     "SCHEMA_V1",
     "SCHEMA_V5",
     "SCHEMA_V6",
     "SCHEMA_V7",
     "SCHEMA_V8",
     "SCHEMA_V9",
+    "SCHEMA_V10",
     "ActionItemOther",
     "AudioRetentionPruner",
     "Channel",
@@ -90,8 +87,6 @@ __all__ = [
     "Summary",
     "SummaryRepo",
     "TodoItem",
-    "TodoState",
-    "TodoStateRepo",
     "TranscriptRepo",
     "TranscriptSegment",
     "WrikeProjectRepo",

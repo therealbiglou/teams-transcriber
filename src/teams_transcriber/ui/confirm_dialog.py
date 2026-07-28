@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -35,6 +36,7 @@ class ConfirmDialog(QDialog):
         confirm_label: str = "OK",
         cancel_label: str | None = "Cancel",
         danger: bool = False,
+        selectable: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -67,11 +69,29 @@ class ConfirmDialog(QDialog):
         card_layout.addWidget(title_lbl)
 
         body_lbl = QLabel(body)
+        body_lbl.setTextFormat(Qt.TextFormat.PlainText)
         body_lbl.setWordWrap(True)
         body_lbl.setMinimumWidth(0)
         body_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         body_lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px;")
-        card_layout.addWidget(body_lbl)
+        if selectable:
+            body_lbl.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
+            body_lbl.setCursor(Qt.CursorShape.IBeamCursor)
+
+        # Long bodies (e.g. a stored HTTP/proxy error_message, up to ~2000
+        # chars) must not push the dialog taller than the screen -- bound it
+        # in a scroll area so the Close/Confirm button row stays reachable.
+        body_scroll = QScrollArea()
+        body_scroll.setWidgetResizable(True)
+        body_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        body_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        body_scroll.setMaximumHeight(320)
+        body_scroll.setStyleSheet("background: transparent; border: none;")
+        body_scroll.viewport().setStyleSheet("background: transparent;")
+        body_scroll.setWidget(body_lbl)
+        card_layout.addWidget(body_scroll)
 
         btn_row = QHBoxLayout()
         btn_row.addStretch(1)
@@ -146,11 +166,13 @@ class ConfirmDialog(QDialog):
         title: str,
         body: str,
         ok_label: str = "OK",
+        selectable: bool = False,
     ) -> None:
         """Themed replacement for QMessageBox.information — single OK button."""
         from teams_transcriber.ui.scrim import exec_modal
         dlg = cls(
             title=title, body=body,
-            confirm_label=ok_label, cancel_label=None, parent=parent,
+            confirm_label=ok_label, cancel_label=None,
+            selectable=selectable, parent=parent,
         )
         exec_modal(dlg)

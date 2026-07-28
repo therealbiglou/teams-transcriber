@@ -602,7 +602,7 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         self._hotkey_inputs: dict[str, QLineEdit] = {}
         for key, label, default in [
             ("toggle_manual_recording", "Toggle recording",        "ctrl+alt+r"),
-            ("open_workspace",          "Open workspace",          "ctrl+alt+n"),
+            ("open_workspace",          "Open notes",               "ctrl+alt+n"),
             ("toggle_pause_detection",  "Pause/unpause detection", "ctrl+alt+p"),
         ]:
             row = QHBoxLayout()

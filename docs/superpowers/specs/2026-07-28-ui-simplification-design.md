@@ -157,6 +157,12 @@ the audio file.
 
 - Transcripts are no longer readable in the app (they are attached to every
   Wrike project as `transcript.md`).
+- **Meeting search is removed** (decided 2026-07-28, after a review flagged it
+  as an undocumented loss). The history list shows the most recent 200
+  meetings, newest first, with no filter; finding an older meeting means
+  scrolling. Accepted because the list exists to push and open meetings, not
+  to browse them — Wrike is where meetings are searched. `ui/search_bar.py`
+  and its test were deleted rather than left as dead code.
 - To-dos are no longer checkable in the app; Wrike tasks are the checkboxes.
 - No PDF export.
 - Chat history is unreachable.

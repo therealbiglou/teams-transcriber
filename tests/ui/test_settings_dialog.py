@@ -51,6 +51,26 @@ def test_dialog_loads_current_settings(qapp, qtbot, paths) -> None:
     assert dialog.retention_spin.value() == 90
 
 
+def test_shortcuts_tab_hotkey_label_refers_to_notes(qapp, paths) -> None:
+    """The hotkey opens a window titled "Meeting notes" -- its label must
+    say so, not the stale pre-Phase-19 "workspace" wording. The underlying
+    settings/config key (``open_workspace``) is intentionally unchanged."""
+    from PySide6.QtWidgets import QFormLayout
+
+    settings = load_settings(paths)
+    dialog = SettingsDialog(settings, paths)
+    labels = [
+        w.text()
+        for form in dialog.findChildren(QFormLayout)
+        for i in range(form.rowCount())
+        if (item := form.itemAt(i, QFormLayout.ItemRole.LabelRole)) is not None
+        for w in [item.widget()]
+        if w is not None
+    ]
+    assert "Open notes" in labels
+    assert "Open workspace" not in labels
+
+
 def test_pattern_add_and_remove(qapp, qtbot, paths) -> None:
     settings = load_settings(paths)
     dialog = SettingsDialog(settings, paths)

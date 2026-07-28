@@ -199,24 +199,6 @@ def test_resolve_wrike_assignees_llm_fallback_off_without_key(qapp, tmp_path, mo
         db.close()
 
 
-def test_on_todo_state_changed_refreshes_history_and_master(qapp):
-    """_on_todo_state_changed refreshes history + reloads the master view."""
-    from teams_transcriber.ui.app import App
-
-    app = App.__new__(App)
-    app.search = SimpleNamespace(input=SimpleNamespace(text=lambda: ""))
-
-    refresh_calls: list[int] = []
-    app._refresh_history = lambda query=None: refresh_calls.append(1)
-    reload_calls: list[int] = []
-    app.master_todos = SimpleNamespace(reload=lambda: reload_calls.append(1))
-
-    app._on_todo_state_changed(7)
-
-    assert refresh_calls == [1]
-    assert reload_calls == [1]
-
-
 def test_wrike_export_worker_skips_when_already_in_flight(qapp, monkeypatch):
     """Two entry points racing for the same recording_id (e.g. the
     SummaryReady auto-push firing while the manual Send button is also
@@ -266,3 +248,30 @@ def test_wrike_export_worker_adds_to_in_flight_and_release_hop_discards(qapp, mo
     assert app._wrike_exports_in_flight == {5}
 
     qtbot.waitUntil(lambda: app._wrike_exports_in_flight == set(), timeout=2000)
+
+
+def test_wrike_export_worker_refreshes_history_on_every_exit_path(qapp, monkeypatch, qtbot):
+    """A successful (or failed, or not-configured) export must refresh the
+    history list on the main thread -- otherwise a row stays stuck reading
+    "Not in Wrike" / "Send to Wrike" after the project already exists, and
+    re-clicking re-runs a paid Anthropic call for an already-idempotent push.
+    Exercised via the same not-configured short-circuit as the test above
+    (fastest path through the worker) so this only needs keyring + settings,
+    no real Wrike client."""
+    from PySide6.QtWidgets import QWidget
+
+    from teams_transcriber.ui.app import App
+
+    app = App.__new__(App)
+    app._wrike_exports_in_flight = set()
+    app.settings = SimpleNamespace(_raw={"integrations": {}})
+    app.window = QWidget()
+    monkeypatch.setattr("keyring.get_password", lambda *a, **kw: "")
+
+    refresh_calls: list[bool] = []
+    app._refresh_history = lambda: refresh_calls.append(True)
+
+    app._wrike_export_worker(5)
+
+    qtbot.waitUntil(lambda: app._wrike_exports_in_flight == set(), timeout=2000)
+    assert refresh_calls == [True]
