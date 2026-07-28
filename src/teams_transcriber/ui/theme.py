@@ -76,26 +76,6 @@ def app_stylesheet() -> str:
         border: 1px solid {c['accent']};
     }}
 
-    QFrame[role="sidebar"] {{
-        background: {c['card_alt']};
-        border: none;
-    }}
-
-    QPushButton[sidebar_item="true"] {{
-        text-align: left;
-        padding: {s['sm']}px {s['md']}px;
-        border-radius: {r['button']}px;
-        background: transparent;
-        color: {c['text_secondary']};
-        font-weight: 500;
-        border: none;
-    }}
-    QPushButton[sidebar_item="true"]:hover {{ background: {c['hover']}; }}
-    QPushButton[sidebar_item="true"][active="true"] {{
-        background: {c['card']};
-        color: {c['text_primary']};
-    }}
-
     QPushButton {{
         background: {c['card']};
         color: {c['text_primary']};

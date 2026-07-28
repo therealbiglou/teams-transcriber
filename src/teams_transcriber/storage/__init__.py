@@ -29,7 +29,6 @@ from teams_transcriber.storage.models import (
 )
 from teams_transcriber.storage.recordings import RecordingRepo
 from teams_transcriber.storage.retention import AudioRetentionPruner, PruneReport
-from teams_transcriber.storage.chat import ChatMessage, ChatRepo
 from teams_transcriber.storage.schema_v1 import SCHEMA_V1
 from teams_transcriber.storage.schema_v2 import SCHEMA_V2
 from teams_transcriber.storage.schema_v3 import SCHEMA_V3
@@ -67,8 +66,6 @@ def build_database(path: Path | str) -> Database:
 
 __all__ = [
     "ALL_MIGRATIONS",
-    "ChatMessage",
-    "ChatRepo",
     "SCHEMA_V1",
     "SCHEMA_V5",
     "SCHEMA_V6",

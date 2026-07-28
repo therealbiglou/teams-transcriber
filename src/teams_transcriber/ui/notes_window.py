@@ -1,6 +1,6 @@
 """Capture-only notes window shown while a meeting records.
 
-Replaces the old split notes+live-transcript ``WorkspaceWindow``. Manual
+Replaces the old split notes+live-transcript workspace window. Manual
 notes are a pure capture channel here: they steer the AI summary's
 attribution of owners and become the Wrike project comment, but there is no
 live transcript view — that's dropped entirely per the Phase 19 design.

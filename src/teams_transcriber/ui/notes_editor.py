@@ -1,8 +1,8 @@
 """Rich-text notes editor widget with debounced auto-save.
 
 Extracted from the original `NotesWindow` so the same editor can be embedded
-in `WorkspaceWindow` for live recordings and in any "edit notes" surface.
-Auto-saves to `recordings.manual_notes` after a debounce.
+in the capture-only notes window for live recordings and in any "edit notes"
+surface. Auto-saves to `recordings.manual_notes` after a debounce.
 """
 
 from __future__ import annotations
