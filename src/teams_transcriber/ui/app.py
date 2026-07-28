@@ -261,6 +261,11 @@ class App:
             project = WrikeProjectRepo(self.db).get(recording_id)
             if project is not None and project.permalink:
                 webbrowser.open(project.permalink)
+            else:
+                show_in_app_toast(
+                    "Can't open in Wrike",
+                    "No link recorded for this meeting yet — try Send to Wrike again.",
+                )
 
     def _on_row_delete(self, recording_id: int) -> None:
         """Confirm and delete a recording (DB row + audio file). Cascading delete
@@ -599,8 +604,8 @@ class App:
         title = (rec.display_title if rec else None) or "Meeting"
         show_in_app_toast(
             "Summary ready", title,
-            action_label="Open",
-            action_callback=lambda: self._show_window(),
+            action_label="Show app",
+            action_callback=self._show_window,
         )
         self._refresh_history()
 

@@ -106,3 +106,19 @@ def test_import_button_triggers_import_handler(tmp_path, monkeypatch, qapp):
     app.window.import_btn.click()
 
     assert calls == ["import"]
+
+
+def test_app_init_wires_record_and_import_buttons():
+    """``App.__init__`` is too heavy to construct in a test (tray, pipeline,
+    first-run wizard, ...), so this is a source-level guard: it fails if a
+    future edit stops connecting the main window's Record/Import buttons,
+    which would leave them present but dead -- the exact bug a previous fix
+    wave repaired. The tests above only prove the signals work when wired
+    manually; they'd still pass even if App.__init__ never connected them."""
+    import inspect
+
+    from teams_transcriber.ui.app import App
+
+    src = inspect.getsource(App.__init__)
+    assert "record_requested.connect" in src
+    assert "import_requested.connect" in src
