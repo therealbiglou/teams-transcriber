@@ -704,7 +704,9 @@ git commit -m "refactor(ui): history list renders status rows instead of meeting
 - Consumes: `HistoryList.set_rows` / `action_requested` / `delete_requested` (Task 4), `derive_row_state` (Task 1).
 - Produces: `App._refresh_history()` populating the list, and `App._on_row_action(recording_id, action)` dispatching to the existing handlers.
 
-**MainWindow changes:** delete the `Sidebar` import, `self.sidebar`, the `body_splitter`, and the content stack; the window becomes title bar + `HistoryList` filling the body. Keep the frameless shell, window-state persistence, and add a **Settings** button to the title bar (`TitleBar` already supports controls; add a button beside them wired to a new `settings_requested` signal).
+**MainWindow changes:** delete the `Sidebar` import, `self.sidebar`, the `body_splitter`, and the content stack; the window becomes title bar + `HistoryList` filling the body. Keep the frameless shell and window-state persistence.
+
+`TitleBar` **already defines a `settings_requested` signal** (`ui/title_bar.py:20`) — do not add another. Include the settings control in the `controls=(...)` tuple the window passes to `TitleBar` and connect the existing signal to the app's settings handler.
 
 **App changes:**
 - `_refresh_history()` builds rows: for each `RecordingRepo(self.db).list_recent()`, read `WrikeProjectRepo(self.db).get(rec.id)` and `WrikeSyncRepo(self.db).get(rec.id)`, call `derive_row_state(...)`, and pass `(rec, state)` to `self.history.set_rows(...)`.
