@@ -35,6 +35,7 @@ class ConfirmDialog(QDialog):
         confirm_label: str = "OK",
         cancel_label: str | None = "Cancel",
         danger: bool = False,
+        selectable: bool = False,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -71,6 +72,11 @@ class ConfirmDialog(QDialog):
         body_lbl.setMinimumWidth(0)
         body_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         body_lbl.setStyleSheet(f"color: {COLORS['text_secondary']}; font-size: 13px;")
+        if selectable:
+            body_lbl.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
+            body_lbl.setCursor(Qt.CursorShape.IBeamCursor)
         card_layout.addWidget(body_lbl)
 
         btn_row = QHBoxLayout()
@@ -146,11 +152,13 @@ class ConfirmDialog(QDialog):
         title: str,
         body: str,
         ok_label: str = "OK",
+        selectable: bool = False,
     ) -> None:
         """Themed replacement for QMessageBox.information — single OK button."""
         from teams_transcriber.ui.scrim import exec_modal
         dlg = cls(
             title=title, body=body,
-            confirm_label=ok_label, cancel_label=None, parent=parent,
+            confirm_label=ok_label, cancel_label=None,
+            selectable=selectable, parent=parent,
         )
         exec_modal(dlg)
