@@ -18,7 +18,6 @@ from teams_transcriber.storage import (
     Summary,
     SummaryRepo,
     TodoItem,
-    TodoStateRepo,
     TranscriptRepo,
 )
 
@@ -253,7 +252,6 @@ class Summarizer:
     def _persist(self, recording_id: int, payload: dict[str, Any]) -> None:
         rec_repo = RecordingRepo(self._db)
         sum_repo = SummaryRepo(self._db)
-        todo_repo = TodoStateRepo(self._db)
         summary = Summary(
             recording_id=recording_id,
             title=str(payload["title"]),
@@ -289,7 +287,3 @@ class Summarizer:
         # the recording's status reflects reality and won't get stuck as SUMMARIZING.
         rec_repo.update_status(recording_id, RecordingStatus.DONE)
         rec_repo.set_display_title(recording_id, summary.title or "Untitled meeting")
-        # Seed todo_state rows for each my_todo so the UI can toggle them.
-        # seed() (not upsert) so re-summarization keeps existing done flags.
-        for i, td in enumerate(summary.my_todos):
-            todo_repo.seed(recording_id, todo_index=i, task_text=td.task)
