@@ -31,6 +31,16 @@ def format_when(started_at: str, duration_ms: int | None) -> str:
     return f"{stamp} · {round(duration_ms / 60000)} min"
 
 
+class _ClickableChipLabel(ElidedLabel):
+    """An ElidedLabel that emits ``clicked`` on mouse press."""
+
+    clicked = Signal()
+
+    def mousePressEvent(self, event) -> None:  # Qt signature, no param annotation
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 class MeetingRow(QFrame):
     action_requested = Signal(int, str)   # recording_id, RowAction value
     delete_requested = Signal(int)        # recording_id
@@ -39,6 +49,7 @@ class MeetingRow(QFrame):
         self, recording: Recording, state: RowState, parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        self.setProperty("card", True)
         assert recording.id is not None
         self._recording_id = recording.id
         self._state = state
@@ -50,7 +61,6 @@ class MeetingRow(QFrame):
         text_col = QVBoxLayout()
         text_col.setSpacing(2)
         self.title_label = ElidedLabel(recording.display_title or "Untitled meeting")
-        self.title_label.setTextFormat(Qt.TextFormat.PlainText)
         text_col.addWidget(self.title_label)
 
         self.when_label = make_selectable(
@@ -60,11 +70,12 @@ class MeetingRow(QFrame):
         text_col.addWidget(self.when_label)
         outer.addLayout(text_col, 1)
 
-        self.chip_label = ElidedLabel(state.chip)
-        self.chip_label.setProperty("chip", True)
+        self.chip_label = _ClickableChipLabel(state.chip)
+        self.chip_label.setProperty("role", "chip")
         if state.error_message:
             self.chip_label.setCursor(Qt.CursorShape.PointingHandCursor)
             self.chip_label.setToolTip("Click for details")
+            self.chip_label.clicked.connect(self.show_error_detail)
         outer.addWidget(self.chip_label)
 
         self.action_button: QPushButton | None = None
@@ -82,11 +93,6 @@ class MeetingRow(QFrame):
             lambda: self.delete_requested.emit(self._recording_id)
         )
         outer.addWidget(self.delete_button)
-
-    def mousePressEvent(self, event) -> None:  # noqa: ANN001 - Qt signature
-        if self.chip_label.geometry().contains(event.position().toPoint()):
-            self.show_error_detail()
-        super().mousePressEvent(event)
 
     def show_error_detail(self) -> None:
         """Open the failure dialog. No-op when the row isn't a failure."""

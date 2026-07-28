@@ -1,6 +1,10 @@
 # tests/ui/test_meeting_row.py
 from __future__ import annotations
 
+from datetime import datetime
+
+from PySide6.QtCore import Qt
+
 from teams_transcriber.storage.models import Recording, RecordingSource, RecordingStatus
 from teams_transcriber.ui.meeting_row import MeetingRow, format_when
 from teams_transcriber.ui.meeting_status import RowAction, derive_row_state
@@ -17,7 +21,10 @@ def _rec(rid=1, status=RecordingStatus.DONE, duration_ms=2_280_000):
 
 def test_format_when_includes_date_and_duration():
     text = format_when("2026-07-26T15:31:00+00:00", 2_280_000)
-    assert "Jul 26" in text
+    expected_date = (
+        datetime.fromisoformat("2026-07-26T15:31:00+00:00").astimezone().strftime("%b %d")
+    )
+    assert expected_date in text
     assert "38 min" in text
 
 
@@ -85,4 +92,33 @@ def test_non_failed_chip_does_not_open_dialog(qtbot, monkeypatch):
     row = MeetingRow(_rec(), derive_row_state(status=RecordingStatus.DONE))
     qtbot.addWidget(row)
     row.show_error_detail()
+    assert calls == []
+
+
+def test_clicking_failed_chip_opens_detail_dialog(qtbot, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "teams_transcriber.ui.meeting_row.ConfirmDialog.info",
+        lambda parent, **kw: calls.append(kw),
+    )
+    rec = _rec(status=RecordingStatus.SUMMARY_FAILED)
+    state = derive_row_state(
+        status=RecordingStatus.SUMMARY_FAILED, error_message="429 rate limited",
+    )
+    row = MeetingRow(rec, state)
+    qtbot.addWidget(row)
+    qtbot.mouseClick(row.chip_label, Qt.MouseButton.LeftButton)
+    assert len(calls) == 1
+    assert "429 rate limited" in calls[0]["body"]
+
+
+def test_clicking_non_failed_chip_does_not_open_dialog(qtbot, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "teams_transcriber.ui.meeting_row.ConfirmDialog.info",
+        lambda parent, **kw: calls.append(kw),
+    )
+    row = MeetingRow(_rec(), derive_row_state(status=RecordingStatus.DONE))
+    qtbot.addWidget(row)
+    qtbot.mouseClick(row.chip_label, Qt.MouseButton.LeftButton)
     assert calls == []
