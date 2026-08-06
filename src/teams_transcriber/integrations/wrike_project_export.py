@@ -86,7 +86,7 @@ def _due_date(raw: str | None) -> str | None:
 
 def export_recording(
     db: Database, client: _ClientProto, recording_id: int,
-    *, parent_id: str, assignees: dict[int, str | None],
+    *, parent_id: str,
     task_context_provider: Callable[[], dict[tuple[str, int], TaskCopy]] | None = None,
     custom_item_type_id: str | None = None,
 ) -> ExportReport:
@@ -165,9 +165,12 @@ def export_recording(
             logger.exception("wrike task-context provider failed for %d", recording_id)
             task_contexts = {}
 
-    # 3. tasks (my_todos, action_items_others[assigned], follow_ups) — add only new
+    # 3. tasks (my_todos, action_items_others, follow_ups) — add only new.
+    # Never assigned (no "responsibles") -- assignment would notify someone
+    # directly, and the AI's name match is not reliable enough to trust with
+    # that. The "{who}: " title prefix is informational only.
     def _ensure_task(
-        kind: str, index: int, name: str, assignee: str | None,
+        kind: str, index: int, name: str,
         due: str | None = None, who: str | None = None,
     ) -> None:
         """``name`` is the original full item text (already "{who}: ..."
@@ -182,8 +185,6 @@ def export_recording(
         else:
             title = name
         payload: dict[str, Any] = {"title": title}
-        if assignee:
-            payload["responsibles"] = [assignee]
         if copy is not None:
             payload["description"] = build_task_description(name, copy.context)
         d = _due_date(due)
@@ -197,7 +198,7 @@ def export_recording(
                 id=None, recording_id=recording_id, kind=kind, todo_index=index,
                 wrike_task_id=str(created["id"]), wrike_folder_id=project_id,
                 created_at=_now(), last_synced_done=False, format="task",
-                assignee_id=assignee,
+                assignee_id=None,
             ))
             report.created_tasks += 1
         except Exception as exc:
@@ -205,14 +206,14 @@ def export_recording(
             report.failures.append(f"task {kind}/{index}: {exc}")
 
     for i, td in enumerate(summary.my_todos):
-        _ensure_task("my", i, td.task, None, due=td.due)
+        _ensure_task("my", i, td.task, due=td.due)
     for j, ai in enumerate(summary.action_items_others):
         title_txt = f"{ai.who}: {ai.task}" if ai.who else ai.task
-        _ensure_task("other", j, title_txt, assignees.get(j), due=ai.due, who=ai.who)
+        _ensure_task("other", j, title_txt, due=ai.due, who=ai.who)
     for k, f in enumerate(summary.follow_ups):
         # "follow_up" (not "follow") — matches the wrike_tasks.kind CHECK constraint
         # from schema v6, which already reserves this literal for follow-up items.
-        _ensure_task("follow_up", k, f, None)
+        _ensure_task("follow_up", k, f)
     logger.info("wrike created %d task(s) for recording %d", report.created_tasks, recording_id)
 
     # 4. notes comment (once)

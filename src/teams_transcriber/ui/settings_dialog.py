@@ -426,24 +426,6 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
             )
             self.wrike_item_type_combo.setCurrentIndex(1)
         form.addRow("Project type:", self.wrike_item_type_combo)
-
-        # LLM-assisted assignee resolution.
-        self.wrike_llm_assignee_cb = QCheckBox(
-            "Use Claude to suggest assignees for ambiguous names"
-        )
-        self.wrike_llm_assignee_cb.setToolTip(
-            "When an action-item owner can't be matched to a Wrike contact by "
-            "name, ask Claude to pick the best match. Adds one extra API call "
-            "per sync. Turn off for fuzzy-name-matching only."
-        )
-        self.wrike_llm_assignee_cb.setChecked(
-            bool(
-                self._settings._raw.get("integrations", {}).get(
-                    "wrike_llm_assignee_fallback", True
-                )
-            )
-        )
-        form.addRow("", self.wrike_llm_assignee_cb)
         return w
 
     def _wrike_test_connection(self) -> None:
@@ -832,7 +814,6 @@ class SettingsDialog(FramelessWindowMixin, QDialog):
         if self._chosen_parent is not None:
             integ["wrike_parent_id"] = self._chosen_parent[0]
             integ["wrike_parent_label"] = self._chosen_parent[1]
-        integ["wrike_llm_assignee_fallback"] = self.wrike_llm_assignee_cb.isChecked()
         integ["wrike_custom_item_type_id"] = self.wrike_item_type_combo.currentData()
         integ["wrike_custom_item_type_label"] = (
             self.wrike_item_type_combo.currentText()

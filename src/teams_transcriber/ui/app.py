@@ -692,43 +692,6 @@ class App:
             return
         self._wrike_export_worker(evt.recording_id)
 
-    def _resolve_wrike_assignees(self, recording_id: int, client) -> dict[int, str | None]:
-        """Resolve Wrike contact ids for each action_items_others entry.
-
-        Returns {} when the recording has no action-items-for-others (skips
-        the list_contacts round-trip entirely). Gated on
-        integrations.wrike_llm_assignee_fallback + a present Anthropic key --
-        the LLM pass is a paid extra call, opt-out by default off-key.
-        """
-        from teams_transcriber.integrations.wrike_assignees import Contact, suggest_assignees
-        from teams_transcriber.storage import SummaryRepo
-
-        summary = SummaryRepo(self.db).get(recording_id)
-        if summary is None or not summary.action_items_others:
-            return {}
-
-        contacts_raw = client.list_contacts()
-        contacts = [
-            Contact(id=str(c.get("id")),
-                    first_name=str(c.get("firstName") or "").strip(),
-                    last_name=str(c.get("lastName") or "").strip())
-            for c in contacts_raw
-        ]
-        items = [
-            (i, ai.who or "")
-            for i, ai in enumerate(summary.action_items_others)
-        ]
-        anthropic_key = self._anthropic_key()
-        llm_enabled = bool(
-            self.settings._raw.get("integrations", {}).get("wrike_llm_assignee_fallback", True)
-        )
-        return suggest_assignees(
-            items, contacts,
-            meeting_summary=summary.summary,
-            api_key=anthropic_key, model=self.settings.ai_model,
-            llm_fallback=llm_enabled and bool(anthropic_key),
-        )
-
     def _build_wrike_task_contexts(self, recording_id: int) -> dict[tuple[str, int], Any] | None:
         """One batched Claude call generating a short title + transcript-
         grounded context blurb (a ``TaskCopy`` per item -- see
@@ -807,10 +770,9 @@ class App:
                     return
                 client = WrikeClient(token=token)
                 try:
-                    assignees = self._resolve_wrike_assignees(recording_id, client)
                     report = export_recording(
                         self.db, client, recording_id,
-                        parent_id=parent_id, assignees=assignees,
+                        parent_id=parent_id,
                         task_context_provider=lambda: self._build_wrike_task_contexts(recording_id),
                         custom_item_type_id=custom_item_type_id,
                     )

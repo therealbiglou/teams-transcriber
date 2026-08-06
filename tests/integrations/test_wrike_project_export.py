@@ -134,7 +134,7 @@ def test_first_export_creates_project_tasks_attachment_and_notes(db_seeded):
     )
     fake = FakeClient()
 
-    report = export_recording(db, fake, rid, parent_id="P", assignees={0: "c-sam"})
+    report = export_recording(db, fake, rid, parent_id="P")
 
     assert report.project_id == "prj1"
     assert report.permalink == "https://w/open.htm?id=1"
@@ -156,10 +156,17 @@ def test_first_export_creates_project_tasks_attachment_and_notes(db_seeded):
 
     other_task_payloads = [
         payload for _folder_id, payload in fake.create_task_calls
-        if payload.get("responsibles") == ["c-sam"]
+        if payload["title"].startswith("Sam:")
     ]
     assert len(other_task_payloads) == 1
     assert "Sam" in other_task_payloads[0]["title"]
+    # Never assigned -- assigning a task notifies the assignee directly, and
+    # the "who" the AI extracted from the transcript is not reliable enough
+    # to trust with that.
+    assert "responsibles" not in other_task_payloads[0]
+
+    # No payload created by this export ever carries a "responsibles" key.
+    assert all("responsibles" not in payload for _folder_id, payload in fake.create_task_calls)
 
     assert len(fake.create_comment_calls) == 1
     entity_type, entity_id, text = fake.create_comment_calls[0]
@@ -194,7 +201,7 @@ def test_due_dates_become_planned_wrike_dates_not_title_text(db_seeded):
     )
     fake = FakeClient()
 
-    report = export_recording(db, fake, rid, parent_id="P", assignees={})
+    report = export_recording(db, fake, rid, parent_id="P")
 
     assert report.failures == []
     payload_by_title = {p["title"]: p for _folder, p in fake.create_task_calls}
@@ -223,9 +230,9 @@ def test_second_export_updates_not_duplicates(db_seeded):
         manual_notes="call Bob",
     )
     fake = FakeClient()
-    export_recording(db, fake, rid, parent_id="P", assignees={0: "c-sam"})
+    export_recording(db, fake, rid, parent_id="P")
 
-    report = export_recording(db, fake, rid, parent_id="P", assignees={0: "c-sam"})
+    report = export_recording(db, fake, rid, parent_id="P")
 
     assert report.updated is True
     assert report.created_tasks == 0
@@ -253,7 +260,7 @@ def test_custom_item_type_id_forwarded_on_first_create(db_seeded):
     fake = FakeClient()
 
     report = export_recording(
-        db, fake, rid, parent_id="P", assignees={},
+        db, fake, rid, parent_id="P",
         custom_item_type_id="IEAGW7W6PIAJCFTL",
     )
 
@@ -272,10 +279,10 @@ def test_custom_item_type_id_not_applied_on_repush(db_seeded):
         db, my_todos=[], action_items_others=[], follow_ups=[],
     )
     fake = FakeClient()
-    export_recording(db, fake, rid, parent_id="P", assignees={},
+    export_recording(db, fake, rid, parent_id="P",
                       custom_item_type_id="IEAGW7W6PIAJCFTL")
 
-    report = export_recording(db, fake, rid, parent_id="P", assignees={},
+    report = export_recording(db, fake, rid, parent_id="P",
                                custom_item_type_id="SOME_OTHER_TYPE")
 
     assert report.failures == []
@@ -296,7 +303,7 @@ def test_partial_failure_records_success_and_resumes(db_seeded):
     )
     flaky = FakeClient(fail_first_create_task=True)
 
-    first = export_recording(db, flaky, rid, parent_id="P", assignees={0: "c-sam"})
+    first = export_recording(db, flaky, rid, parent_id="P")
 
     assert first.failures
     assert any("my/0" in f for f in first.failures)
@@ -311,7 +318,7 @@ def test_partial_failure_records_success_and_resumes(db_seeded):
     }
 
     healthy = FakeClient()
-    second = export_recording(db, healthy, rid, parent_id="P", assignees={0: "c-sam"})
+    second = export_recording(db, healthy, rid, parent_id="P")
 
     assert second.failures == []
     assert second.created_tasks == 1  # only the previously-failed task
@@ -334,7 +341,7 @@ def test_new_todo_added_on_repush(db_seeded):
         follow_ups=[],
     )
     fake = FakeClient()
-    first = export_recording(db, fake, rid, parent_id="P", assignees={})
+    first = export_recording(db, fake, rid, parent_id="P")
     assert first.created_tasks == 2
 
     # Re-summarization adds a 3rd my_todo.
@@ -346,7 +353,7 @@ def test_new_todo_added_on_repush(db_seeded):
         generated_at="2026-07-01T10:31:00+00:00", model_used="claude-sonnet-4-6",
     ))
 
-    second = export_recording(db, fake, rid, parent_id="P", assignees={})
+    second = export_recording(db, fake, rid, parent_id="P")
 
     assert second.created_tasks == 1  # only the new one
     assert second.failures == []
@@ -368,7 +375,7 @@ def test_task_contexts_use_short_title_and_full_statement_plus_context_in_descri
     fake = FakeClient()
 
     report = export_recording(
-        db, fake, rid, parent_id="P", assignees={0: "c-sam"},
+        db, fake, rid, parent_id="P",
         task_context_provider=lambda: {
             ("my", 0): TaskCopy(title="Finish A", context="You committed to Do A after the demo."),
             ("other", 0): TaskCopy(title="Send the doc", context="Sam agreed to send it Friday."),
@@ -416,7 +423,7 @@ def test_task_context_with_no_title_falls_back_to_full_text_title(db_seeded):
     fake = FakeClient()
 
     report = export_recording(
-        db, fake, rid, parent_id="P", assignees={},
+        db, fake, rid, parent_id="P",
         task_context_provider=lambda: {
             ("my", 0): TaskCopy(title=None, context="You committed to Do A after the demo."),
         },
@@ -438,7 +445,7 @@ def test_task_contexts_none_means_no_descriptions_anywhere(db_seeded):
     )
     fake = FakeClient()
 
-    report = export_recording(db, fake, rid, parent_id="P", assignees={})
+    report = export_recording(db, fake, rid, parent_id="P")
 
     assert report.failures == []
     payload = fake.create_task_calls[0][1]
@@ -470,7 +477,7 @@ def test_task_context_provider_is_not_called_before_project_created(db_seeded):
         return {}
 
     report = export_recording(
-        db, fake, rid, parent_id="P", assignees={}, task_context_provider=_provider,
+        db, fake, rid, parent_id="P", task_context_provider=_provider,
     )
 
     assert report.failures == []
@@ -491,10 +498,37 @@ def test_task_context_provider_exception_still_creates_tasks_without_description
         raise RuntimeError("anthropic call timed out")
 
     report = export_recording(
-        db, fake, rid, parent_id="P", assignees={}, task_context_provider=_boom,
+        db, fake, rid, parent_id="P", task_context_provider=_boom,
     )
 
     assert report.failures == []
     assert report.created_tasks == 1
     payload = fake.create_task_calls[0][1]
     assert "description" not in payload
+
+
+def test_action_items_for_others_are_never_assigned(db_seeded):
+    """Tasks are never auto-assigned -- assigning notifies the assignee
+    directly, and the AI-extracted "who" is not reliable enough to trust
+    with that. The "{who}: {title}" prefix stays (informational text only,
+    it doesn't notify anyone); "responsibles" must never be set."""
+    db = db_seeded
+    rid = _seed_recording(
+        db,
+        my_todos=[],
+        action_items_others=[ActionItemOther(who="Sam", task="Send doc")],
+        follow_ups=[],
+    )
+    fake = FakeClient()
+
+    report = export_recording(db, fake, rid, parent_id="P")
+
+    assert report.failures == []
+    assert len(fake.create_task_calls) == 1
+    _folder_id, payload = fake.create_task_calls[0]
+    assert payload["title"] == "Sam: Send doc"
+    assert "responsibles" not in payload
+
+    task_row = WrikeTaskRepo(db).get(rid, "other", 0)
+    assert task_row is not None
+    assert task_row.assignee_id is None
