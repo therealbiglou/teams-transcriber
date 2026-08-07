@@ -11,6 +11,7 @@ import pytest
 from teams_transcriber.audio.opus_writer import SAMPLE_RATE, OpusWriter
 from teams_transcriber.config import Settings
 from teams_transcriber.events import EventBus, TranscriptionComplete
+from teams_transcriber.integrations.wrike_project_body import build_transcript_md
 from teams_transcriber.paths import AppPaths
 from teams_transcriber.storage import (
     Channel,
@@ -19,6 +20,7 @@ from teams_transcriber.storage import (
     RecordingSource,
     RecordingStatus,
     TranscriptRepo,
+    TranscriptSegment,
     build_database,
 )
 from teams_transcriber.transcriber import Transcriber
@@ -305,3 +307,140 @@ def test_transcriber_publishes_failed_on_exception(tmp_path) -> None:
     assert len(received) == 1
     assert received[0].recording_id == rec.id
     assert "simulated" in received[0].error_message.lower()
+
+
+# --- Local transcript .md file -----------------------------------------
+
+def test_transcribe_writes_transcript_md_next_to_audio(db_with_recording, paths) -> None:
+    """After a successful transcription, a .md file lands next to the audio
+    with the same stem, and its content matches build_transcript_md() of
+    the full segment set for the recording."""
+    db, rec_id = db_with_recording
+    bus = EventBus()
+    transcriber = Transcriber(
+        bus=bus, db=db, settings=Settings(), paths=paths,
+        model_factory=lambda *_a, **_kw: FakeWhisperModel(),
+    )
+    transcriber.transcribe(rec_id)
+
+    audio_path = paths.audio_dir / "fake.opus"
+    md_path = audio_path.with_suffix(".md")
+    assert md_path.exists()
+
+    segments = TranscriptRepo(db).list_for_recording(rec_id)
+    assert md_path.read_text(encoding="utf-8") == build_transcript_md(segments)
+
+
+def test_retranscribe_overwrites_file_with_full_transcript(paths) -> None:
+    """Re-transcribing (e.g. recovery re-run) overwrites the .md file with
+    the complete transcript, not just the segments added by that pass."""
+    import wave
+
+    db = build_database(paths.db_path)
+    db.initialize()
+    audio = paths.audio_dir / "imported-mono2.wav"
+    rate = 16_000
+    n = int(0.5 * rate)
+    t = np.linspace(0, 0.5, n, endpoint=False, dtype=np.float32)
+    samples = (0.25 * np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
+    with wave.open(str(audio), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(samples.tobytes())
+
+    # Duration is large so cumulative coverage from the fake segments never
+    # crosses the live-coverage fast-path threshold — every call takes the
+    # batch (recovery) path and appends 3 more fake segments.
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-06-05T10:00:00+00:00", ended_at=None,
+        source=RecordingSource.MANUAL, detected_title="Imported",
+        display_title="Imported", audio_path=str(audio), audio_deleted_at=None,
+        duration_ms=100_000, status=RecordingStatus.TRANSCRIBING, error_message=None,
+    ))
+
+    bus = EventBus()
+    transcriber = Transcriber(
+        bus=bus, db=db, settings=Settings(), paths=paths,
+        model_factory=lambda *_a, **_kw: FakeWhisperModel(),
+    )
+    transcriber.transcribe(rec.id)
+    transcriber.transcribe(rec.id)  # re-transcription
+
+    all_segments = TranscriptRepo(db).list_for_recording(rec.id)
+    assert len(all_segments) == 6  # 3 fake segments from each of the two passes
+
+    md_path = audio.with_suffix(".md")
+    content = md_path.read_text(encoding="utf-8")
+    assert content == build_transcript_md(all_segments)
+    # Sanity: the file has to actually contain more than a single pass's worth.
+    assert content.count("Hello there") == 2
+    db.close()
+
+
+def test_transcribe_with_no_audio_path_writes_fallback_transcript(paths) -> None:
+    """When audio_path is None (pruned audio / transcript-only import) but
+    existing segments already fully cover the recording, the live-coverage
+    fast path still writes a transcript file, falling back to
+    audio_dir/transcript_<id>.md."""
+    db = build_database(paths.db_path)
+    db.initialize()
+
+    rec = RecordingRepo(db).create(Recording(
+        id=None, started_at="2026-06-10T10:00:00+00:00",
+        ended_at="2026-06-10T10:05:00+00:00", source=RecordingSource.MANUAL,
+        detected_title="Pruned", display_title="Pruned",
+        audio_path=None, audio_deleted_at="2026-06-11T00:00:00+00:00",
+        duration_ms=5_000, status=RecordingStatus.TRANSCRIBING, error_message=None,
+    ))
+    TranscriptRepo(db).append_many([
+        TranscriptSegment(
+            id=None, recording_id=rec.id, start_ms=0, end_ms=5_000,
+            channel=Channel.ME, text="Full coverage segment",
+        ),
+    ])
+
+    bus = EventBus()
+    received: list[TranscriptionComplete] = []
+    bus.subscribe(TranscriptionComplete, received.append)
+    Transcriber(bus=bus, db=db, settings=Settings(), paths=paths).transcribe(rec.id)
+
+    md_path = paths.audio_dir / f"transcript_{rec.id}.md"
+    assert md_path.exists()
+    segments = TranscriptRepo(db).list_for_recording(rec.id)
+    assert md_path.read_text(encoding="utf-8") == build_transcript_md(segments)
+
+    assert received and received[0].segment_count == len(segments)
+    assert RecordingRepo(db).get(rec.id).status == RecordingStatus.SUMMARIZING
+    db.close()
+
+
+def test_transcribe_completes_even_if_transcript_file_write_fails(
+    db_with_recording, paths, monkeypatch,
+) -> None:
+    """A transcript-file write failure must never fail the pipeline: status
+    still advances to SUMMARIZING and TranscriptionComplete still fires."""
+    db, rec_id = db_with_recording
+
+    def _boom(self, *_a, **_kw):
+        raise OSError("disk is read-only (simulated)")
+
+    monkeypatch.setattr(Path, "write_text", _boom)
+
+    bus = EventBus()
+    received: list[TranscriptionComplete] = []
+    bus.subscribe(TranscriptionComplete, received.append)
+    transcriber = Transcriber(
+        bus=bus, db=db, settings=Settings(), paths=paths,
+        model_factory=lambda *_a, **_kw: FakeWhisperModel(),
+    )
+    transcriber.transcribe(rec_id)
+
+    assert len(received) == 1
+    repo = RecordingRepo(db)
+    rec = repo.get(rec_id)
+    assert rec is not None
+    assert rec.status == RecordingStatus.SUMMARIZING
+
+    segments = TranscriptRepo(db).list_for_recording(rec_id)
+    assert len(segments) == 6

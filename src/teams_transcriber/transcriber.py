@@ -18,6 +18,8 @@ from typing import Any
 
 from teams_transcriber.config import Settings
 from teams_transcriber.events import EventBus, TranscriptionComplete, TranscriptionFailed
+from teams_transcriber.integrations.wrike_project_body import build_transcript_md
+from teams_transcriber.paths import AppPaths
 from teams_transcriber.storage import (
     Channel,
     Database,
@@ -47,11 +49,13 @@ class Transcriber:
         db: Database,
         settings: Settings,
         model_factory: ModelFactory = _default_model_factory,
+        paths: AppPaths | None = None,
     ) -> None:
         self._bus = bus
         self._db = db
         self._settings = settings
         self._model_factory = model_factory
+        self._paths = paths or AppPaths()
         self._model: Any = None
 
     def transcribe(self, recording_id: int) -> None:
@@ -80,6 +84,7 @@ class Transcriber:
                     "transcribe(%d): live coverage %.1f%% — skipping batch",
                     recording_id, coverage * 100,
                 )
+                self._write_transcript_file(recording_id, rec.audio_path)
                 rec_repo.update_status(recording_id, RecordingStatus.SUMMARIZING)
                 self._bus.publish(TranscriptionComplete(
                     recording_id=recording_id, segment_count=len(existing),
@@ -138,6 +143,7 @@ class Transcriber:
                 if all_segments:
                     TranscriptRepo(self._db).append_many(all_segments)
 
+                self._write_transcript_file(recording_id, rec.audio_path)
                 rec_repo.update_status(recording_id, RecordingStatus.SUMMARIZING)
                 self._bus.publish(TranscriptionComplete(
                     recording_id=recording_id,
@@ -161,6 +167,31 @@ class Transcriber:
                 recording_id=recording_id,
                 error_message=str(exc),
             ))
+
+    def _write_transcript_file(self, recording_id: int, audio_path: str | None) -> None:
+        """Write the full transcript to a `.md` file next to the audio.
+
+        Reuses `build_transcript_md` so this local copy is byte-identical to
+        the transcript attached to the Wrike project export. Always reads the
+        *complete* segment list for the recording (not just newly-added
+        segments) so a re-transcription refreshes the file with everything.
+
+        Never raises — a failed write must not fail the transcription.
+        """
+        try:
+            segments = TranscriptRepo(self._db).list_for_recording(recording_id)
+            content = build_transcript_md(segments)
+            if audio_path:
+                target = Path(audio_path).with_suffix(".md")
+            else:
+                target = self._paths.audio_dir / f"transcript_{recording_id}.md"
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        except Exception as exc:
+            logger.warning(
+                "could not write transcript file for recording %d: %s",
+                recording_id, exc,
+            )
 
     def _run_whisper(
         self, wav_path: Path, recording_id: int, channel: Channel,
